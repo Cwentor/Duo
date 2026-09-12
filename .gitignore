@@ -1,0 +1,17 @@
+# build
+target/
+build/
+out/
+
+# ide
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# tools / local
+.mimosa/
+logs/
+*.log
