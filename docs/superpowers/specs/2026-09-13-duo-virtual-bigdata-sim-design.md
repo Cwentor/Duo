@@ -1,7 +1,7 @@
 # Duo —— 通用可组合虚拟大数据仿真系统 · 设计文档
 
 - 日期：2026-09-13
-- 状态：v0.5 修订版，待用户复核（四轮评审收敛版）
+- 状态：v1.0 · 定稿（2026-09-13，经五轮评审收敛；M0 实施计划见 docs/superpowers/plans/）
 - 技术栈：Java 21（LTS），Maven 多模块
 - 首期重点：可组装内核闭环 + 调度状态机与容错（已与用户确认）
 - 修订记录见文末附录
@@ -182,7 +182,7 @@ public interface InstanceControl {          // count > 1 组件的可选能力�
 - `SutContext` 提供：端点清单、wiring 直连对象（可选 interface-direct）、`SutEventPublisher`、配置变量（来自节点可选 `config:` 字段，自由键值原样注入）、**协作式停止句柄 `ctx.onStop(Runnable handler)`**——内核停止 in-process SUT＝触发 handler 请求退出 + 带超时等待 `run()` 返回；超时记为停止失败一级事件，计入场景结果；**未注册 handler 时，内核停止＝interrupt `run()` 线程并记为停止失败**。SUT 停止纳入统一拆除顺序（逆依赖序）。
 - **就绪**：in-process 默认走回调（`ctx.ready()`），回调须在 ready 超时内到达（默认 60s，`ready.timeout` 可覆盖）；超时归启动失败路径（§12）。可显式声明探针覆盖回调。
 - **SUT 中途自行退出**：`run()` 返回或抛异常时，默认场景终止并保存现场（§12）；事件区分 `sut.exited`（正常返回）与 `sut.crashed`（抛异常）。"SUT 退出后继续观测替身侧反应"的场景模式留作 M1 选项。
-- **事实发布**：SUT 必须经 `SutEventPublisher` 把内部关键事实发布为事件（任务终态、重试发生、失败转移、选主完成）——这是 `noTaskLost`、`masterReelectedWithin` 等断言的事实源。事件类型命名约定：**`sut.` 前缀**（如 `sut.task-terminal`、`sut.failover`、`sut.leader-elected`），载荷为自由 JSON，内核不解释语义、仅转发与录制。
+- **事实发布**：SUT 必须经 `SutEventPublisher` 把内部关键事实发布为事件（任务终态、重试发生、失败转移、选主完成）——这是 `noTaskLost`、`masterReelectedWithin` 等断言的事实源。事件类型命名约定：**`sut.` 前缀＝SUT 相关事实**——既包括门面发布的内部事实（如 `sut.task-terminal`、`sut.failover`、`sut.leader-elected`），也包括内核探测的 SUT 生命周期事件（`sut.exited` / `sut.crashed`，见下）；载荷为自由 JSON，内核不解释语义、仅转发与录制。
 - **显式边界**：in-process 要求 SUT 可改码（埋点发布事实、实现 SutMain/onStop）。不可改码的第三方 SUT 只能走 external + 旁路观测（→ 非目标）。
 
 **external SUT**（用户自行启动）：
@@ -196,7 +196,7 @@ public interface InstanceControl {          // count > 1 组件的可选能力�
 
 ### 7.4 事件总线与 SimClock
 
-- 事件总线：进程内轻量发布/订阅（自研，不引消息中间件）。事件模型：`{type, sourceId, timestamp, payload}`。**sourceId 约定**：组件级事件用 componentId（如 `workers`）；实例级事件用 `componentId-N`（如 `workers-3`）——断言与录制依赖此约定。**事件类型命名空间**：框架自身事件统一 `sim.` 前缀（如 `sim.fault-injected`、`sim.component-crashed`、`sim.scenario-started/finished`），SUT 经门面发布的事件用 `sut.` 前缀（§7.3）——断言可移植与录制检索依赖此划分。
+- 事件总线：进程内轻量发布/订阅（自研，不引消息中间件）。事件模型：`{type, sourceId, timestamp, payload}`。**sourceId 约定**：组件级事件用 componentId（如 `workers`）；实例级事件用 `componentId-N`（如 `workers-3`）——断言与录制依赖此约定。**事件类型命名空间**：框架自身事件统一 `sim.` 前缀（如 `sim.fault-injected`、`sim.component-crashed`、`sim.scenario-started/finished`），`sut.` 前缀＝SUT 相关事实（门面发布的内部事实，或内核探测的 SUT 生命周期事件，见 §7.3）——**按"事件所属域"而非"发出者"划分**，断言可移植与录制检索依赖此约定。
 - SimClock：首期仅真实时钟；可加速虚拟时钟留作 M4 评估项（依赖 SUT 可注入 `Clock`），接口上预留。
 
 ### 7.5 契约注册表与能力元数据
@@ -384,3 +384,4 @@ wiring: { registry: { node: zk, path: direct } }  # 显式 interface-direct
   2. **[P3] 默认实现选择规则确定性**：注册声明 `default: true`，同 `(contract, tier)` 多缺省或零缺省注册期报错（§7.5/§8 规则 1）；
   3. **[P3] custom-hook 豁免**：不受 §7.2 寻址规则约束（target 为用户参数，允许指向 SUT 协作式操作），边界随 M1 注册接口明确（§2/§7.2/§8 规则 6/§10/§14）；
   4. 小项全落：in-process 定义钉死（＝非 external，§3）；kernel-hosted 节点缺省无需 `launch` 字段（§6）；未注册 onStop 的 SUT 停止＝interrupt + 记停止失败（§7.3/§12）；SUT 中途自行退出默认终止场景并保存现场，事件区分 `sut.exited` / `sut.crashed`，"退出后续观测"留 M1 选项（§7.3/§12）；in-process ready 超时覆盖 DSL 写法 `ready: { timeout: 90s }`（§8）；`ExposedEndpoint` 带类型字段，stdout 行格式泛化为 `duo.endpoint.<contract>=<endpoint>`（§7.1/§7.3）；适配器依赖表述改为"协议工件 + 内核公开 SPI"（§4/§6/§16）；框架事件统一 `sim.` 前缀，`failoverWithin` 基准事件改引 `sim.fault-injected`（§7.4/§11）。
+- **v1.0（2026-09-13，定稿）**：五轮复核确认 §6/§7.2/§7.3/§7.5 四块闭环，批准定稿。落最后一处措辞级修正：`sut.` 前缀定义由"SUT 经门面发布的事件"放宽为"SUT 相关事实（门面发布的内部事实，或内核探测的 SUT 生命周期事件）"，与 `sut.exited` / `sut.crashed` 的发出者一致，命名空间按"事件所属域"而非"发出者"划分（§7.3/§7.4）。本版起冻结，M0 实施以此为唯一依据。
