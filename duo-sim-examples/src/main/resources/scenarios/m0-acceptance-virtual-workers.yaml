@@ -1,0 +1,38 @@
+name: worker-crash-failover-m0
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "load-orders,clean-orders,build-features,unstable-task,aggregate-report"
+      dag.deps.clean-orders: "load-orders"
+      dag.deps.build-features: "load-orders"
+      dag.deps.unstable-task: "clean-orders"
+      dag.deps.aggregate-report: "build-features,unstable-task"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 3
+    capacity: { slots: 4 }
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 100, jitter: 0.1, successRate: 1.0 }
+    unstable: { duration: 60, successRate: 0.0, exception: "java.lang.RuntimeException" }
+  bindings:
+    - node: workers
+      profile: default
+    - node: workers
+      match: { taskName: "unstable-task" }
+      profile: unstable
+timeline: []
+assertions: []

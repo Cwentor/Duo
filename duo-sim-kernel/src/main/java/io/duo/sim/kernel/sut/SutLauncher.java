@@ -82,6 +82,15 @@ public final class SutLauncher implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new ComponentException("SUT ready interrupted: " + sutId, e);
         }
+        // ready 放行但 SUT 已退出＝启动失败（快速失败，§12），抛出真实根因
+        if (exitState != null && !exitState.exited()) {
+            return; // 理论不可达（exited 恒 true）
+        }
+        if (stopDone.getCount() == 0 && exitState != null) {
+            throw new ComponentException("SUT exited before ready: " + sutId
+                    + (exitState.normal() ? "" : " (crashed: " + exitState.error() + ")"),
+                    exitState.normal() ? null : new IllegalStateException(exitState.error()));
+        }
     }
 
     private void runAndWatch() {
@@ -94,6 +103,8 @@ public final class SutLauncher implements AutoCloseable {
             eventSink.accept(Event.sut("sut.crashed", sutId,
                     Map.of("error", String.valueOf(t))));
         } finally {
+            // run() 在 ready 前退出也要放行 start()，避免把真实根因拖成 ready 超时
+            ctx.readyLatch.countDown();
             stopDone.countDown();
         }
     }

@@ -26,6 +26,11 @@ public final class ComponentManager {
         return live;
     }
 
+    /** 纳管已在外部启动的组件（纳入逆序拆除序列，如 SUT 启动前的 registry）。 */
+    public void adopt(String id, VirtualComponent c) {
+        live.put(id, c);
+    }
+
     /** 注册额外停止动作（SUT 协作停止），按注册顺序逆序执行。 */
     public void registerExtraStop(String key, Runnable stop) {
         extraStops.put(key, stop);

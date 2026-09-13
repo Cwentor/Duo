@@ -1,1 +1,2 @@
 io.duo.sim.examples.provider.DemoRealWorkerProvider
+io.duo.sim.examples.provider.DemoSchedulerProvider

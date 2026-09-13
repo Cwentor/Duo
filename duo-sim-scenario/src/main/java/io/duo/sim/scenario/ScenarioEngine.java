@@ -68,7 +68,7 @@ public final class ScenarioEngine implements AutoCloseable {
         return e;
     }
 
-    /** 启动全部内核托管组件（SUT 与 external 节点不在此列）。 */
+    /** 启动全部内核托管组件（SUT 与 external 节点不在此列；SUT 依赖已由 startSut 启动的跳过）。 */
     public void startComponents() {
         registry.validateDefaults();
         Map<String, Scenario.NodeSpec> specById = new LinkedHashMap<>();
@@ -79,8 +79,8 @@ public final class ScenarioEngine implements AutoCloseable {
         List<String> order = WiringResolver.topoOrder(new ArrayList<>(views.values()));
         for (String id : order) {
             var n = specById.get(id);
-            if (n.sut() || isExternal(n) || !startable(n)) {
-                continue;
+            if (n.sut() || isExternal(n) || !startable(n) || byId.containsKey(id)) {
+                continue; // byId 已含（startSut 预启动的依赖）则跳过
             }
             var provider = registry.resolve(Contract.fromYaml(n.contract()),
                     Tier.fromYaml(n.tier()), n.impl());
@@ -135,12 +135,42 @@ public final class ScenarioEngine implements AutoCloseable {
      * 启动 in-process SUT（T12 接入）：反射实例化 {@code launch.main} 的 SutMain，
      * directBindings＝已启动组件（nodeId→实例），ready 后登记停止器；
      * {@code sut.exited/sut.crashed} 事件自动触发场景结束信号。
+     *
+     * <p>调用时机：SUT 须在内核组件**之前**启动（其 Duo 端点要写进 registry，
+     * workers 的发现等待语义依赖它；计划风险 5）。
      */
     public SutLauncherHandle startSut() {
         var spec = scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
         if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
             throw new IllegalStateException("M0 engine only supports in-process SUT launch");
+        }
+        // SUT 的 direct 依赖须先就绪（如 registry）：实例化并启动（纳入管理器拆除序列）
+        Map<String, WiringResolver.NodeView> views = new LinkedHashMap<>();
+        scenario.nodes().forEach(n -> views.put(n.id(), toView(n)));
+        Map<String, Scenario.NodeSpec> specById = new LinkedHashMap<>();
+        scenario.nodes().forEach(n -> specById.put(n.id(), n));
+        for (var slot : spec.wiring().values()) {
+            String targetId = slot.node();
+            if (byId.containsKey(targetId)) {
+                continue;
+            }
+            var depSpec = specById.get(targetId);
+            var provider = registry.resolve(Contract.fromYaml(depSpec.contract()),
+                    Tier.fromYaml(depSpec.tier()), depSpec.impl());
+            VirtualComponent dep = provider.newComponent();
+            Map<String, String> cfg = new LinkedHashMap<>(depSpec.config());
+            cfg.putAll(depSpec.capacity());
+            if (depSpec.count() != null) {
+                cfg.put("count", String.valueOf(depSpec.count()));
+            }
+            dep.init(new ComponentContext(new ComponentId(targetId), cfg, SimClock.real(),
+                    bus, Map.of(), exposes(depSpec)));
+            dep.start();
+            byId.put(targetId, dep);
+            manager.adopt(targetId, dep);
+            runtime.registerTarget(targetId, new ScenarioRuntime.Target(
+                    dep, targetId, depSpec.count() == null ? 1 : depSpec.count()));
         }
         try {
             var cls = Class.forName(spec.launch().main());
