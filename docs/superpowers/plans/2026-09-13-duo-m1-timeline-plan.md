@@ -1,67 +1,79 @@
-# Duo M1 实施计划 —— 时间线注入与断言库
+# Duo M1 实施计划 —— 时间线注入与断言库（v2）
 
-- 日期：2026-09-13
-- 依据：设计文档 v1.0（冻结）§14 M1 行；M0 已验收（commit 29b1a42，全仓 81 测全绿）
-- 范围：M0 遗留清单全部 8 项 + 设计文档 §14 M1 产出；验收标准＝§14 M1 验收场景断言通过
+- 日期：2026-09-13（v2 修订）
+- 依据：设计文档 v1.0（冻结）§14 M1 行；M0 已验收（commit 29b1a42）
+- 范围：M0 遗留 8 项 + 设计文档 §14 M1 产出 + v2 新增的验收前提项
 - 状态：待用户批准（批准前不动代码）
+- 修订记录见文末附录
 
 ---
 
 ## 1. 交付定义（唯一验收口径）
 
-**设计文档 §14 M1 验收场景：完整 §8 金标准 YAML（含 timeline）运行——`crash workers[3]` 于 T+10s 宕机 → 任务 30s 内转移成功断言通过。** 具体化为一条验收测试：
+**完整 §8 金标准 YAML（含 timeline 与 M1 行为剧本）运行——`crash workers[3]` 于 T+10s 宕机 → `failoverWithin 30s` 断言通过，且为非空真通过。** 具体化为一条验收测试：
 
-- 拓扑：沿用 M0 金标准（zk virtual + master real SUT + workers，count 提升至 4 以含下标 3）
-- 时间线执行（相对场景起始的调度器）：
-  - `at: 10s` → `crash workers[3]`（实例级，InstanceControl 通路，M0 已交付分发）
-  - `at: 20s` → `registry-flap zk`（M1 新实现：VirtualRegistry 内存会话闪断 5s）
-  - `at: 25s` → `restart workers[3]`（实例恢复上线）
-- 断言（YAML assertions 内置评估 + JUnit 双轨）：
-  - `failoverWithin { seconds: 30 }`：计时起点＝`sim.fault-injected`（crash workers[3]），成功判定＝受影响任务在新实例首次状态回报（§11 基准）
-  - `noTaskLost`：全部派发任务到达终态，无任务停留在 RUNNING 直至场景结束
-  - `eventSequence [sim.fault-injected, sut.task-retry]`：时序断言 v0
-- 通过条件：验收测试全绿 + M0 的 TierSwapAcceptanceTest 回归全绿（无破坏性变更）
+- 拓扑：M0 金标准 virtual 变体（zk virtual + master real SUT + workers virtual），`count: 4`
+- **M1 行为剧本（重定义，非沿用 M0）**：DAG 改为 4 条并行长任务（无相互依赖），`duration: 30s`——保证 T+10s 时 workers[3] **确定持有在途任务**；去掉 M0 的 `successRate: 0.0` unstable-task（crash 成为唯一失败源，不污染断言）
+- **前置守护断言 `affectedTasksAtLeast: 1`**：crash 事件后，归属 workers-3 的在途任务数 ≥ 1——防止 `failoverWithin` 空真通过
+- 时间线：`crash workers[3]` @10s → `registry-flap zk` @20s（flap 5s，结束于 25s）→ `restart workers[3]` @27s（**与 flap 结束错开 2s**）
+- 断言（YAML 内置 + JUnit 双轨）：
+  - `failoverWithin { seconds: 30 }`：起点＝`sim.fault-injected`（crash workers[3]）；成功＝受影响任务重新派发至 instance ≠ workers-3 且随后到达终态（从 `sut.task-dispatched` + `sut.task-terminal` 事件推导，见 T20 数据契约）；workers-3 于 27s 重启后属"全新实例"（§7.1），其回报**计入**转移成功（新实例语义）
+  - `noTaskLost { requireAllSuccess: true }`：**M1 口径钉死为全部 SUCCESS**（FAILED/SKIPPED 视为失败结局，判 noTaskLost 不通过）
+  - `eventSequence [sim.fault-injected, sut.task-retry]`
+- 通过条件：验收测试全绿 + M0 TierSwapAcceptanceTest 回归全绿
 
 ## 2. 范围与不做
 
-**做**（M0 遗留 + §14 M1 行）：
+**做**（M0 遗留 8 项 + 验收前提）：
 
 | # | 项 | 来源 |
 | --- | --- | --- |
-| 1 | 时间线剧本化执行（调度器：at 解析、串行触发、duration 到期自动 clear） | M0 遗留 |
-| 2 | 行为字段全集：`failAt / neverReport / progress` + 标签/通配匹配（四级优先级：精确名 > 标签 > 通配 > default） | M0 遗留 + §9 |
-| 3 | VirtualRegistry 的 `registry-flap`（内存会话闪断，声明进 supportedFaults） | §14 |
-| 4 | `task-kill` 动作（终止进行中桩任务并触发 CANCELLED 回报，§10 M1 精确定义） | §10 |
-| 5 | `custom-hook` 定义（注册接口 + 断言参与 + target 可指向 SUT 的边界，§7.2 豁免落地） | §14 |
-| 6 | 事件流录制（JSON Lines 落盘，§11；真实时钟不承诺确定性重放——仅回放审查） | §11 |
-| 7 | 断言库 v0：`failoverWithin / noTaskLost / eventSequence`（YAML 内置评估 + JUnit 编程式，双轨共用事实源） | §11 |
-| 8 | 完整 §8 示例 YAML 升级为 M1 金标准 | 计划 v3 |
+| 1 | 时间线剧本化执行（调度器 + duration 自动 clear + **最小 ScenarioResult 模型**） | M0 遗留 |
+| 2 | 行为字段全集：`failAt / neverReport / progress` + 标签/通配匹配（四级优先级） | M0 遗留 + §9 |
+| 3 | VirtualRegistry 的 `registry-flap`（含端点恢复机制，见 T18 二选一钉死） | §14 |
+| 4 | `task-kill` 动作（终止进行中桩任务 → CANCELLED 回报） | §10 |
+| 5 | **demo-scheduler 崩溃转移路径**（worker 失联检测 → 在途任务重派发 + `sut.task-retry` + 事件补 instance 字段） | **v2 新增（P1-1）** |
+| 6 | 事件流录制（JSON Lines） | §11 |
+| 7 | 断言库 v0（三断言双轨）+ `affectedTasksAtLeast` 守护断言 | §11 |
+| 8 | custom-hook（注册接口 + DSL 形态 + validator 豁免）+ M1 金标准 YAML | §14 |
 
-**不做**：embedded 档（Curator/H2/Fabric8 registry-flap 属 M2）、`@VirtualCluster` JUnit 扩展（M2）、控制面 REST/CLI（M3）、加速时钟（M4）、告警事件语义 `alertFired`（无告警组件，继续延后）、masterReelectedWithin（依赖 external SUT 旁路，M2 Curator 交付后才有真实场景）。
+**不做**：embedded 档（M2）、`@VirtualCluster`（M2）、控制面（M3）、加速时钟（M4）、`alertFired`（无告警组件，继续延后）、`masterReelectedWithin`（M2 Curator 后）、**demo real worker 的 task-kill/转移演练**（金标准钉死 virtual 变体；real 变体的行为剧本仍生效但故障路径不在 M1 验收范围）。
 
-## 3. 任务分解（6 任务，估 8~10 天）
+## 3. 任务分解（8 任务，估 10~12 天）
 
 | # | 任务 | 内容与落点 | 完成判据 |
 | --- | --- | --- | --- |
-| T16 | 时间线执行器 | `duo-sim-scenario`：`TimelineScheduler`——场景 start 时刻为 t0，按 `at` 相对延时触发动作（经 ScenarioRuntime 既有通路）；`duration` 到期自动 clear（§7.2）；动作触发失败记 `sim.fault-inject-failed` 并计入场景结果（§12）；串行模型（M0 单 JVM 足够） | 单测：at 触发顺序、duration 自动 clear、失败事件；与 ScenarioRuntime 集成 |
-| T17 | 行为字段全集 | `BehaviorProfile` 增 `failAt`（进度百分比处失败）、`neverReport`（领取后永不回报→僵尸任务）、`progress`（进度上报模式）；`BehaviorResolver` 支持标签与通配（`taskName: "spark-*"`、`label: etl`），四级优先级解析 | 单测：failAt 确定性失败点、neverReport 不产出终态、通配/标签匹配优先级矩阵 |
-| T18 | registry-flap + task-kill | VirtualRegistry 实现 `FaultInjectable`（supportedFaults=[registry-flap]，声明进元数据——§7.5 一致性校验自动通过）：flap 期间会话全部临时失效（watch 收到 DELETED），恢复后需重新注册——SUT 侧"重选主/重新注册"可观测；`task-kill` 动作：VirtualWorker/instance 级终止执行中任务 → 回报 CANCELLED（复用 TaskCancel 通路） | 单测：flap 期间发现查询为空、恢复后可重注册；task-kill 后 CANCELLED 回报 |
-| T19 | 事件录制 | `duo-sim-scenario`：`EventRecorder`——事件总线订阅 → JSON Lines 落盘（`build/scenarios/<name>/events.jsonl`）；场景结束 flush；JUnit 断言可读回 | 单测：落盘格式、回读等价于内存事件流 |
-| T20 | 断言库 v0 | kernel 新 `assert` 包：`Assertion` 接口 + 三个实现（`failoverWithin`：起点=FaultInjected 事件/成功=新实例首报；`noTaskLost`：全部 dispatched 任务有终态；`eventSequence`：类型子序列匹配）；YAML assertions 内置评估（场景结果 pass/fail）+ JUnit 断言类双轨共用同一事件源 | 单测：正例/反例各一；YAML 评估与 JUnit 一致性 |
-| T21 | custom-hook + M1 金标准 | `custom-hook` 注册接口（`HookRegistry.register(name, Consumer<HookContext>)`；HookContext 含 target 与事件门面——target 可为 SUT，§7.2 豁免）；hook 事实事件 `sim.hook-executed` 参与断言；完整 §8 示例 YAML（timeline 3 动作 + assertions 3 条）落 resources | 单测：hook 注册/触发/事件；T22 验收全绿 |
+| T16 | 时间线执行器 + ScenarioResult | `TimelineScheduler`（场景 start 为 t0，按 at 相对触发既有 ScenarioRuntime 通路；duration 到期自动 clear；串行节拍器模型）；**最小 `ScenarioResult`**：{注入失败数、断言评估结果}，引擎暴露 `result()`——T16/T20 共用，不各写一份 | 单测：at 顺序、自动 clear、失败计入 result |
+| T17 | 行为字段全集 | `failAt`（进度百分比确定性失败）、`neverReport`（领取后不回报）、`progress`；resolver 四级匹配（精确 > 标签 > 通配 > default）。**注明**：标签匹配仅 resolver 单测覆盖——`TaskDispatch` 报文无 label 字段，端到端留后续（P3 采纳） | 单测：failAt 失败点、neverReport 无终态、优先级矩阵 |
+| T18 | registry-flap（含端点恢复钉死） | **采用方案一**：flap 波及**全部会话含 `__system__`**——flap 期间所有临时节点失效（watch 收 DELETED）、发现查询为空；flap 结束时 VirtualRegistry 自动重建 `__system__` 并**重放此前注册的端点**（注册表在内存中保留端点快照）——对 SUT 透明，无需 demo-scheduler 参与恢复；25s restart 的 workers 发现不受影响。SUT 侧可观测面＝watch DELETED 事件与 flap 期间的查询空结果（M1 flap 定位为注入通路 + registry 语义验证；真实 SUT 反应验证属 M2 Curator 场景）。**SUT 可改的替代场景**（demo-scheduler 经 `openSession` 持自有会话）留 M2 设计 | 单测：flap 期间查询空 + watch DELETED、恢复后端点自动重现 |
+| T19 | demo-scheduler 崩溃转移（**P1-1，先于 T20**） | worker 连接丢失（readFeed IOException → feeds.remove）→ 触发状态机**在途任务重置 PENDING 并重派发** + 发布 `sut.task-retry {instance: 旧}`；同时 **`sut.task-status` / `sut.task-terminal` 载荷补 `instance` 字段**（T20 数据契约，P2-4 采纳）；失败转移事实 `sut.failover {task, from}` | 单测：杀 feed 后在途任务重派发、事件含 instance/from |
+| T20 | 断言库 v0 | kernel `assert` 包：接口 + `failoverWithin`（归属核对＝crash 后 dispatched 事件的 instance ≠ workers-3 且该 taskId 随后 terminal——**从 dispatched+terminal 推导，不要求 status 事件自带归属**，若 T19 已补 instance 字段则直接用）/ `noTaskLost {requireAllSuccess}` / `eventSequence` / `affectedTasksAtLeast`（守护）；YAML 内置评估写入 ScenarioResult；**JUnit 编程式包装落 `duo-sim-junit` 模块**（kernel 只放接口与内置评估，P3 采纳） | 单测：三断言正反例 + 守护断言空真防护 |
+| T21 | 事件录制 | `EventRecorder`：总线订阅 → JSON Lines（`build/scenarios/<name>/events.jsonl`）→ 场景结束 flush → 回读 API | 单测：落盘/回读等价 |
+| T22 | custom-hook | `HookRegistry.register(name, Consumer<HookContext>)`（HookContext 含 target+事件门面）；**DSL 形态钉死**：timeline 动作 `custom-hook` 的 `params: {hook: 名称, ...透传}`，target 允许 SUT（validator 对 `action=custom-hook` 豁免 SUT 检查，§7.2）；hook 执行发 `sim.hook-executed {hook, target}` 参与断言 | 单测：注册/触发/事件/validator 豁免 |
+| T23 | M1 金标准 + 验收测试 | 金标准 YAML（§1 全部要素：4 并行长任务剧本、timeline 3 动作、assertions 4 条含守护、duration 带单位 `30s/10s/20s/27s`，loader 校验单位）；`FailoverAcceptanceTest`：校验→启动→时间线自动执行→**断言驱动等待（替代 sleep）**→ScenarioResult 全绿；M0 TierSwap 回归 | **全绿＝M1 验收通过** |
 
-## 4. 验收测试（T22）
+## 4. 风险与对策
 
-`FailoverAcceptanceTest`（examples 模块）：加载 M1 金标准 YAML → 校验（含 timeline 规则 6 全量）→ 启动 → 时间线自动执行 → `awaitSutExit` + 断言评估 → 全绿即 M1 验收通过。附加回归：M0 `TierSwapAcceptanceTest` 不变全绿。
+1. **时序漂移**：10s/20s/27s 相对时序在慢 CI 上挤压。对策：断言窗口 30s 宽裕；任务时长 30s 保证 crash 时刻必有在途任务；at 值 YAML 可调。
+2. **flap 期间 restart 的窗口竞争**：已错开（flap 结束 25s，restart 27s）。
+3. **转移判定的数据完整性**：T19 补 instance 字段 + T20 推导逻辑双保险；`affectedTasksAtLeast` 守护断言防空真。
+4. **SUT 改造范围**：T19 只动 DemoScheduler（feed 移除回调 + 事件字段），状态机复用既有 onStatus 重试路径，~100 行内。
 
-## 5. 风险与对策
+## 5. 执行节奏
 
-1. **时间窗与时序脆弱**：crash 10s/flap 20s/restart 25s 的相对时序在 CI 慢机上可能漂移。对策：验收断言窗口宽（30s）；时间线调度基于单调节拍器而非绝对睡眠；必要时把 at 值做成 YAML 可调。
-2. **registry-flap 的 SUT 感知**：demo-scheduler 对会话失效的响应（重新注册）是新路径，M0 未演练。对策：T18 先以 Watch 事件单测验证，T21 场景集成验证。
-3. **断言语义漂移**：`failoverWithin` 的"新实例"判定需关联 crash 前后 worker-3 的任务归属。对策：沿用 §11 已钉死的基准（起点=FaultInjected、成功=新实例首次回报），实现时以事件载荷 instance 字段核对。
+T16 → T17 → T19 → T18 → T20 → T21 → T22 → T23（T19 提前于 T18/T20，因 T20 依赖其数据契约）；每任务全量回归；T23 全绿即 M1 关闭。**工期 10~12 天（≈2 周上限，P3 采纳）。**
 
-## 6. 执行节奏
+---
 
-T16 → T17 → T18 → T19 → T20 → T21 → T22 顺序推进（T19/T20 可并行）；每任务收尾全量回归；T22 全绿即 M1 关闭。工期约 8~10 天（§14 估 ~2 周的上限内）。
+## 附录：修订记录
 
-**批准本计划后即开始 T16 编码。**
+- **v1（2026-09-13）**：初稿 6 任务。
+- **v2（2026-09-13）**：依评审修订——
+  1. **[P1] 新增 T19 demo-scheduler 崩溃转移**：feed 丢失 → 在途任务重派发 + `sut.task-retry` + 事件补 instance 字段；执行顺序提前至 T20 前；
+  2. **[P1] M1 金标准行为剧本重定义**：4 条并行 30s 长任务、去掉 unstable-task 概率失败、新增 `affectedTasksAtLeast` 守护断言防空真；
+  3. **[P1] flap 端点恢复钉死方案一**：波及全部会话含 `__system__`，恢复时端点快照自动重放（对 SUT 透明）；restart 错开至 27s；SUT 反应验证定位 M2；
+  4. **[P2] failoverWithin 归属判定**：dispatched+terminal 推导（T19 补字段后直接用），写进 T20；
+  5. **[P2] noTaskLost 钉死 requireAllSuccess**；金标准去掉 unstable-task；
+  6. **[P2] custom-hook DSL 形态**（params.hook 引用 + validator 豁免）写进 T22；
+  7. **[P2] 最小 ScenarioResult 归 T16** 交付；
+  8. **[P3] 全落**：标签匹配覆盖范围注明、金标准钉 virtual 变体、workers-3 重启计新实例、duration 单位统一 `s` 并校验、断言库 kernel/junit 分工、工期上调 10~12 天。
