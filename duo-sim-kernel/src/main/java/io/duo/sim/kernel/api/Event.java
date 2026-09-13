@@ -12,7 +12,7 @@ public record Event(String type, String sourceId, Instant timestamp, Map<String,
     /** SUT 相关事实命名空间。 */
     public static final String SUT_PREFIX = "sut.";
 
-    /** 框架事件类型清单（M0 子集）。 */
+    /** 框架事件类型清单（M0 子集 + M1 T16 的 fault-cleared）。 */
     public static final Set<String> SIM_EVENT_TYPES = Set.of(
             "sim.scenario-started",
             "sim.scenario-finished",
@@ -20,6 +20,7 @@ public record Event(String type, String sourceId, Instant timestamp, Map<String,
             "sim.component-stopped",
             "sim.component-crashed",
             "sim.fault-injected",
+            "sim.fault-cleared",
             "sim.fault-inject-failed",
             "sim.sut-exited",
             "sim.sut-crashed");

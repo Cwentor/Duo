@@ -48,7 +48,7 @@ public record Scenario(String name,
     public record Binding(String node, String profile, String taskName) {
     }
 
-    /** 时间线动作（M0 仅校验不执行；duration 可空）。 */
+    /** 时间线动作（M1 T16 起由 TimelineScheduler 自动执行；at/duration 带单位，duration 可空）。 */
     public record TimelineEntry(String at, String action, String target, String duration,
                                 Map<String, Object> params) {
     }

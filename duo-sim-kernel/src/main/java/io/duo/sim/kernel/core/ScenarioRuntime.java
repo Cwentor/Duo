@@ -85,6 +85,41 @@ public final class ScenarioRuntime {
         return InjectionResult.ok();
     }
 
+    /**
+     * 清除注入（§7.2：带 duration 的动作由场景引擎计时到期自动 clear；M1 T16 通路）。
+     * 仅对 FaultInjectable 类动作有意义（crash/restart 生命周期不可"清除"，
+     * 由调用方——TimelineScheduler——不得对生命周期动作安排 clear）。
+     * 校验失败同样记 {@code sim.fault-inject-failed}（clear 失败不允许静默）。
+     */
+    public InjectionResult clear(FaultAction action) {
+        String componentId = action.target().componentId().value();
+        if (sutIds.contains(componentId)) {
+            return failAndRecord(componentId, action, "target must not be SUT");
+        }
+        Target t = targets.get(componentId);
+        if (t == null) {
+            return failAndRecord(componentId, action, "unknown target component");
+        }
+        if (!(t.component() instanceof FaultInjectable fi)) {
+            return failAndRecord(componentId, action,
+                    "component does not implement FaultInjectable");
+        }
+        try {
+            fi.clear(action);
+        } catch (RuntimeException e) {
+            return failAndRecord(componentId, action, "clear threw: " + e.getMessage());
+        }
+        recorder.accept(Event.sim("sim.fault-cleared", componentId,
+                Map.of("action", action.type())));
+        return InjectionResult.ok();
+    }
+
+    private InjectionResult failAndRecord(String componentId, FaultAction action, String reason) {
+        recorder.accept(Event.sim("sim.fault-inject-failed", componentId,
+                Map.of("action", action.type(), "reason", reason)));
+        return InjectionResult.fail(reason);
+    }
+
     /** 校验（不依赖实例，只依赖注册表元数据 + 拓扑解析信息）——供 T11 的 timeline 校验期复用。 */
     public InjectionResult precheck(String componentId, FaultAction action) {
         if (sutIds.contains(componentId)) {

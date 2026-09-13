@@ -28,7 +28,8 @@ import java.util.concurrent.TimeUnit;
  * 场景最小执行（计划 T11）：校验 → 实例化 → 拓扑排序 → 启动 → 运行 → 统一清理。
  *
  * <p>M0 结束条件＝SUT 正常退出（{@link #notifySutExit(boolean)}）或显式 {@link #stop()}；
- * timeline 在 M0 仅校验不执行（热注入走 {@link #inject(FaultAction)}）。
+ * timeline 自 M1 T16 起由 {@link TimelineScheduler} 自动执行（以启动为 t0，duration 到期自动
+ * clear），注入失败/警告计入 {@link #result()}；热注入走 {@link #inject(FaultAction)}。
  * 不新增 DSL 字段（计划 §2/T11）。
  */
 public final class ScenarioEngine implements AutoCloseable {
@@ -44,11 +45,13 @@ public final class ScenarioEngine implements AutoCloseable {
     private final List<Event> recorded = new ArrayList<>();
     private final ComponentManager manager = new ComponentManager();
     private final ScenarioRuntime runtime = new ScenarioRuntime(recorded::add);
+    private final ScenarioResult result = ScenarioResult.create();
     private final Map<String, VirtualComponent> byId = new ConcurrentHashMap<>();
     private final List<String> warnings = new ArrayList<>();
     private final CountDownLatch sutExit = new CountDownLatch(1);
     private volatile boolean started;
     private volatile SutStopper sutStopper;
+    private volatile TimelineScheduler timeline;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
@@ -114,6 +117,11 @@ public final class ScenarioEngine implements AutoCloseable {
 
         manager.startAll(order.stream().filter(byId::containsKey).toList(), byId::get);
         started = true;
+        // 时间线执行器（T16）：全部组件启动完成的当前时刻为 t0，非空才启动
+        if (!scenario.timeline().isEmpty()) {
+            timeline = new TimelineScheduler(scenario.timeline(), runtime, result);
+            timeline.start();
+        }
         bus.publish(Event.sim("sim.scenario-started", scenario.name(), Map.of()));
     }
 
@@ -289,6 +297,11 @@ public final class ScenarioEngine implements AutoCloseable {
         return runtime;
     }
 
+    /** 场景结果收集器（T16）：注入失败/断言评估（T20 写入）/警告；结束经 snapshot() 固化。 */
+    public ScenarioResult result() {
+        return result;
+    }
+
     public Map<String, VirtualComponent> components() {
         return Map.copyOf(byId);
     }
@@ -309,6 +322,10 @@ public final class ScenarioEngine implements AutoCloseable {
     public void stop() {
         if (!started) {
             return;
+        }
+        // 场景终止后不再注入：先关停时间线，取消尚未触发的排定动作（T16）
+        if (timeline != null) {
+            timeline.close();
         }
         if (sutStopper != null) {
             manager.registerExtraStop("sut", sutStopper::stopSut);
