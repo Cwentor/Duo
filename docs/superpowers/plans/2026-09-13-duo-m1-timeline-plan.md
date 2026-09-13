@@ -1,6 +1,6 @@
-# Duo M1 实施计划 —— 时间线注入与断言库（v3）
+# Duo M1 实施计划 —— 时间线注入与断言库（v4 · 定稿）
 
-- 日期：2026-09-13（v3 修订）
+- 日期：2026-09-13（v4 终审修订）
 - 依据：设计文档 v1.0（冻结）§14 M1 行；M0 已验收（commit 29b1a42）
 - 范围：M0 遗留 8 项 + 设计文档 §14 M1 产出 + v2/v3 新增的验收前提项
 - 状态：待用户批准（批准前不动代码）
@@ -12,9 +12,9 @@
 
 **完整 §8 金标准 YAML（含 timeline 与 M1 行为剧本）运行——`crash workers[3]` 于 T+10s 宕机 → `failoverWithin 30s` 断言通过，且为非空真通过。** 具体化为一条验收测试：
 
-- 拓扑：M0 金标准 virtual 变体（zk virtual + master real SUT + workers virtual），`count: 4`，`capacity.slots: 4`
-- **M1 行为剧本**：DAG 改为 4 条并行长任务（无相互依赖），**`duration: 15s`**——配合 T19 的派发选择修复（每 worker 恰好 1 条），保证 T+10s 时 workers[3] 确定持有在途任务；去掉 M0 的 `successRate: 0.0` unstable-task（crash 成为唯一失败源）
-- **时序算术（结构性验证，P1-B 修订）**：T+0 4 任务各占 1 worker → 全忙至 ~T+15s；T+10s crash → workers[3] 任务回 PENDING，其余 3 feed 全忙 → **重派发等首批终态（~T+15s）后发生** → 重派发任务跑 15s → 终态 ~T+30s；断言死线 = fault-injected（T+10s）+ 30s = **T+40s，结构性余量 10s**（Thread.sleep 时长不随机器漂移，余量稳定）
+- 拓扑：M0 金标准 virtual 变体（zk virtual + master real SUT + workers virtual），`count: 4`，**`capacity.slots: 1`**（v4 终审钉死：slots=1 使首轮派发后各 feed freeSlots=0，T+10s crash 时无 feed 可接 → 重派发必须等首批终态 ~T+15s——§1 算术的前提即"每 worker 同时只承载 1 条任务"；心跳 100ms 刷新 SlotReport 可忽略；若 slots>1 则重派发即时、restart@27s 落在 SUT 退出之后，时间线第三动作空转，故 slots=1 是唯一自洽取值）
+- **M1 行为剧本**：DAG 改为 4 条并行长任务（无相互依赖），**`duration: 15s`，`jitter: 0.1` 显式钉死**（最坏路径：首批 16.5s 终态 → 重派发 → 16.5s → 终态 ~T+33s，余量仍足；实现时不得随手改）——保证 T+10s 时 workers[3] 确定持有在途任务；去掉 M0 的 `successRate: 0.0` unstable-task（crash 成为唯一失败源）
+- **时序算术（结构性验证，v4 以 slots=1 为前提复核）**：T+0 4 任务各占 1 worker（slots=1，freeSlots 全 0）→ 全忙至 ~T+15s；T+10s crash → workers[3] 任务回 PENDING，其余 3 feed freeSlots=0 无可接 → **重派发等首批终态（~T+15s + SlotReport 心跳刷新 ~100ms）后发生** → 重派发任务跑 15s → 终态 ~T+30s（jitter 最坏 ~T+33s）；断言死线 = fault-injected（T+10s）+ 30s = **T+40s，结构性余量 ≥7s**（Thread.sleep 时长不随机器漂移）；restart@27s 落在首批终态（15s）之后、DAG 终态（~30s）之前，acceptor 存活可接重启实例
 - 时间线：`crash workers[3]` @10s → `registry-flap zk` @20s（flap 5s，结束于 25s）→ `restart workers[3]` @27s（与 flap 结束错开 2s，且早于 DAG 终态 ~T+30s，acceptor 存活可接重启实例）
 - 断言（YAML 内置 + JUnit 双轨）：
   - `failoverWithin { seconds: 30 }`：起点＝`sim.fault-injected` 且 **payload.action=crash 过滤**（restart/flap 同样发该事件）；成功＝**crash 后发生重派发（attempt 递增的 dispatched）且该 taskId 随后到达 SUCCESS，重派发目标不得为 crash 时刻的 workers-3——`sim.worker-instance-restarted` 之后的 workers-3 视为不同实例（§7.1 全新实例语义），其回报计入转移成功**（判定式唯一，见 T20）
@@ -51,11 +51,11 @@
 | T20 | 断言库 v0 | kernel `assert` 包：接口 + `failoverWithin`（**锚定：payload.action=crash 过滤；判定式唯一：crash 后 attempt 递增的重派发 + 该 taskId 随后 SUCCESS + 目标 ≠ crash 时刻 workers-3，重派发时间戳晚于 `sim.worker-instance-restarted` 的 workers-3 视为新实例**）/ `noTaskLost {requireAllSuccess}` / `eventSequence` / `affectedTasksAtLeast`；YAML 内置评估写入 ScenarioResult；JUnit 编程式包装落 `duo-sim-junit` 模块 | 单测：三断言正反例 + 守护断言 + 重启后 workers-3 作为目标通过的反向用例 |
 | T21 | 事件录制 | `EventRecorder`：总线订阅 → JSON Lines（`build/scenarios/<name>/events.jsonl`）→ 场景结束 flush → 回读 API | 单测：落盘/回读等价 |
 | T22 | custom-hook | `HookRegistry.register(name, Consumer<HookContext>)`；DSL 形态：timeline 动作 `custom-hook` 的 `params: {hook: 名称, ...透传}`，target 允许 SUT（validator 对 `action=custom-hook` 豁免 SUT 检查）；hook 执行发 `sim.hook-executed {hook, target}` 参与断言 | 单测：注册/触发/事件/validator 豁免 |
-| T23 | M1 金标准 + 验收测试 | 金标准 YAML（§1 全部要素：4 并行 `duration: 15s` 任务、timeline 3 动作、assertions 4 条、duration 带单位）；`FailoverAcceptanceTest`：校验→启动→时间线自动执行→断言驱动等待→ScenarioResult 全绿；M0 TierSwap 回归 | **全绿＝M1 验收通过** |
+| T23 | M1 金标准 + 验收测试 | 金标准 YAML（§1 全部要素：4 并行 `duration: 15s` 任务、timeline 3 动作、assertions 4 条、duration 带单位 **且 loader 校验单位**——无单位值拒绝解析）；`FailoverAcceptanceTest`：校验→启动→时间线自动执行→断言驱动等待→ScenarioResult 全绿；M0 TierSwap 回归 | **全绿＝M1 验收通过** |
 
 ## 4. 风险与对策
 
-1. **时序漂移**：相对时序在慢 CI 上挤压。对策：断言窗口 30s，时序算术留 **10s 结构性余量**（§1，Thread.sleep 不漂移）；任务时长与 at 值 YAML 可调。
+1. **时序漂移**：相对时序在慢 CI 上挤压。对策：断言窗口 30s，时序算术留 **≥7s 结构性余量**（§1 v4：slots=1 + jitter 最坏 ~T+33s，Thread.sleep 不漂移）；任务时长与 at 值 YAML 可调。
 2. **flap/restart 窗口竞争**：已错开（flap 结束 25s，restart 27s）。
 3. **转移判定数据完整性**：T19 (c) 补 instance（线协议现成字段）+ T20 判定式唯一化 + `affectedTasksAtLeast` 守护，三层防护。
 4. **SUT 改造范围**：T19 = 派发选择修复 + 崩溃转移 + 事件治理三项，估计 ~200 行（v2 的 ~100 行上调，P1-A 采纳）。
@@ -75,3 +75,7 @@ T16 → T17 → **T19** → T18 → T20 → T21 → T22 → T23（T19 提前：T
   2. **[P1-B] duration 30s→15s 修时序算术**：30s 任务下重派发需等首批终态（~T+30s）再跑 30s → 终态 ~T+60s，结构性超出 T+40s 死线。15s 后重派发 ~T+15s、终态 ~T+30s、余量 10s；§1 补完整时序算术，风险 1 对策同步；
   3. **[P2] failoverWithin 判定式唯一化**：采纳"crash 时刻实例排除 + 重启事件后的 workers-3 视为新实例"（时间戳比对 `sim.worker-instance-restarted`），消除 §1 内"instance ≠ workers-3"与"重启后计入"的自相矛盾；T20 锚定补 payload.action=crash 过滤（restart/flap 同发 fault-injected）+ 反向用例；
   4. **[P3] 四项**：T19 去重 `sut.task-dispatched` 双发（保留状态机回调单一来源）；T18 钉死 flap 期间 registerEndpoint 边界（写快照、恢复后可见、flap 期间发现为空）+ 边界单测；范围表注明 task-kill 仅单测覆盖；事件治理利用线协议 TaskStatus 现成 instanceName（比 v2 预想更便宜）。
+- **v4（2026-09-13，终审定稿）**：依终审修订，改完即批准——
+  1. **slots 4→1 消除 §1 自相矛盾**：slots=4 下各 feed freeSlots=3，crash 后重派发即时（~T+10s）、终态 ~T+25s，SUT 先于 restart@27s 退出——时间线第三动作空转。钉死 `capacity.slots: 1`：首轮派发后 freeSlots 全 0，重派发必须等首批终态 ~T+15s（+SlotReport 心跳刷新 ~100ms），§1 算术逐句成立，restart@27s 与 DAG 终态间保有 ≥3s 结构性余量；分布单测/守护断言/noTaskLost 在 slots=1 下不受影响；
+  2. jitter 0.1 显式钉进 §1 与金标准（最坏路径 ~T+33s，余量仍足），实现时不得随手改；
+  3. T23 恢复"loader 校验单位"（无单位 duration 拒绝解析）——v2 有、v3 误删。
