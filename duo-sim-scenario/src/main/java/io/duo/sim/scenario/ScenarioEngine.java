@@ -1,0 +1,295 @@
+package io.duo.sim.scenario;
+
+import io.duo.sim.kernel.api.ComponentContext;
+import io.duo.sim.kernel.api.ComponentId;
+import io.duo.sim.kernel.api.Contract;
+import io.duo.sim.kernel.api.Event;
+import io.duo.sim.kernel.api.ExposedEndpoint;
+import io.duo.sim.kernel.api.FaultAction;
+import io.duo.sim.kernel.api.SimClock;
+import io.duo.sim.kernel.api.Tier;
+import io.duo.sim.kernel.api.VirtualComponent;
+import io.duo.sim.kernel.core.ComponentManager;
+import io.duo.sim.kernel.core.ContractRegistry;
+import io.duo.sim.kernel.core.ScenarioRuntime;
+import io.duo.sim.kernel.core.SimpleEventBus;
+import io.duo.sim.kernel.core.WiringResolver;
+import io.duo.sim.scenario.model.Scenario;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 场景最小执行（计划 T11）：校验 → 实例化 → 拓扑排序 → 启动 → 运行 → 统一清理。
+ *
+ * <p>M0 结束条件＝SUT 正常退出（{@link #notifySutExit(boolean)}）或显式 {@link #stop()}；
+ * timeline 在 M0 仅校验不执行（热注入走 {@link #inject(FaultAction)}）。
+ * 不新增 DSL 字段（计划 §2/T11）。
+ */
+public final class ScenarioEngine implements AutoCloseable {
+
+    /** SUT 停止回调（T12 接入协作停止；未接入时 M0 场景结束直接跳过）。 */
+    public interface SutStopper {
+        void stopSut();
+    }
+
+    private final Scenario scenario;
+    private final ContractRegistry registry;
+    private final SimpleEventBus bus = new SimpleEventBus();
+    private final List<Event> recorded = new ArrayList<>();
+    private final ComponentManager manager = new ComponentManager();
+    private final ScenarioRuntime runtime = new ScenarioRuntime(recorded::add);
+    private final Map<String, VirtualComponent> byId = new ConcurrentHashMap<>();
+    private final List<String> warnings = new ArrayList<>();
+    private final CountDownLatch sutExit = new CountDownLatch(1);
+    private volatile boolean started;
+    private volatile SutStopper sutStopper;
+
+    public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
+        this.scenario = scenario;
+        this.registry = registry;
+        bus.subscribe(recorded::add);
+    }
+
+    /** 加载即校验（§8 快速失败：errors 非空抛 IllegalArgumentException）。 */
+    public static ScenarioEngine validated(Scenario scenario, ContractRegistry registry) {
+        var report = new ScenarioValidator(registry).validate(scenario);
+        if (!report.ok()) {
+            throw new IllegalArgumentException("scenario validation failed: "
+                    + String.join("; ", report.errors()));
+        }
+        ScenarioEngine e = new ScenarioEngine(scenario, registry);
+        e.warnings.addAll(report.warnings());
+        return e;
+    }
+
+    /** 启动全部内核托管组件（SUT 与 external 节点不在此列）。 */
+    public void startComponents() {
+        registry.validateDefaults();
+        Map<String, Scenario.NodeSpec> specById = new LinkedHashMap<>();
+        scenario.nodes().forEach(n -> specById.put(n.id(), n));
+        Map<String, WiringResolver.NodeView> views = new LinkedHashMap<>();
+        specById.values().forEach(n -> views.put(n.id(), toView(n)));
+
+        List<String> order = WiringResolver.topoOrder(new ArrayList<>(views.values()));
+        for (String id : order) {
+            var n = specById.get(id);
+            if (n.sut() || isExternal(n) || !startable(n)) {
+                continue;
+            }
+            var provider = registry.resolve(Contract.fromYaml(n.contract()),
+                    Tier.fromYaml(n.tier()), n.impl());
+            VirtualComponent c = provider.newComponent();
+            Map<String, String> cfg = new LinkedHashMap<>(n.config());
+            cfg.putAll(n.capacity());
+            if (n.count() != null) {
+                cfg.put("count", String.valueOf(n.count()));
+            }
+            mergeBehaviors(cfg, n);
+            var wiring = WiringResolver.resolveNode(views.get(id), views,
+                    (contract, tier) -> {
+                        var t = specById.values().stream()
+                                .filter(x -> x.contract().equalsIgnoreCase(contract)
+                                        && x.tier().equalsIgnoreCase(tier))
+                                .findFirst().orElse(null);
+                        return t == null ? null : registry.resolve(
+                                Contract.fromYaml(t.contract()),
+                                Tier.fromYaml(t.tier()), t.impl()).metadata();
+                    },
+                    (slot, targetId) -> byId.get(targetId),
+                    (slot, targetId) -> endpointOf(specById.get(targetId)));
+            c.init(new ComponentContext(new ComponentId(id), cfg, SimClock.real(), bus,
+                    wiring, exposes(n)));
+            byId.put(id, c);
+            runtime.registerTarget(id, new ScenarioRuntime.Target(
+                    c, id, n.count() == null ? 1 : n.count()));
+        }
+        specById.values().stream().filter(Scenario.NodeSpec::sut)
+                .findFirst().ifPresent(s -> runtime.markSut(s.id()));
+
+        manager.startAll(order.stream().filter(byId::containsKey).toList(), byId::get);
+        started = true;
+        bus.publish(Event.sim("sim.scenario-started", scenario.name(), Map.of()));
+    }
+
+    /** 内核是否应启动该节点（in-process/real kernel-hosted 均为 VirtualComponent 路径）。 */
+    private static boolean startable(Scenario.NodeSpec n) {
+        String mode = nzMode(n);
+        return "in-process".equals(mode);
+    }
+
+    private static boolean isExternal(Scenario.NodeSpec n) {
+        return "external".equals(nzMode(n));
+    }
+
+    private static String nzMode(Scenario.NodeSpec n) {
+        return n.launch() == null ? "in-process" : n.launch().mode();
+    }
+
+    /**
+     * 启动 in-process SUT（T12 接入）：反射实例化 {@code launch.main} 的 SutMain，
+     * directBindings＝已启动组件（nodeId→实例），ready 后登记停止器；
+     * {@code sut.exited/sut.crashed} 事件自动触发场景结束信号。
+     */
+    public SutLauncherHandle startSut() {
+        var spec = scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
+                .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
+        if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
+            throw new IllegalStateException("M0 engine only supports in-process SUT launch");
+        }
+        try {
+            var cls = Class.forName(spec.launch().main());
+            var main = (io.duo.sim.kernel.api.SutMain)
+                    cls.getDeclaredConstructor().newInstance();
+            // SUT 退出事件 → 场景结束信号（M0：不新增 DSL 字段）
+            var launcher = new io.duo.sim.kernel.sut.SutLauncher(
+                    spec.id(), main, Map.copyOf(byId), spec.config(), Map.of(),
+                    e -> {
+                        recorded.add(e);
+                        if (e.type().equals("sut.exited")) {
+                            notifySutExit(true);
+                        } else if (e.type().equals("sut.crashed")) {
+                            notifySutExit(false);
+                        }
+                    },
+                    java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"));
+            launcher.start();
+            registerSutStopper(launcher::stop);
+            return new SutLauncherHandle(spec, launcher);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot launch SUT main: "
+                    + spec.launch().main(), e);
+        }
+    }
+
+    /** SUT 启动句柄。 */
+    public static final class SutLauncherHandle {
+        final Scenario.NodeSpec spec;
+        final io.duo.sim.kernel.sut.SutLauncher launcher;
+
+        SutLauncherHandle(Scenario.NodeSpec spec, io.duo.sim.kernel.sut.SutLauncher launcher) {
+            this.spec = spec;
+            this.launcher = launcher;
+        }
+
+        public io.duo.sim.kernel.sut.SutLauncher launcher() {
+            return launcher;
+        }
+    }
+
+    private static WiringResolver.NodeView toView(Scenario.NodeSpec n) {
+        var slots = new LinkedHashMap<String, WiringResolver.SlotView>();
+        n.wiring().forEach((slot, w) -> slots.put(slot,
+                new WiringResolver.SlotView(w.node(),
+                        w.contract() == null ? slot : w.contract(), w.path())));
+        return new WiringResolver.NodeView(n.id(), n.contract(),
+                WiringResolver.TierView.valueOf(n.tier().toUpperCase()), slots, isExternal(n));
+    }
+
+    /** behaviors → config 展平（供组件 BehaviorResolver 消费，M0 两级 match 已满足）。 */
+    private void mergeBehaviors(Map<String, String> cfg, Scenario.NodeSpec n) {
+        var beh = scenario.behaviors();
+        for (var b : beh.bindings()) {
+            if (!n.id().equals(b.node())) {
+                continue;
+            }
+            var p = beh.profiles().get(b.profile());
+            if (p == null) {
+                continue;
+            }
+            String prefix = (b.taskName() == null || "default".equals(b.profile()))
+                    ? "behaviors.default."
+                    : "behaviors.named." + b.taskName() + ".";
+            p.forEach((k, v) -> cfg.put(prefix + k, v));
+        }
+    }
+
+    private static Map<Contract, ExposedEndpoint> exposes(Scenario.NodeSpec n) {
+        Map<Contract, ExposedEndpoint> out = new LinkedHashMap<>();
+        for (var e : n.exposes()) {
+            var c = Contract.fromYaml(e.contract());
+            out.put(c, ExposedEndpoint.tcp(c,
+                    e.addr() == null ? "127.0.0.1" : e.addr(),
+                    e.port() == null ? 0 : e.port()));
+        }
+        return out;
+    }
+
+    /** 接线用的目标端点（exposes 首项）。port 0 的 in-process 节点在 start 后才有真实端口。 */
+    private String endpointOf(Scenario.NodeSpec target) {
+        var c = byId.get(target.id());
+        if (c != null) {
+            var eps = c.endpoints();
+            if (!eps.isEmpty()) {
+                return eps.get(0).address();
+            }
+        }
+        var e = target.exposes().stream().findFirst().orElse(null);
+        if (e == null) {
+            return null;
+        }
+        return (e.addr() == null ? "127.0.0.1" : e.addr())
+                + ":" + (e.port() == null ? 0 : e.port());
+    }
+
+    /** SUT 退出信号（M0 场景结束条件）。 */
+    public void notifySutExit(boolean normal) {
+        bus.publish(Event.sim(normal ? "sim.sut-exited" : "sim.sut-crashed", "sut", Map.of()));
+        sutExit.countDown();
+    }
+
+    public boolean awaitSutExit(long timeoutMs) throws InterruptedException {
+        return sutExit.await(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    public List<Event> events() {
+        return List.copyOf(recorded);
+    }
+
+    public List<String> warnings() {
+        return List.copyOf(warnings);
+    }
+
+    public ScenarioRuntime runtime() {
+        return runtime;
+    }
+
+    public Map<String, VirtualComponent> components() {
+        return Map.copyOf(byId);
+    }
+
+    public SimpleEventBus bus() {
+        return bus;
+    }
+
+    /** 热注入（T10）。 */
+    public ScenarioRuntime.InjectionResult inject(FaultAction action) {
+        return runtime.inject(action);
+    }
+
+    public void registerSutStopper(SutStopper s) {
+        this.sutStopper = s;
+    }
+
+    public void stop() {
+        if (!started) {
+            return;
+        }
+        if (sutStopper != null) {
+            manager.registerExtraStop("sut", sutStopper::stopSut);
+        }
+        manager.stopAll();
+        bus.publish(Event.sim("sim.scenario-finished", scenario.name(), Map.of()));
+        started = false;
+    }
+
+    @Override
+    public void close() {
+        stop();
+    }
+}

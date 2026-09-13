@@ -1,7 +1,7 @@
 package io.duo.sim.kernel.api;
 
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.Optional;
 
 /**
  * in-process SUT 上下文（§7.3）：内核注入端点清单、直连对象、事实发布门面、
@@ -12,8 +12,16 @@ public interface SutContext {
     /** 端点清单（与 ExposedEndpoint/配置文件同口径）。 */
     Map<String, String> endpointByContract();
 
-    /** interface-direct 绑定的契约对象（direct 槽才有；键＝契约名小写）。 */
+    /** interface-direct 绑定的契约对象（direct 槽才有；键＝槽名）。 */
     Map<String, Object> directBindings();
+
+    /** 类型化访问：按契约取 direct 绑定（SUT 消费 registry 等契约的推荐方式）。 */
+    default <T> Optional<T> direct(Contract contract, Class<T> type) {
+        return directBindings().values().stream()
+                .filter(type::isInstance)
+                .map(type::cast)
+                .findFirst();
+    }
 
     /** 内部事实发布门面（事件统一 sut. 前缀，§7.3/§7.4）。 */
     SutEventPublisher events();
@@ -29,10 +37,4 @@ public interface SutContext {
 
     /** 就绪回调：须在 ready 超时（默认 60s）内到达，否则按启动失败处理。 */
     void ready();
-}
-
-/** SUT 内部事实发布 API（内核实现）。 */
-interface SutEventPublisher {
-
-    void publish(String type, Map<String, Object> payload);
 }

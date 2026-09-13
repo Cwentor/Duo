@@ -15,5 +15,9 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-kernel</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
     </dependencies>
 </project>
