@@ -15,5 +15,16 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-kernel</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-scenario</artifactId>
+        </dependency>
+        <!-- 测试场景用 DemoScheduler（examples 不依赖 control，无循环） -->
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-examples</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
