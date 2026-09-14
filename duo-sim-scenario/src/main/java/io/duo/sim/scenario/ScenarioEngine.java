@@ -42,7 +42,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private final Scenario scenario;
     private final ContractRegistry registry;
     private final SimpleEventBus bus = new SimpleEventBus();
-    private final List<Event> recorded = new ArrayList<>();
+    /** 事件流（多线程写入：SUT sink / 时间线线程 / 门面 watch）→ 必须线程安全。 */
+    private final List<Event> recorded = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final ComponentManager manager = new ComponentManager();
     /** 注入事件经 bus 汇流（与内存流/录制共用单一订阅路径，T21）。 */
     private final ScenarioRuntime runtime = new ScenarioRuntime(bus::publish);

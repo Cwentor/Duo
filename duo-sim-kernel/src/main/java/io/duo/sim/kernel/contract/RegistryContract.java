@@ -17,6 +17,16 @@ import java.util.function.Consumer;
  *
  * <p>M0 virtual 档＝VirtualRegistry：端点形态 NONE、interface-direct 注入本接口
  * （含 SUT master 注册自身端点、workers 发现 master 的查询 API，计划 §2）。
+ *
+ * <p><b>两档 flap 语义差异（M2 计划 D3）</b>——同一动作类型在不同档位的真实语义不同，
+ * 消费方（SUT）必须知道：
+ * <ul>
+ *   <li><b>virtual 档</b>：flap 后**端点快照重放**——临时节点自动重建，对消费方透明
+ *       （M1 T18）；</li>
+ *   <li><b>embedded 档</b>：flap 是**真实会话与临时节点丢失**（TestingServer 闪断）——
+ *       任何消费方都必须自行重连并重新注册，框架不代劳（M2 T25）。这是真实 ZK 行为，
+ *       也是 embedded 档的验收价值所在。</li>
+ * </ul>
  */
 public interface RegistryContract {
 

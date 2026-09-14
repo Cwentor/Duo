@@ -15,5 +15,26 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-kernel</artifactId>
         </dependency>
+        <!-- embedded 档：JVM 内真实第三方协议实现 -->
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-framework</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-test</artifactId>
+            <!-- curator-test 传递 junit-jupiter-api 5.6.2，与项目的 5.11.4 冲突
+                 （surefire 测试发现失败）；排除后由父 pom 统一版本 -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.junit.jupiter</groupId>
+                    <artifactId>junit-jupiter-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.junit.platform</groupId>
+                    <artifactId>junit-platform-commons</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
     </dependencies>
 </project>
