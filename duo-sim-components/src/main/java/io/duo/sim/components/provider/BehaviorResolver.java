@@ -134,8 +134,16 @@ public final class BehaviorResolver {
                 && taskName.length() >= head.length() + tail.length();
     }
 
+    /** 时长解析：带单位（ms/s/m）优先（T23 单位校验）；无单位按毫秒向后兼容 M0 YAML。 */
     private static long parseLong(String v, long dflt) {
-        return v == null ? dflt : Long.parseLong(v.trim());
+        if (v == null) {
+            return dflt;
+        }
+        String t = v.trim();
+        if (t.endsWith("ms") || t.endsWith("s") || t.endsWith("m")) {
+            return io.duo.sim.kernel.util.Durations.parseMillis(t);
+        }
+        return Long.parseLong(t);
     }
 
     private static double parseDouble(String v, double dflt) {

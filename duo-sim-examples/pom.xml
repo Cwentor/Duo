@@ -27,5 +27,9 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-scenario</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-junit</artifactId>
+        </dependency>
     </dependencies>
 </project>

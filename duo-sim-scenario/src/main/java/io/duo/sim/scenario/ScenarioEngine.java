@@ -44,7 +44,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private final SimpleEventBus bus = new SimpleEventBus();
     private final List<Event> recorded = new ArrayList<>();
     private final ComponentManager manager = new ComponentManager();
-    private final ScenarioRuntime runtime = new ScenarioRuntime(recorded::add);
+    /** 注入事件经 bus 汇流（与内存流/录制共用单一订阅路径，T21）。 */
+    private final ScenarioRuntime runtime = new ScenarioRuntime(bus::publish);
     private final ScenarioResult result = ScenarioResult.create();
     private final Map<String, VirtualComponent> byId = new ConcurrentHashMap<>();
     private final List<String> warnings = new ArrayList<>();
@@ -52,12 +53,16 @@ public final class ScenarioEngine implements AutoCloseable {
     private volatile boolean started;
     private volatile SutStopper sutStopper;
     private volatile TimelineScheduler timeline;
-    private volatile EventRecorder recorder;
+    private final EventRecorder recorder;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
         this.registry = registry;
+        // 录制与内存流同一订阅点（构造即订阅）：保证两条流事件数一致（T21）
+        this.recorder = EventRecorder.to(java.nio.file.Path.of("build", "scenarios",
+                scenario.name(), "events.jsonl"));
         bus.subscribe(recorded::add);
+        bus.subscribe(recorder::onEvent);
     }
 
     /** 加载即校验（§8 快速失败：errors 非空抛 IllegalArgumentException）。 */
@@ -189,7 +194,8 @@ public final class ScenarioEngine implements AutoCloseable {
             var launcher = new io.duo.sim.kernel.sut.SutLauncher(
                     spec.id(), main, Map.copyOf(byId), spec.config(), Map.of(),
                     e -> {
-                        recorded.add(e);
+                        // 统一经 bus 汇流：内存流与录制共用单一订阅路径（T21）
+                        bus.publish(e);
                         if (e.type().equals("sut.exited")) {
                             notifySutExit(true);
                         } else if (e.type().equals("sut.crashed")) {
