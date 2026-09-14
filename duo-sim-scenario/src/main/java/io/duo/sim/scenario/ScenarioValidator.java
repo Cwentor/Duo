@@ -222,6 +222,17 @@ public final class ScenarioValidator {
                     errors.add("timeline instance index on '" + componentId
                             + "' requires instanceControl capability");
                 }
+                // M2 验收 MEDIUM 修正：两档 flap 的 duration 语义不对称——virtual 档是
+                // 持续窗口（duration 有效），embedded 档是瞬时整服 restart（duration 被
+                // 忽略）。对 embedded 节点误写 duration 给显式警告，不静默
+                if ("registry-flap".equals(t.action())
+                        && t.duration() != null && !t.duration().isBlank()
+                        && "embedded".equalsIgnoreCase(targetNode.tier())) {
+                    warnings.add("timeline 'registry-flap' on embedded registry '"
+                            + componentId + "': duration '" + t.duration()
+                            + "' is ignored (embedded flap is an instantaneous full restart; "
+                            + "only the virtual tier supports a timed window)");
+                }
             }
         }
 

@@ -49,9 +49,10 @@ import java.util.function.Consumer;
  * embedded 档 flap 后**会话与临时节点真实丢失**，任何消费方都必须自行重连并重建节点——
  * 这是真实 ZK 行为，也是 M2 要验证的 SUT 逻辑。见 {@link RegistryContract} javadoc。
  *
- * <p>节点路径与 virtual 档一致（{@code /duo/endpoints/&lt;contract&gt;}），端点写在
- * **持久节点**上由本适配器维护（门面会话持有）；SUT 侧自行注册的临时节点按真实 ZK 语义
- * 随会话消失。
+ * <p>节点路径与 virtual 档一致（{@code /duo/endpoints/&lt;contract&gt;}），端点由本适配器
+ * 以 **EPHEMERAL 节点**写入（{@code registerEndpoint}）——门面会话断开/闪断即消失，
+ * 这正是 embedded 档"消费方必须自愈"的前提（与 virtual 档的快照重放相反，见 D3）。
+ * SUT 侧自行注册的临时节点同样按真实 ZK 语义随会话消失。
  */
 public final class CuratorRegistry implements VirtualComponent, RegistryContract,
         io.duo.sim.kernel.api.FaultInjectable {

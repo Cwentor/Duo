@@ -24,7 +24,8 @@ class ScenarioValidatorTest {
 
     // ---- 测试替身（kernel-api 可见）----
 
-    static class RealStub implements VirtualComponent {
+    static class RealStub implements VirtualComponent,
+            io.duo.sim.kernel.api.FaultInjectable {
         @Override public ComponentId id() {
             return new ComponentId("stub");
         }
@@ -36,6 +37,9 @@ class ScenarioValidatorTest {
         @Override public List<io.duo.sim.kernel.api.ExposedEndpoint> endpoints() {
             return List.of();
         }
+
+        @Override public void inject(io.duo.sim.kernel.api.FaultAction a) { }
+        @Override public void clear(io.duo.sim.kernel.api.FaultAction a) { }
     }
 
     static ComponentProvider provider(Contract c, Tier t, String name, boolean def,
@@ -204,6 +208,49 @@ class ScenarioValidatorTest {
                 List.of(), List.of());
         var r = v.validate(s);
         assertTrue(String.join(";", r.errors()).contains("no binding"));
+    }
+
+    // ---- M2 验收 MEDIUM：embedded flap 的 duration 语义不对称警告 ----
+
+    @Test
+    void embeddedFlapWithDurationProducesWarning() {
+        // embedded 档 flap 是瞬时 restart（duration 被忽略）→ 显式警告，不静默
+        var reg = new ContractRegistry();
+        reg.register(provider(Contract.REGISTRY, Tier.EMBEDDED, "curator-reg", true,
+                new io.duo.sim.kernel.api.CapabilityMetadata(
+                        io.duo.sim.kernel.api.EndpointShape.THIRD_PARTY, true, false,
+                        java.util.Set.of(io.duo.sim.kernel.api.FaultAction.REGISTRY_FLAP),
+                        true)));
+        reg.register(provider(Contract.SCHEDULER, Tier.REAL, "ds", true,
+                io.duo.sim.kernel.api.CapabilityMetadata.duoPort(false, java.util.Set.of())));
+        reg.validateDefaults();
+        var embeddedZk = new Scenario.NodeSpec("zk", "registry", "embedded", false, null,
+                Map.of(), List.of(), Map.of(), null, Map.of(), null);
+        var scenario = new Scenario("t",
+                List.of(embeddedZk, node("m", "scheduler", "real", true, null)),
+                new Scenario.Behaviors(Map.of(), List.of()),
+                List.of(new Scenario.TimelineEntry("10s", "registry-flap", "zk", "5s", Map.of())),
+                List.of());
+        var r = new ScenarioValidator(reg).validate(scenario);
+        assertTrue(r.ok(), () -> "should warn not error: " + r.errors());
+        assertTrue(r.warnings().stream().anyMatch(w -> w.contains("duration")
+                        && w.contains("embedded")),
+                () -> "expected embedded-duration warning, got: " + r.warnings());
+    }
+
+    @Test
+    void virtualFlapWithDurationProducesNoWarning() {
+        // virtual 档 flap 有持续窗口 → duration 有效，无警告
+        var v = new ScenarioValidator(registry());
+        var scenario = new Scenario("t",
+                List.of(node("zk", "registry", "virtual", false, null),
+                        node("m", "scheduler", "real", true, null)),
+                new Scenario.Behaviors(Map.of(), List.of()),
+                List.of(new Scenario.TimelineEntry("10s", "registry-flap", "zk", "5s", Map.of())),
+                List.of());
+        var r = v.validate(scenario);
+        assertTrue(r.warnings().stream().noneMatch(w -> w.contains("embedded")),
+                () -> "virtual tier must not warn: " + r.warnings());
     }
 
     // ---- M0 assertions 警告 ----

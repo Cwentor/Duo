@@ -44,6 +44,7 @@
 **D2：CLI 与内核的进程关系**——REST 客户端（跨进程）vs 同进程直连。**决定：两者都支持**，同进程模式为缺省（脚本化验收最简：`duo run m1-golden.yaml --inject-after 10s "crash workers[2]" --wait`）。跨进程模式用于"运行中的独立进程注入"（更贴近真实运维演练）。
 
 **D3：事件流增量语义**——`GET /events?since=<seq>` 返回序号大于 since 的事件（内核事件流加单调序号）。**决定：序号在控制面侧按读取顺序分配**（不改内核 Event 结构——`Event` 是 record，加字段会破坏 M0/M1/M2 的构造点）。
+**实现前提（T32 判据）**：`ScenarioEngine.events()` 返回的是 `CopyOnWriteArrayList` 的不可变快照（`List.copyOf`），故控制面侧 `ScenarioHost` 必须维护 `lastSeenIndex` 游标并对每次 `events()` 快照做"从 lastSeenIndex 起"的切片；序号在此切片上分配。**并发注意**：ConcurrentHashMap 之外的事件顺序由写入线程决定，`since` 语义保证"不重不漏"（同一快照内），跨快照的严格全序不承诺（与 §11"真实时钟不承诺确定性重放"一致）。
 
 ## 5. 风险与对策
 

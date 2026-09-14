@@ -22,10 +22,12 @@ import java.util.function.Consumer;
  * 消费方（SUT）必须知道：
  * <ul>
  *   <li><b>virtual 档</b>：flap 后**端点快照重放**——临时节点自动重建，对消费方透明
- *       （M1 T18）；</li>
- *   <li><b>embedded 档</b>：flap 是**真实会话与临时节点丢失**（TestingServer 闪断）——
- *       任何消费方都必须自行重连并重新注册，框架不代劳（M2 T25）。这是真实 ZK 行为，
- *       也是 embedded 档的验收价值所在。</li>
+ *       （M1 T18）；且 flap 是**持续窗口**，`FaultAction.durationMillis` 有效（窗口内
+ *       发现为空，窗口结束才重放）；</li>
+ *   <li><b>embedded 档</b>：flap 是**真实会话与临时节点丢失**（TestingServer 整服重启，
+ *       瞬时完成）——任何消费方都必须自行重连并重新注册，框架不代劳（M2 T25）。
+ *       **注意：embedded 的 flap 是瞬时动作，`durationMillis` 被忽略**（无持续窗口；
+ *       消费方的恢复耗时由其自身重连策略决定，而非框架强制的窗口）。</li>
  * </ul>
  */
 public interface RegistryContract {
