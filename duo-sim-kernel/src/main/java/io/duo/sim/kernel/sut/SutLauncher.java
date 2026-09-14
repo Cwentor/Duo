@@ -44,6 +44,8 @@ public final class SutLauncher implements AutoCloseable {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile Runnable stopHandler;
     private final CountDownLatch stopDone = new CountDownLatch(1);
+    /** ready 真实到达标志（区分 ctx.ready() vs finally 放行）。 */
+    private volatile boolean readyConfirmed;
     private volatile ExitState exitState;
 
     public SutLauncher(String sutId, SutMain main, Map<String, Object> directBindings,
@@ -82,11 +84,10 @@ public final class SutLauncher implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new ComponentException("SUT ready interrupted: " + sutId, e);
         }
-        // ready 放行但 SUT 已退出＝启动失败（快速失败，§12），抛出真实根因
-        if (exitState != null && !exitState.exited()) {
-            return; // 理论不可达（exited 恒 true）
-        }
-        if (stopDone.getCount() == 0 && exitState != null) {
+        // ready 放行但 SUT 已在 ready 前退出＝启动失败（快速失败，§12）
+        // 注意：ready 已确认后的正常退出（如 demo-scheduler 跑完 DAG）不属于启动失败，
+        // 由 exitState/awaitSutExit 传达
+        if (stopDone.getCount() == 0 && exitState != null && !readyConfirmed) {
             throw new ComponentException("SUT exited before ready: " + sutId
                     + (exitState.normal() ? "" : " (crashed: " + exitState.error() + ")"),
                     exitState.normal() ? null : new IllegalStateException(exitState.error()));
@@ -102,9 +103,11 @@ public final class SutLauncher implements AutoCloseable {
             exitState = new ExitState(true, false, String.valueOf(t));
             eventSink.accept(Event.sut("sut.crashed", sutId,
                     Map.of("error", String.valueOf(t))));
+            // run() 在 ready 前失败：放行 start() 使其快速失败（真实根因而非 ready 超时）
+            if (!readyConfirmed) {
+                ctx.readyLatch.countDown();
+            }
         } finally {
-            // run() 在 ready 前退出也要放行 start()，避免把真实根因拖成 ready 超时
-            ctx.readyLatch.countDown();
             stopDone.countDown();
         }
     }
@@ -175,6 +178,7 @@ public final class SutLauncher implements AutoCloseable {
         private final Map<String, String> endpoints;
         private final Consumer<Event> eventSink;
         final CountDownLatch readyLatch = new CountDownLatch(1);
+        volatile boolean readyConfirmed;
 
         SutContextImpl(SutLauncher owner, Map<String, Object> directBindings,
                        Map<String, String> config, Map<String, String> endpoints,
@@ -219,6 +223,7 @@ public final class SutLauncher implements AutoCloseable {
 
         @Override
         public void ready() {
+            readyConfirmed = true;
             readyLatch.countDown();
         }
     }
