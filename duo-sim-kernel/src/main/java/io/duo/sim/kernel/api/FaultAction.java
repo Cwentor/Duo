@@ -14,11 +14,12 @@ public record FaultAction(String type, ComponentAddress target,
     /** M0 支持的动作类型（生命周期类）。 */
     public static final String CRASH = "crash";
     public static final String RESTART = "restart";
-    /** FaultInjectable 类动作（M0 组件不声明，通路用 fixture 验证）。 */
+    /** FaultInjectable 类动作：M1 T18 交付 registry-flap（registry）与 task-kill（worker 实例级）。 */
     public static final String FREEZE = "freeze";
     public static final String SLOW = "slow";
     public static final String REGISTRY_FLAP = "registry-flap";
     public static final String RESOURCE_EXHAUST = "resource-exhaust";
+    public static final String TASK_KILL = "task-kill";
 
     public record ComponentAddress(ComponentId componentId, Integer instanceIndex) {
 

@@ -267,6 +267,80 @@ class VirtualWorkerTest {
                         && e.sourceId().equals("workers-2")));
     }
 
+    // ---- T18：task-kill ----
+
+    @Test
+    void taskKillTerminatesInFlightTaskWithCancelledReport() throws Exception {
+        // 长任务（5s）→ kill → 应立即收到 CANCELLED 而非等任务自然结束
+        startWorker(1, null, Map.of("behaviors.default.duration", "5000"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+        scheduler.dispatch("t-kill", "plain-task", 1);
+
+        // 任务在途判定走事件总线（sim.worker-task-status RUNNING 是总线事件，非线协议报文）
+        boolean running = false;
+        for (int i = 0; i < 60 && !running; i++) {
+            running = events.stream().anyMatch(e ->
+                    e.type().equals("sim.worker-task-status")
+                            && "t-kill".equals(e.payload().get("taskId"))
+                            && TaskStatus.RUNNING.equals(e.payload().get("state")));
+            if (!running) {
+                Thread.sleep(50);
+            }
+        }
+        assertTrue(running, "task should be running before kill");
+
+        long t0 = System.currentTimeMillis();
+        worker.injectOnInstance(new FaultAction(FaultAction.TASK_KILL,
+                FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
+                Map.of(), null));
+
+        var cancelled = waitForStatus("t-kill", TaskStatus.CANCELLED, 3000);
+        long elapsed = System.currentTimeMillis() - t0;
+        assertTrue(cancelled != null, "must report CANCELLED after task-kill");
+        assertTrue(elapsed < 3000, "kill must be immediate, not wait full 5s: " + elapsed);
+        for (int i = 0; i < 40 && worker.instanceFreeSlots(1) == 0; i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(2, worker.instanceFreeSlots(1), "slot must be released after kill");
+        assertTrue(events.stream().anyMatch(e -> e.type().equals("sim.worker-task-killed")));
+    }
+
+    @Test
+    void taskKillOnIdleInstanceIsNoop() throws Exception {
+        startWorker(1, null, Map.of());
+        worker.injectOnInstance(new FaultAction(FaultAction.TASK_KILL,
+                FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
+                Map.of(), null));
+        assertTrue(worker.isInstanceAlive(1));
+    }
+
+    @Test
+    void nonTaskKillFaultStillRejected() throws Exception {
+        startWorker(1, null, Map.of());
+        assertThrows(UnsupportedOperationException.class,
+                () -> worker.injectOnInstance(new FaultAction("freeze",
+                        FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
+                        Map.of(), null)));
+        // task-kill 是实例级：整组注入不支持
+        assertThrows(UnsupportedOperationException.class,
+                () -> worker.inject(new FaultAction(FaultAction.TASK_KILL,
+                        FaultAction.ComponentAddress.of(new ComponentId("workers")),
+                        Map.of(), null)));
+    }
+
+    private TaskStatus waitForStatus(String taskId, String state, long timeoutMs)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            var m = scheduler.received.poll(100, TimeUnit.MILLISECONDS);
+            if (m instanceof TaskStatus ts && ts.taskId().equals(taskId)
+                    && state.equals(ts.state())) {
+                return ts;
+            }
+        }
+        return null;
+    }
+
     @Test
     void injectedFaultOnUndeclaredActionFails() throws Exception {
         startWorker(1, null, Map.of());

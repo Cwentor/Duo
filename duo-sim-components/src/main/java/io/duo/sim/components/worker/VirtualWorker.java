@@ -91,6 +91,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     static final class TaskExecution {
         final String taskId;
         volatile boolean cancelled;
+        /** task-kill（T18）：终止执行线程并立即回报 CANCELLED。 */
+        volatile Thread worker;
 
         TaskExecution(String taskId) {
             this.taskId = taskId;
@@ -237,7 +239,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 Map.of("taskId", d.taskId(), "state", TaskStatus.RUNNING)));
         TaskExecution exec = new TaskExecution(d.taskId());
         inst.running.add(exec);
-        Thread.ofVirtual().name(inst.name + "-task-" + d.taskId()).start(() -> {
+        Thread taskThread = Thread.ofVirtual().name(inst.name + "-task-" + d.taskId())
+                .unstarted(() -> {
             try {
                 var entry = behaviors.resolve(d.taskName());
                 var profile = new BehaviorProfile(entry.durationMillis(),
@@ -264,8 +267,10 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 try {
+                    // task-kill（T18）与实例停止都会中断执行线程 → 立即回报 CANCELLED
                     conn.write(new TaskStatus(d.taskId(), inst.name,
-                            TaskStatus.FAILED, "interrupted"));
+                            TaskStatus.CANCELLED, exec.cancelled
+                                    ? "cancelled by master" : "interrupted"));
                 } catch (IOException ignored) {
                     // 连接已断
                 }
@@ -276,6 +281,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 inst.running.remove(exec);
             }
         });
+        exec.worker = taskThread;
+        taskThread.start();
     }
 
     @Override
@@ -369,20 +376,36 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
 
     @Override
     public void injectOnInstance(FaultAction action) {
-        throw new UnsupportedOperationException(
-                "M0 virtual worker declares no FaultInjectable faults: " + action.type());
+        if (!FaultAction.TASK_KILL.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        int index = action.target().instanceIndex() == null ? 1 : action.target().instanceIndex();
+        InstanceState inst = requireInstance(index);
+        // task-kill（T18）：终止该实例全部在途任务的执行线程 → 任务线程回报 CANCELLED
+        int killed = 0;
+        for (TaskExecution exec : inst.running) {
+            exec.cancelled = true;
+            Thread w = exec.worker;
+            if (w != null) {
+                w.interrupt();
+                killed++;
+            }
+        }
+        fire(Event.sim("sim.worker-task-killed", id.instanceSourceId(index),
+                Map.of("killed", killed)));
     }
 
-    // ---- FaultInjectable（M0 组件不声明任何 fault → 元数据 supportedFaults 为空）----
+    // ---- FaultInjectable（T18：仅 task-kill，实例级；整组注入不支持）----
 
     @Override
     public void inject(FaultAction action) {
-        throw new UnsupportedOperationException("no faults declared: " + action.type());
+        throw new UnsupportedOperationException(
+                "task-kill is instance-scoped; use injectOnInstance: " + action.type());
     }
 
     @Override
     public void clear(FaultAction action) {
-        throw new UnsupportedOperationException("no faults declared: " + action.type());
+        throw new UnsupportedOperationException("task-kill needs no clear: " + action.type());
     }
 
     // ---- misc ----
