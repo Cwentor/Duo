@@ -17,6 +17,16 @@
 | 5 | 注入内核通路**零改动**（§10 纯外层包装） | 见 §3 内核改动审计 | 通过 |
 | 6 | 极简拓扑视图（`GET /topology` + CLI 表格） | 演练演示 2 的 `duo topology` 输出；`ScenarioHostTest.topologyListsNodesWithTierAndHealth` | 通过 |
 
+### 错误映射覆盖（计划 T33 判据）
+
+| 码 | 含义 | 测试 |
+| --- | --- | --- |
+| 400 | 解析失败（坏 YAML / 坏 JSON / 坏 `since`） | `invalidYamlIs400WithReason`、`malformedJsonIs400`、`healthAndFullLifecycleRoundTrip` |
+| 404 | 未知 target | `injectTargetUnresolvableIs404` |
+| 405 | 方法不匹配 | `wrongMethodIs405` |
+| 409 | 未启动 / 双启动 / 未运行注入 | `healthAndFullLifecycleRoundTrip` |
+| 500 | 其余内部错误 | 由 `respond` 兜底（无独立用例） |
+
 ## 2. 实测结果
 
 ### 2.1 全量回归（整 reactor）
@@ -35,8 +45,8 @@ BUILD SUCCESS   Total time: 02:29 min
 | duo-sim-embedded | 30 | 0 | 0 |
 | duo-sim-junit | 0（扩展集成测试在 examples） | 0 | 0 |
 | duo-sim-control | 0（测试在 examples，避免模块循环） | 0 | 0 |
-| duo-sim-examples | 45 | 0 | 0 |
-| **合计** | **211** | **0** | **0** |
+| duo-sim-examples | 47 | 0 | 0 |
+| **合计** | **213** | **0** | **0** |
 
 ### 2.2 CLI 演练（`bash scripts/duo-inject-demo.sh`，退出码 0）
 

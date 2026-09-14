@@ -155,4 +155,27 @@ class RestControlServerTest {
         var resp = request("POST", "/inject", "{not json");
         assertEquals(400, resp.statusCode());
     }
+
+    @Test
+    void wrongMethodIs405() throws Exception {
+        startServer();
+        // 计划 T33 错误映射：方法不匹配 → 405（各端点均显式校验，不落到默认 500/404）
+        assertEquals(405, request("POST", "/scenario/status", "{}").statusCode());
+        assertEquals(405, request("GET", "/inject", null).statusCode());
+        assertEquals(405, request("DELETE", "/events", null).statusCode());
+        // /scenario 只允许 POST/DELETE
+        assertEquals(405, request("GET", "/scenario", null).statusCode());
+        // 对照：GET 是 /events 的合法方法
+        assertEquals(200, request("GET", "/events", null).statusCode());
+    }
+
+    @Test
+    void topologyReadableAfterFinishForPostmortem() throws Exception {
+        startServer();
+        assertEquals(200, request("POST", "/scenario", FAST_SCENARIO).statusCode());
+        // 场景跑完后拓扑仍可读（事后审查是控制面核心用途）
+        assertEquals(200, request("DELETE", "/scenario", null).statusCode());
+        assertEquals(200, request("GET", "/topology", null).statusCode());
+        assertEquals(200, request("GET", "/assertions", null).statusCode());
+    }
 }
