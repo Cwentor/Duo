@@ -59,7 +59,7 @@ public final class TimelineScheduler implements AutoCloseable {
         for (Scenario.TimelineEntry e : entries) {
             long delayMs;
             try {
-                delayMs = Durations.parseMillis(e.at());
+                delayMs = io.duo.sim.kernel.util.Durations.parseMillis(e.at());
             } catch (RuntimeException ex) {
                 result.recordWarning("timeline entry '" + e.action() + "': " + ex.getMessage());
                 continue;
@@ -91,7 +91,7 @@ public final class TimelineScheduler implements AutoCloseable {
         Long durationMs = null;
         if (e.duration() != null && !e.duration().isBlank()) {
             try {
-                durationMs = Durations.parseMillis(e.duration());
+                durationMs = io.duo.sim.kernel.util.Durations.parseMillis(e.duration());
             } catch (RuntimeException ex) {
                 result.recordWarning("timeline entry '" + e.action() + "': " + ex.getMessage());
             }

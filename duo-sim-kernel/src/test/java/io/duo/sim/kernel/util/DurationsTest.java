@@ -1,4 +1,4 @@
-package io.duo.sim.scenario;
+package io.duo.sim.kernel.util;
 
 import org.junit.jupiter.api.Test;
 
@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * {@link Durations} 单位化时长解析单测（M1 T16，T23 loader 校验共用同一实现）：
+ * {@link Durations} 单位化时长解析单测（M1 T16；T23 loader 校验与行为剧本解析共用同一实现）：
  * {@code ms|s|m} 三单位；无单位/空白/非数字/负值一律拒绝。
  */
 class DurationsTest {
