@@ -44,7 +44,10 @@ public final class SutLauncher implements AutoCloseable {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile Runnable stopHandler;
     private final CountDownLatch stopDone = new CountDownLatch(1);
-    /** ready 真实到达标志（区分 ctx.ready() vs finally 放行）。 */
+    /**
+     * ready 真实到达标志（区分 {@code ctx.ready()} 与 finally 放行）。
+     * 唯一写入点＝{@link SutContextImpl#ready()}；{@code start()} 只读本字段判断启动失败。
+     */
     private volatile boolean readyConfirmed;
     private volatile ExitState exitState;
 
@@ -84,10 +87,10 @@ public final class SutLauncher implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new ComponentException("SUT ready interrupted: " + sutId, e);
         }
-        // ready 放行但 SUT 已在 ready 前退出＝启动失败（快速失败，§12）
-        // 注意：ready 已确认后的正常退出（如 demo-scheduler 跑完 DAG）不属于启动失败，
+        // ready 未确认而 SUT 已退出＝启动失败（快速失败，§12，报真实根因而非 ready 超时）
+        // 注意：ready 已确认后的退出（正常结束如 demo-scheduler 跑完 DAG，或崩溃）不属于启动失败，
         // 由 exitState/awaitSutExit 传达
-        if (stopDone.getCount() == 0 && exitState != null && !readyConfirmed) {
+        if (!readyConfirmed && exitState != null) {
             throw new ComponentException("SUT exited before ready: " + sutId
                     + (exitState.normal() ? "" : " (crashed: " + exitState.error() + ")"),
                     exitState.normal() ? null : new IllegalStateException(exitState.error()));
@@ -103,11 +106,11 @@ public final class SutLauncher implements AutoCloseable {
             exitState = new ExitState(true, false, String.valueOf(t));
             eventSink.accept(Event.sut("sut.crashed", sutId,
                     Map.of("error", String.valueOf(t))));
-            // run() 在 ready 前失败：放行 start() 使其快速失败（真实根因而非 ready 超时）
-            if (!readyConfirmed) {
-                ctx.readyLatch.countDown();
-            }
         } finally {
+            // 无条件放行：run() 在 ready 前退出（正常返回或抛异常）也要唤醒 start()，
+            // 使其据 exitState 报真实根因，而不是把根因拖成 ready 超时（§12）。
+            // 是否属启动失败由 readyConfirmed 判定（见 start()），与放行动作解耦。
+            ctx.readyLatch.countDown();
             stopDone.countDown();
         }
     }
@@ -178,7 +181,6 @@ public final class SutLauncher implements AutoCloseable {
         private final Map<String, String> endpoints;
         private final Consumer<Event> eventSink;
         final CountDownLatch readyLatch = new CountDownLatch(1);
-        volatile boolean readyConfirmed;
 
         SutContextImpl(SutLauncher owner, Map<String, Object> directBindings,
                        Map<String, String> config, Map<String, String> endpoints,
@@ -223,7 +225,9 @@ public final class SutLauncher implements AutoCloseable {
 
         @Override
         public void ready() {
-            readyConfirmed = true;
+            // 写 owner 字段（本类不得再声明同名字段——曾因字段遮蔽使该写入落到内层副本，
+            // 导致 start() 的启动失败判定恒真、修复失效）
+            owner.readyConfirmed = true;
             readyLatch.countDown();
         }
     }

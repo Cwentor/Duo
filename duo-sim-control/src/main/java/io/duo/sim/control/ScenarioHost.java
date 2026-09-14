@@ -55,10 +55,6 @@ public final class ScenarioHost implements AutoCloseable {
     private ScenarioEngine engine;
     private State state = State.IDLE;
     private String lastError;
-    /** 事件游标：已分配给客户端的事件总数（D3）。 */
-    private int emittedCursor;
-    /** 序号映射：事件对象身份 → 序号（用 identity 避免 Event record 的 equals 折叠重复）。 */
-    private final Map<Event, Integer> seqByEvent = new LinkedHashMap<>();
 
     // ---- 生命周期 ----
 
@@ -72,8 +68,6 @@ public final class ScenarioHost implements AutoCloseable {
             var registry = ContractRegistry.loadFromServiceLoader();
             engine = ScenarioEngine.validated(loaded, registry);
             scenario = loaded;
-            seqByEvent.clear();
-            emittedCursor = 0;
             engine.startSut();
             engine.startComponents();
             state = State.RUNNING;
@@ -179,31 +173,31 @@ public final class ScenarioHost implements AutoCloseable {
 
     /**
      * 事件增量（D3）：返回自 {@code since}（不含）起的新事件，带单调序号。
-     * 序号按本层首次见到该事件对象时分配；同一快照内不重不漏。
+     *
+     * <p>序号＝事件在 {@code engine.events()} 快照中的 1-based 下标。内核事件流是**只追加**的
+     * {@code CopyOnWriteArrayList}，故下标稳定、天然不重不漏，无需身份映射表——
+     * 直接按下标切片即为 O(新增)（早期版本用 LinkedHashMap+线性扫描防 record equals 折叠，
+     * 整体 O(n²) 且永不释放，M4 万级规模下不可接受）。
      */
     public synchronized List<Map<String, Object>> eventsSince(int since) {
         if (engine == null) {
             return List.of();
         }
         List<Event> snapshot = engine.events();
-        // 为新出现的事件分配序号（用身份比较：record 的 equals 会把同内容事件折叠）
-        for (Event e : snapshot) {
-            if (!containsIdentity(e)) {
-                seqByEvent.put(e, ++emittedCursor);
-            }
+        int from = Math.max(since, 0);
+        if (from >= snapshot.size()) {
+            return List.of();
         }
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Event e : snapshot) {
-            Integer seq = lookupIdentity(e);
-            if (seq != null && seq > since) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("seq", seq);
-                m.put("type", e.type());
-                m.put("sourceId", e.sourceId());
-                m.put("timestamp", e.timestamp().toString());
-                m.put("payload", e.payload() == null ? Map.of() : e.payload());
-                out.add(m);
-            }
+        List<Map<String, Object>> out = new ArrayList<>(snapshot.size() - from);
+        for (int i = from; i < snapshot.size(); i++) {
+            Event e = snapshot.get(i);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("seq", i + 1);
+            m.put("type", e.type());
+            m.put("sourceId", e.sourceId());
+            m.put("timestamp", e.timestamp().toString());
+            m.put("payload", e.payload() == null ? Map.of() : e.payload());
+            out.add(m);
         }
         return out;
     }
@@ -289,23 +283,5 @@ public final class ScenarioHost implements AutoCloseable {
         if (engine != null) {
             engine.close();
         }
-    }
-
-    private boolean containsIdentity(Event e) {
-        for (Event k : seqByEvent.keySet()) {
-            if (k == e) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private Integer lookupIdentity(Event e) {
-        for (var en : seqByEvent.entrySet()) {
-            if (en.getKey() == e) {
-                return en.getValue();
-            }
-        }
-        return null;
     }
 }
