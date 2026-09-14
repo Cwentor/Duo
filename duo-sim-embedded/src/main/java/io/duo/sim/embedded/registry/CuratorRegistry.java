@@ -53,7 +53,8 @@ import java.util.function.Consumer;
  * **持久节点**上由本适配器维护（门面会话持有）；SUT 侧自行注册的临时节点按真实 ZK 语义
  * 随会话消失。
  */
-public final class CuratorRegistry implements VirtualComponent, RegistryContract {
+public final class CuratorRegistry implements VirtualComponent, RegistryContract,
+        io.duo.sim.kernel.api.FaultInjectable {
 
     /** 端点根路径（与 VirtualRegistry 兼容）。 */
     public static final String ENDPOINTS_ROOT = "/duo/endpoints";
@@ -63,6 +64,8 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
     private volatile TestingServer server;
     private volatile CuratorFramework facadeClient;
     private volatile boolean running;
+    /** 闪断中标志（embedded 档为瞬时动作，窗口极短）。 */
+    private volatile boolean flapping;
 
     /** 门面会话注册表（sessionId -> 该会话创建的节点路径）。 */
     private final Map<String, List<String>> sessionPaths = new ConcurrentHashMap<>();
@@ -96,16 +99,7 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
     @Override
     public void start() throws ComponentException {
         try {
-            if (tempDir != null) {
-                Files.createDirectories(tempDir);
-                // InstanceSpec(dataDir, port, electionPort, quorumPort, deleteDataDirOnClose,
-                //              maxClientCnxns)：端口全 0 = 自动分配；显式数据目录（Windows）
-                var spec = new org.apache.curator.test.InstanceSpec(tempDir.toFile(), 0, 0, 0,
-                        true, -1);
-                server = new TestingServer(spec, true);
-            } else {
-                server = new TestingServer(true); // 临时端口 + 系统临时目录
-            }
+            server = specFor(tempDir);
             server.start();
             facadeClient = newFacadeClient(server.getConnectString());
             facadeClient.start();
@@ -147,6 +141,80 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
         stop(StopMode.GRACEFUL);
         start();
         fire(Event.sim("sim.registry-restarted", id.value(), Map.of("kind", "embedded")));
+    }
+
+    // ---- FaultInjectable（T25：registry-flap = TestingServer 整服闪断）----
+
+    /**
+     * registry-flap（embedded 档语义，计划 D2/D3）：**TestingServer 整服闪断**——
+     * 所有会话失效、所有临时节点消失（真实 ZK 行为，**无快照重放**）。
+     * 任何消费方（SUT 的 wire 客户端、框架组件的门面）都必须自行重连并重建节点。
+     *
+     * <p>实现：关闭 server（会话全部断开、数据目录临时内容按 spec.deleteDataDirectoryOnClose
+     * 处理）+ 重建 server + 门面重连。端口按 spec 复用（InstanceSpec 固定则同端口；
+     * 若端口漂移会记录在 {@code sim.registry-flap-started} 载荷，供诊断）。
+     */
+    @Override
+    public void inject(io.duo.sim.kernel.api.FaultAction action) {
+        if (!io.duo.sim.kernel.api.FaultAction.REGISTRY_FLAP.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        requireRunning();
+        if (flapping) {
+            return; // 幂等
+        }
+        flapping = true;
+        int oldPort = server == null ? -1 : server.getPort();
+        try {
+            // 1) 关停整服：会话断开、临时节点全部消失
+            closeQuietly(facadeClient);
+            facadeClient = null;
+            if (server != null) {
+                server.close();
+            }
+            fire(Event.sim("sim.registry-flap-started", id.value(),
+                    Map.of("kind", "embedded", "oldPort", oldPort)));
+
+            // 2) 重建整服 + 门面重连（新会话，无节点）
+            server = specFor(tempDir);
+            server.start();
+            facadeClient = newFacadeClient(server.getConnectString());
+            facadeClient.start();
+            facadeClient.blockUntilConnected();
+            ensurePath(ENDPOINTS_ROOT);
+            flapping = false;
+            fire(Event.sim("sim.registry-flap-cleared", id.value(),
+                    Map.of("kind", "embedded", "newPort", server.getPort(),
+                            "portStable", server.getPort() == oldPort)));
+        } catch (Exception e) {
+            flapping = false;
+            throw new ComponentException("registry-flap (TestingServer restart) failed: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void clear(io.duo.sim.kernel.api.FaultAction action) {
+        // 闪断是瞬时动作（restart 即完成），无持续状态需清除；与 virtual 档语义不同
+        // （virtual 档 flap 有持续窗口 + 快照重放）
+        if (!io.duo.sim.kernel.api.FaultAction.REGISTRY_FLAP.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+    }
+
+    /** 闪断中标志（测试用）。 */
+    public boolean isFlapping() {
+        return flapping;
+    }
+
+    private static TestingServer specFor(Path tempDir) throws Exception {
+        if (tempDir != null) {
+            Files.createDirectories(tempDir);
+            var spec = new org.apache.curator.test.InstanceSpec(tempDir.toFile(), 0, 0, 0,
+                    true, -1);
+            return new TestingServer(spec, true);
+        }
+        return new TestingServer(true);
     }
 
     @Override
@@ -347,6 +415,11 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
     }
 
     private void notifyWatchers(String path, String value, RegistryChange.ChangeKind kind) {
+        // T26：节点变更统一发框架事件（§7.3 观测途径①embedded 版）——不依赖是否有
+        // 局部 watch 订阅者，供断言与事件录制观测
+        fire(Event.sim("sim.registry-node-changed", id.value(),
+                Map.of("path", path, "kind", kind.name(),
+                        "value", value == null ? "" : value)));
         List<Consumer<RegistryChange>> ls = watchers.getOrDefault(path, List.of());
         RegistryChange change = new RegistryChange(path, value, kind);
         for (Consumer<RegistryChange> l : ls) {

@@ -43,10 +43,9 @@ public final class CuratorRegistryProvider implements ComponentProvider {
 
     @Override
     public CapabilityMetadata metadata() {
-        // THIRD_PARTY（wire 面）+ interfaceDirect（门面面）；T25 实现 FaultInjectable 后
-        // 在此声明 registry-flap（注册期一致性校验要求声明与接口对应，§7.5）
+        // THIRD_PARTY（wire 面）+ interfaceDirect（门面面）+ registry-flap（T25 整服闪断）
         return new CapabilityMetadata(EndpointShape.THIRD_PARTY, true, false,
-                Set.of(), true);
+                Set.of(FaultAction.REGISTRY_FLAP), true);
     }
 
     @Override

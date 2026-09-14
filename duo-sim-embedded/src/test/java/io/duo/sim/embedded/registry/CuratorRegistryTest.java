@@ -139,8 +139,8 @@ class CuratorRegistryTest {
         var m = p.metadata();
         assertEquals(EndpointShape.THIRD_PARTY, m.endpointShape());
         assertTrue(m.interfaceDirect(), "facade must be usable via interface-direct (D1b)");
-        // T24 未实现 FaultInjectable → supportedFaults 必须为空（§7.5）；T25 加 flap 时同步改
-        assertTrue(m.supportedFaults().isEmpty());
+        assertTrue(m.supportedFaults().contains(io.duo.sim.kernel.api.FaultAction.REGISTRY_FLAP),
+                "T25 declares registry-flap");
 
         var reg = new ContractRegistry();
         reg.register(p);
