@@ -154,8 +154,9 @@ public final class RestControlServer implements AutoCloseable {
             respond(ex, 200, host.assertions());
         });
         server.createContext("/topology", ex -> {
-            if (!host.isRunning()) {
-                respond(ex, 409, Map.of("error", "scenario not running"));
+            // FINISHED 状态也可读（事后审查是控制面核心用途之一，M3 验收 §1）
+            if (!host.isRunning() && !host.hasResult()) {
+                respond(ex, 409, Map.of("error", "scenario not started"));
                 return;
             }
             respond(ex, 200, Map.of("nodes", host.topology()));

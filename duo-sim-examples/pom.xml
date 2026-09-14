@@ -34,6 +34,10 @@
         </dependency>
         <dependency>
             <groupId>io.duo</groupId>
+            <artifactId>duo-sim-control</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.duo</groupId>
             <artifactId>duo-sim-junit</artifactId>
         </dependency>
         <!-- D1：demo-scheduler 作为真实 SUT 用 ZK 客户端连 embedded registry（wire 路径） -->

@@ -1,0 +1,36 @@
+name: m3-inject-demo
+# M3 CLI 演练场景（T35）：timeline 为空——故障由 CLI 在运行中热注入，
+# 这正是 M3 相对 M1「预编排 timeline」的核心差异。
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "job-a,job-b,job-c,job-d"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 4
+    capacity: { slots: 1 }   # slots=1：首轮派发后各实例耗尽 → 崩溃实例上的在途任务须重派发
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 15s, jitter: 0.1, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline: []
+assertions:
+  - affectedTasksAtLeast: { min: 1 }
+  - failoverWithin: { seconds: 30 }
+  - noTaskLost: { requireAllSuccess: true }
+  - eventSequence: [sim.fault-injected, sut.task-retry]

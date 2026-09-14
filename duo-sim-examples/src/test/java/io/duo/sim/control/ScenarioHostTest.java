@@ -1,5 +1,7 @@
 package io.duo.sim.control;
 
+// 由 duo-sim-control 迁入（T33：examples test 依赖 control，避免模块循环）
+
 import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.FaultAction;
 import org.junit.jupiter.api.Test;

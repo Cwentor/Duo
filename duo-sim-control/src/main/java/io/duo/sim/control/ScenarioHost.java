@@ -1,9 +1,7 @@
 package io.duo.sim.control;
 
-import io.duo.sim.kernel.api.Contract;
 import io.duo.sim.kernel.api.Event;
 import io.duo.sim.kernel.api.FaultAction;
-import io.duo.sim.kernel.api.Tier;
 import io.duo.sim.kernel.core.ContractRegistry;
 import io.duo.sim.kernel.core.ScenarioRuntime;
 import io.duo.sim.scenario.ScenarioEngine;
@@ -100,25 +98,53 @@ public final class ScenarioHost implements AutoCloseable {
         }
     }
 
-    /** 等待 SUT 退出并评估断言（若尚未停止）。 */
-    public synchronized Map<String, Object> awaitFinish(long timeoutMs) throws InterruptedException {
-        if (engine == null) {
+    /**
+     * 等待 SUT 退出并评估断言（若尚未停止）。等待期间**不持锁**——
+     * {@code serve} 模式下 REST 处理器需要同时读状态/事件。
+     */
+    public Map<String, Object> awaitFinish(long timeoutMs) throws InterruptedException {
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = engine;
+        }
+        if (eng == null) {
             return status();
         }
-        boolean exited = engine.awaitSutExit(timeoutMs);
+        boolean exited = eng.awaitSutExit(timeoutMs);
         if (exited) {
-            engine.stop();
-            state = engine.result().passed() ? State.FINISHED : State.FAILED;
-            if (!engine.result().passed()) {
-                lastError = "assertions failed";
-            }
+            finalizeRun(eng);
         }
         return status();
     }
 
+    /**
+     * 后台等待 SUT 退出并固化结果（{@code serve} 模式：SUT 自行退出时自动评估断言，
+     * 无需客户端触发停止）。返回的线程可被忽略。
+     */
+    public Thread awaitFinishInBackground(long timeoutMs) {
+        return Thread.ofVirtual().name("duo-host-finish").start(() -> {
+            try {
+                awaitFinish(timeoutMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+    }
+
+    /** 停止并固化结果（幂等；重复调用只生效一次）。 */
+    private synchronized void finalizeRun(ScenarioEngine eng) {
+        if (eng != engine) {
+            return; // 已被后续 start 替换
+        }
+        eng.stop();
+        state = eng.result().passed() ? State.FINISHED : State.FAILED;
+        if (!eng.result().passed() && lastError == null) {
+            lastError = "assertions failed";
+        }
+    }
+
     /** 停止场景（幂等）。 */
-    public synchronized Map<String, Object> stop() {
-        if (engine != null) {
+    public synchronized Map<String, Object> stop() {        if (engine != null) {
             engine.stop();
             state = engine.result().passed() ? State.FINISHED : State.FAILED;
         } else {

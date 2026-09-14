@@ -3,7 +3,7 @@
 - 日期：2026-09-14
 - 依据：设计文档 v1.0（冻结）§10/§14 M3 行；M0（29b1a42）/M1（d377829）/M2（cd002e8）均已验收
 - 范围：`duo-sim-control` 的 REST + CLI 热注入（可选极简拓扑视图）
-- 状态：待用户批准（批准前不动代码）。**前置：M2 验收待用户确认、M3 方向待用户选定**——本计划为默认路线（spec §14 顺序 M3→M4）预起草
+- 状态：**已实施完成，M3 验收通过**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m3-acceptance-record.md`；演练脚本 `scripts/duo-inject-demo.sh`
 
 ---
 
@@ -34,14 +34,15 @@
 | --- | --- | --- | --- |
 | T32 | 控制面内核适配层 | `duo-sim-control`：`ScenarioHost`——持有 `ScenarioEngine` 生命周期（start/stop/status）、暴露事件快照（含 `since` 游标）、注入转发（`engine.inject`）、断言结果读取；**不新增内核 API**（只用已公开的 `ScenarioEngine`/`ScenarioRuntime`/`ScenarioResult`） | 单测：启动/停止/状态/增量事件/注入转发/结果读取；确认未 import 任何新内核符号 |
 | T33 | REST 服务 | JDK HttpServer 端点（§2 表）+ JSON 序列化（Jackson，已管理）；端口 0 自动分配 + `GET /health`；错误映射（校验失败 400 / 未启动 409 / 未知 target 404） | 单测：各端点往返（用 `HttpClient`）；错误码；端口自动分配 |
-| T34 | CLI | `duo` 主类（`--help`/子命令解析，无外部 CLI 框架——手写参数解析保持零依赖）：`run <yaml> [--wait]`、`inject <action> <target>`、`status`、`events [--since]`、`assert`、`topology`；两种模式：REST 客户端（`--url`）或同进程直连（缺省，便于脚本化验收） | 单测：参数解析、每子命令走通（同进程模式）；`--help` 输出 |
-| T35 | 拓扑视图 + M3 验收 | `GET /topology`（节点/契约/档位/count/在线）+ CLI 表格；`ControlPlaneAcceptanceTest`（§1 自动化部分）；CLI 演练脚本 `build/duo-inject-demo.sh` + 一次实际运行记录 | **全绿 + CLI 演练成功＝M3 验收通过** |
+| T34 | CLI | `duo` 主类（`--help`/子命令解析，无外部 CLI 框架——手写参数解析保持零依赖）：`run <yaml> [--wait] [--keep] [--inject-after <dur> "<action> <target>"]`、`serve <yaml> [--port N]`、`stop`、`inject <action> <target> [duration]`、`status`、`events [--since]`、`assert`、`topology`；两种模式：REST 客户端（`--url`）或同进程直连（缺省，便于脚本化验收） | 单测：参数解析、每子命令走通（同进程 + `--url` 跨进程往返）；`--help` 输出 |
+| T35 | 拓扑视图 + M3 验收 | `GET /topology`（节点/契约/档位/count/在线）+ CLI 表格；`ControlPlaneAcceptanceTest`（§1 自动化部分）；CLI 演练脚本 `scripts/duo-inject-demo.sh`（同进程 + 跨进程两个演示）+ 验收记录 `docs/superpowers/acceptance/2026-09-15-duo-m3-acceptance-record.md` | **全绿（211 测）+ CLI 演练成功＝M3 验收通过** |
 
 ## 4. 关键决策（实现前钉死）
 
 **D1：HTTP 服务器选型**——JDK 内置 `com.sun.net.httpserver.HttpServer`（零依赖、单机仿真工具足够）vs 引入 Javalin/Spark。**决定：JDK 内置**。理由：M3 是薄包装，引入 Web 框架与项目"零框架依赖"取向（proto/kernel 至今只有 Jackson+SnakeYAML）冲突；JDK HttpServer 的线程模型（虚拟线程 executor）与项目一致。
 
 **D2：CLI 与内核的进程关系**——REST 客户端（跨进程）vs 同进程直连。**决定：两者都支持**，同进程模式为缺省（脚本化验收最简：`duo run m1-golden.yaml --inject-after 10s "crash workers[2]" --wait`）。跨进程模式用于"运行中的独立进程注入"（更贴近真实运维演练）。
+**实施补充**：跨进程模式需要"服务端"进程，故 CLI 增加 `serve <yaml> [--port N]` 子命令（承载场景 + `RestControlServer`，打印实际监听地址供脚本发现端口）；其余命令加 `--url` 即切换为 REST 客户端。同进程模式跨命令共享状态依赖进程级 attach 表，因此**仅在同 JVM 内有效**——单命令验收形态由 `--inject-after` 覆盖（不依赖 attach 表）。
 
 **D3：事件流增量语义**——`GET /events?since=<seq>` 返回序号大于 since 的事件（内核事件流加单调序号）。**决定：序号在控制面侧按读取顺序分配**（不改内核 Event 结构——`Event` 是 record，加字段会破坏 M0/M1/M2 的构造点）。
 **实现前提（T32 判据）**：`ScenarioEngine.events()` 返回的是 `CopyOnWriteArrayList` 的不可变快照（`List.copyOf`），故控制面侧 `ScenarioHost` 必须维护 `lastSeenIndex` 游标并对每次 `events()` 快照做"从 lastSeenIndex 起"的切片；序号在此切片上分配。**并发注意**：ConcurrentHashMap 之外的事件顺序由写入线程决定，`since` 语义保证"不重不漏"（同一快照内），跨快照的严格全序不承诺（与 §11"真实时钟不承诺确定性重放"一致）。

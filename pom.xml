@@ -102,6 +102,11 @@
                 <artifactId>duo-sim-embedded</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.duo</groupId>
+                <artifactId>duo-sim-control</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
