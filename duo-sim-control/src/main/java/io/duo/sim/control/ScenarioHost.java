@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 控制面内核适配层（M3 T32）：持有 {@link ScenarioEngine} 生命周期，向 REST/CLI 暴露
@@ -30,6 +31,27 @@ public final class ScenarioHost implements AutoCloseable {
 
     /** 运行状态。 */
     public enum State { IDLE, RUNNING, FINISHED, FAILED }
+
+    /**
+     * 同进程 CLI 注册表（M3 D2）：{@code run --keep}把 host注册于此，
+     * 后续 inject/status/events 等命令按名接管。进程内静态（单 JVM 工具语义）。
+     */
+    private static final Map<String, ScenarioHost> ATTACHED = new ConcurrentHashMap<>();
+
+    /** 注册到进程级注册表（CLI 同进程模式）。 */
+    public void attach(String name) {
+        ATTACHED.put(name, this);
+    }
+
+    /** 按名取已注册的 host（无则 null）。 */
+    public static ScenarioHost attached(String name) {
+        return ATTACHED.get(name);
+    }
+
+    /** 从注册表移除（close 时自动）。 */
+    public void detach(String name) {
+        ATTACHED.remove(name, this);
+    }
 
     private Scenario scenario;
     private ScenarioEngine engine;
@@ -229,6 +251,11 @@ public final class ScenarioHost implements AutoCloseable {
     /** 场景是否仍在运行。 */
     public synchronized boolean isRunning() {
         return state == State.RUNNING;
+    }
+
+    /** 是否已有可读结果（启动过且引擎存在）。 */
+    public synchronized boolean hasResult() {
+        return engine != null;
     }
 
     @Override

@@ -19,6 +19,10 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-scenario</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
         <!-- 测试场景用 DemoScheduler（examples 不依赖 control，无循环） -->
         <dependency>
             <groupId>io.duo</groupId>
