@@ -21,9 +21,13 @@ public final class SchedulerStateMachine {
     public interface Listener {
         void onDispatch(String taskId, String taskName, int attempt, String instanceName);
 
-        void onStatus(String taskId, String state, String detail, int attempt);
+        void onStatus(String taskId, String state, String detail, int attempt,
+                      String instance);
 
         void onRetry(String taskId, int nextAttempt);
+
+        /** 失败转移事实（T19）：任务从失联实例转移重派。 */
+        void onFailover(String taskId, String fromInstance);
 
         void onAllTerminal();
     }
@@ -87,23 +91,81 @@ public final class SchedulerStateMachine {
         return tasks.computeIfAbsent(taskName, TaskState::new).attempts;
     }
 
+    /** 归属于指定实例的在途（RUNNING）任务名列表（T19 崩溃转移用）。 */
+    public List<String> inFlightOn(String instanceName) {
+        List<String> out = new ArrayList<>();
+        for (var e : instanceByTask.entrySet()) {
+            var t = tasks.get(e.getKey());
+            if (t != null && t.phase == Phase.RUNNING
+                    && instanceName.equals(e.getValue())) {
+                out.add(e.getKey());
+            }
+        }
+        return out;
+    }
+
+    /** 该任务当前归属的实例名（无则 null）。 */
+    public String ownerOf(String taskName) {
+        return instanceByTask.get(taskName);
+    }
+
+    /**
+     * 实例失联：其在途任务重置为 PENDING 触发转移（T19）。
+     * 仍受 {@link #MAX_ATTEMPTS} 约束——已在最大尝试次数的任务直接判 FAILED 并跳过下游
+     * （§7.2 无降级：转移不是无限重试）。返回实际重置为 PENDING 的任务名列表。
+     */
+    public List<String> onInstanceLost(String instanceName, String reason) {
+        List<String> requeued = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        for (String task : inFlightOn(instanceName)) {
+            var t = tasks.get(task);
+            if (t.attempts < MAX_ATTEMPTS) {
+                t.phase = Phase.PENDING;
+                instanceByTask.remove(task);
+                requeued.add(task);
+                listener.onStatus(task, "RETRYING", "instance " + instanceName
+                        + " lost: " + reason, t.attempts, instanceName);
+                listener.onRetry(task, t.attempts + 1);
+                listener.onFailover(task, instanceName);
+            } else {
+                t.phase = Phase.FAILED;
+                instanceByTask.remove(task);
+                failed.add(task);
+                listener.onStatus(task, "FAILED", "instance " + instanceName
+                        + " lost at max attempts", t.attempts, instanceName);
+            }
+        }
+        for (String f : failed) {
+            markSkippedDownstream(f);
+        }
+        if (allTerminal()) {
+            listener.onAllTerminal();
+        }
+        return requeued;
+    }
+
     /** 状态回报（worker → scheduler）。返回是否触发重试。 */
     public boolean onStatus(String taskId, String state, String detail) {
+        return onStatus(taskId, state, detail, instanceByTask.get(taskId));
+    }
+
+    /** 状态回报（带归属实例，T19(c)）。 */
+    public boolean onStatus(String taskId, String state, String detail, String instance) {
         var t = tasks.computeIfAbsent(taskId, TaskState::new);
         switch (state) {
             case "SUCCESS" -> {
                 t.phase = Phase.SUCCESS;
-                listener.onStatus(taskId, "SUCCESS", detail, t.attempts);
+                listener.onStatus(taskId, "SUCCESS", detail, t.attempts, instance);
             }
             case "FAILED", "CANCELLED" -> {
                 if (t.attempts < MAX_ATTEMPTS) {
                     t.phase = Phase.PENDING; // 回到待派发 → 有界重试
-                    listener.onStatus(taskId, "RETRYING", detail, t.attempts);
+                    listener.onStatus(taskId, "RETRYING", detail, t.attempts, instance);
                     listener.onRetry(taskId, t.attempts + 1);
                     return true;
                 }
                 t.phase = Phase.FAILED;
-                listener.onStatus(taskId, "FAILED", detail, t.attempts);
+                listener.onStatus(taskId, "FAILED", detail, t.attempts, instance);
                 markSkippedDownstream(taskId);
             }
             default -> {
@@ -129,7 +191,7 @@ public final class SchedulerStateMachine {
                     });
             if (depFailedOrSkipped && t.phase == Phase.PENDING) {
                 t.phase = Phase.SKIPPED;
-                listener.onStatus(name, "SKIPPED", "upstream " + failedTask + " failed", 0);
+                listener.onStatus(name, "SKIPPED", "upstream " + failedTask + " failed", 0, null);
             }
         }
     }

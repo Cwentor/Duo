@@ -17,6 +17,7 @@ class SchedulerStateMachineTest {
     /** 录制型 listener。 */
     static final class Recorder implements SchedulerStateMachine.Listener {
         final List<String> log = new ArrayList<>();
+        final List<String> instances = new ArrayList<>();
         final AtomicInteger retries = new AtomicInteger();
 
         @Override
@@ -25,8 +26,17 @@ class SchedulerStateMachineTest {
         }
 
         @Override
-        public void onStatus(String taskId, String state, String detail, int attempt) {
+        public void onStatus(String taskId, String state, String detail, int attempt,
+                             String instance) {
             log.add("status:" + taskId + ":" + state);
+            if (instance != null) {
+                instances.add(instance);
+            }
+        }
+
+        @Override
+        public void onFailover(String taskId, String fromInstance) {
+            log.add("failover:" + taskId + ":" + fromInstance);
         }
 
         @Override
@@ -99,6 +109,60 @@ class SchedulerStateMachineTest {
         sm.onStatus("clean", "SUCCESS", null);
         assertEquals(2, sm.attemptsOf("clean"));
         assertEquals("SUCCESS", sm.phaseOf("clean"));
+    }
+
+    // ---- T19(b) 崩溃转移 ----
+
+    @Test
+    void instanceLostRequeuesInFlightTaskAndEmitsFailover() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        sm.dispatch("load", "workers-3");
+        assertEquals(List.of("load"), sm.inFlightOn("workers-3"));
+        assertEquals("workers-3", sm.ownerOf("load"));
+
+        var requeued = sm.onInstanceLost("workers-3", "connection lost");
+        assertEquals(List.of("load"), requeued);
+        assertTrue(sm.dispatchable().contains("load"), "task must return to dispatchable");
+        assertTrue(rec.log.contains("failover:load:workers-3"), "failover fact: " + rec.log);
+        assertTrue(rec.retries.get() >= 1, "retry counted");
+    }
+
+    @Test
+    void instanceLostAtMaxAttemptsFailsTaskAndSkipsDownstream() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        // 把 load 推到 MAX_ATTEMPTS，且处于 RUNNING
+        for (int i = 0; i < SchedulerStateMachine.MAX_ATTEMPTS; i++) {
+            sm.dispatch("load", "workers-3");
+            if (i < SchedulerStateMachine.MAX_ATTEMPTS - 1) {
+                sm.onStatus("load", "FAILED", "x"); // 触发重试回到 PENDING
+            }
+        }
+        // 此刻 load RUNNING 且 attempts==MAX
+        assertEquals(SchedulerStateMachine.MAX_ATTEMPTS, sm.attemptsOf("load"));
+        var requeued = sm.onInstanceLost("workers-3", "connection lost");
+        assertTrue(requeued.isEmpty(), "no requeue at max attempts (no degradation)");
+        assertEquals("FAILED", sm.phaseOf("load"));
+        assertEquals("SKIPPED", sm.phaseOf("clean"));
+    }
+
+    @Test
+    void instanceLostWithNoInFlightTasksIsNoop() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        assertTrue(sm.onInstanceLost("workers-9", "connection lost").isEmpty());
+        assertTrue(sm.inFlightOn("workers-9").isEmpty());
+    }
+
+    @Test
+    void dispatchEmitsInstanceInStatusEvents() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        sm.dispatch("load", "workers-2");
+        sm.onStatus("load", "SUCCESS", null, "workers-2");
+        assertTrue(rec.instances.contains("workers-2"),
+                "status event must carry instance: " + rec.instances);
     }
 
     @Test

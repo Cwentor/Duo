@@ -42,13 +42,13 @@ public final class DemoScheduler implements SutMain {
     private final Map<String, WorkerFeed> feeds = new ConcurrentHashMap<>();
     private SchedulerStateMachine stateMachine;
     private SutContext ctx;
-    private volatile int dispatchCursor;
+    /** 派发选择器（T19(a)）：freeSlots 视图 + 最大者/轮转。 */
+    private final DispatchSelector selector = new DispatchSelector();
 
     /** worker 连接的下行推送。 */
     private static final class WorkerFeed {
         final String name;
         final FrameConnection conn;
-        final AtomicBoolean busy = new AtomicBoolean(false);
 
         WorkerFeed(String instanceName, FrameConnection conn) {
             this.name = instanceName;
@@ -121,6 +121,7 @@ public final class DemoScheduler implements SutMain {
         var feed = new WorkerFeed(req.instanceName(), conn);
         workerConns.add(conn);
         feeds.put(req.instanceName(), feed);
+        selector.register(req.instanceName());
         ctx.events().publish("sut.worker-registered",
                 Map.of("instance", req.instanceName()));
         return feed;
@@ -131,45 +132,68 @@ public final class DemoScheduler implements SutMain {
             while (running.get()) {
                 var msg = feed.conn.read();
                 if (msg instanceof TaskStatus ts) {
-                    stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail());
+                    // T19(c)：线协议 TaskStatus 自带 instanceName——透传给状态事件（断言数据契约）
+                    stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail(),
+                            ts.instanceName());
                 } else if (msg instanceof HeartbeatReport) {
                     ctx.events().publish("sut.heartbeat",
                             Map.of("instance", ((HeartbeatReport) msg).instanceName()));
+                } else if (msg instanceof SlotReport sr) {
+                    // T19(a)：维护调度侧槽位视图（此前被静默丢弃）
+                    if (feed.name.equals(sr.instanceName())) {
+                        selector.onSlotReport(feed.name, sr.freeSlots());
+                    }
                 } else if (msg instanceof TaskAck) {
-                    // M0：受理即视为在途，无需额外动作
+                    // 受理即视为在途，无需额外动作
                 }
             }
         } catch (IOException e) {
-            feeds.remove(feed.name);
+            onFeedLost(feed);
         }
     }
 
-    /** 负载均衡：freeSlots 最大的空闲 feed；无可用实例则跳过本轮。 */
+    /**
+     * 连接丢失 → 崩溃转移（T19(b)）：从 feeds 移除 + 其在途任务重置重派发。
+     * 检测可靠：worker 实例崩溃时 closeQuietly 关 socket，此处阻塞读即刻 IOException。
+     */
+    private void onFeedLost(WorkerFeed feed) {
+        feeds.remove(feed.name);
+        workerConns.remove(feed.conn);
+        selector.onRemoved(feed.name);
+        if (stateMachine == null) {
+            return;
+        }
+        List<String> requeued = stateMachine.onInstanceLost(feed.name, "connection lost");
+        if (!requeued.isEmpty()) {
+            ctx.events().publish("sut.instance-lost",
+                    Map.of("instance", feed.name, "requeued", String.join(",", requeued)));
+        } else {
+            ctx.events().publish("sut.instance-lost", Map.of("instance", feed.name));
+        }
+    }
+
+    /**
+     * 派发选择（T19(a)）：freeSlots &gt; 0 且最大者；平局按 dispatchCursor 轮转
+     * （消除"永远落到迭代序第一个 feed"的旧缺陷）。无可用实例则跳过本轮。
+     */
     private void pumpDispatches() {
         for (String task : stateMachine.dispatchable()) {
-            WorkerFeed best = null;
-            for (var f : feeds.values()) {
-                if (f.busy.compareAndSet(false, true)) {
-                    if (best == null) {
-                        best = f;
-                    } else {
-                        f.busy.set(false);
-                    }
-                }
+            String target = selector.select();
+            if (target == null) {
+                return; // 本轮无可用 worker（slots 耗尽或未上报槽位）
             }
+            WorkerFeed best = feeds.get(target);
             if (best == null) {
-                return; // 本轮无空闲 worker
+                selector.onRemoved(target);
+                continue;
             }
             try {
                 int attempt = stateMachine.dispatch(task, best.name);
+                selector.onDispatched(best.name); // 本地递减；SlotReport 到达时权威刷新
                 best.conn.write(new TaskDispatch(task, task, attempt, 1, 1));
-                ctx.events().publish("sut.task-dispatched",
-                        Map.of("taskId", task, "attempt", attempt,
-                                "instance", best.name));
+                // 注意：sut.task-dispatched 由 StateListener.onDispatch 单一来源发布（T19(c) 去重）
             } catch (IOException e) {
-                feeds.remove(best.name);
-            } finally {
-                best.busy.set(false);
+                onFeedLost(best);
             }
         }
     }
@@ -187,7 +211,7 @@ public final class DemoScheduler implements SutMain {
         return dag;
     }
 
-    /** 状态机事实 → sut.* 事件（§7.3）。 */
+    /** 状态机事实 → sut.* 事件（§7.3；T19(c) 状态/终态事件带 instance 归属）。 */
     private final class StateListener implements SchedulerStateMachine.Listener {
 
         @Override
@@ -197,12 +221,18 @@ public final class DemoScheduler implements SutMain {
         }
 
         @Override
-        public void onStatus(String taskId, String state, String detail, int attempt) {
-            ctx.events().publish("sut.task-status",
-                    Map.of("taskId", taskId, "state", state, "attempt", attempt));
+        public void onStatus(String taskId, String state, String detail, int attempt,
+                             String instance) {
+            Map<String, Object> payload = new java.util.HashMap<>();
+            payload.put("taskId", taskId);
+            payload.put("state", state);
+            payload.put("attempt", attempt);
+            if (instance != null) {
+                payload.put("instance", instance); // T19(c)：断言归属核对的数据契约
+            }
+            ctx.events().publish("sut.task-status", Map.copyOf(payload));
             if (!"RETRYING".equals(state)) {
-                ctx.events().publish("sut.task-terminal",
-                        Map.of("taskId", taskId, "state", state));
+                ctx.events().publish("sut.task-terminal", Map.copyOf(payload));
             }
         }
 
@@ -210,6 +240,12 @@ public final class DemoScheduler implements SutMain {
         public void onRetry(String taskId, int nextAttempt) {
             ctx.events().publish("sut.task-retry",
                     Map.of("taskId", taskId, "nextAttempt", nextAttempt));
+        }
+
+        @Override
+        public void onFailover(String taskId, String fromInstance) {
+            ctx.events().publish("sut.failover",
+                    Map.of("taskId", taskId, "from", fromInstance));
         }
 
         @Override
