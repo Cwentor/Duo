@@ -267,8 +267,15 @@ public final class DemoScheduler implements SutMain {
             this.client = org.apache.curator.framework.CuratorFrameworkFactory.builder()
                     .connectString(connectString)
                     .retryPolicy(new org.apache.curator.retry.ExponentialBackoffRetry(200, 10))
+                    // 缩短会话超时：闪断后更快判定会话失效并重连（默认 60s 会让
+                    // 恢复窗口远超 DAG 时长）
+                    .sessionTimeoutMs(3000)
+                    .connectionTimeoutMs(2000)
                     .build();
         }
+
+        /** 自愈巡检（真实 SUT 的常见做法）：周期校验端点节点是否存在，缺失即重注册。 */
+        private volatile Thread selfHeal;
 
         @Override
         public void register(int port) {
@@ -276,16 +283,7 @@ public final class DemoScheduler implements SutMain {
             client.getConnectionStateListenable().addListener((c, state) -> {
                 if (state == org.apache.curator.framework.state.ConnectionState.RECONNECTED
                         || state == org.apache.curator.framework.state.ConnectionState.CONNECTED) {
-                    try {
-                        writeEndpointNode();
-                        ctx.events().publish("sut.leader-elected",
-                                Map.of("epoch", leaderEpoch.incrementAndGet(),
-                                        "endpoint", "127.0.0.1:" + duoPort,
-                                        "mode", "zk", "state", state.name()));
-                    } catch (Exception e) {
-                        ctx.events().publish("sut.leader-election-failed",
-                                Map.of("error", String.valueOf(e.getMessage())));
-                    }
+                    ensureEndpointNode("state=" + state.name());
                 }
             });
             client.start();
@@ -297,11 +295,50 @@ public final class DemoScheduler implements SutMain {
                 ctx.events().publish("sut.leader-elected",
                         Map.of("epoch", leaderEpoch.incrementAndGet(),
                                 "endpoint", "127.0.0.1:" + duoPort, "mode", "zk"));
+                // 自愈巡检：闪断（整服重启）后临时节点消失、且 Curator 可能不重发
+                // RECONNECTED（同端口重建时会话判定可能保持）——周期校验保证"重新选主"
+                startSelfHeal();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("ZK connect interrupted", e);
             } catch (Exception e) {
                 throw new IllegalStateException("ZK registration failed: " + e.getMessage(), e);
+            }
+        }
+
+        private void startSelfHeal() {
+            selfHeal = Thread.ofVirtual().name("demo-scheduler-zk-selfheal").start(() -> {
+                while (running.get()) {
+                    try {
+                        Thread.sleep(300);
+                        // 不预判连接状态：直接尝试（连接未恢复时操作抛异常，下轮重试）——
+                        // 闪断后 Curator 的连接状态判定可能滞后，预判会错过恢复窗口
+                        ensureEndpointNode("self-heal");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (RuntimeException ignored) {
+                        // 连接暂不可用：下轮再试
+                    }
+                }
+            });
+        }
+
+        /** 确保端点节点存在（缺失即创建/刷新并发布 leader-elected）。 */
+        private void ensureEndpointNode(String reason) {
+            try {
+                String path = "/duo/endpoints/scheduler";
+                boolean missing = client.checkExists().forPath(path) == null;
+                writeEndpointNode();
+                if (missing) {
+                    ctx.events().publish("sut.leader-elected",
+                            Map.of("epoch", leaderEpoch.incrementAndGet(),
+                                    "endpoint", "127.0.0.1:" + duoPort,
+                                    "mode", "zk", "reason", reason));
+                }
+            } catch (Exception e) {
+                ctx.events().publish("sut.leader-election-failed",
+                        Map.of("error", String.valueOf(e.getMessage()), "reason", reason));
             }
         }
 
@@ -312,14 +349,19 @@ public final class DemoScheduler implements SutMain {
             }
             byte[] data = ("127.0.0.1:" + duoPort)
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if (client.checkExists().forPath(path) == null) {
+            // checkExists→create 之间存在竞态（另一路径可能刚创建）：
+            // 按真实 ZK 惯用法捕获 NodeExists 后改走 setData
+            try {
                 client.create().forPath(path, data);
-            } else {
+            } catch (org.apache.zookeeper.KeeperException.NodeExistsException e) {
                 client.setData().forPath(path, data);
             }
         }
 
         void close() {
+            if (selfHeal != null) {
+                selfHeal.interrupt();
+            }
             try {
                 client.close();
             } catch (RuntimeException ignored) {

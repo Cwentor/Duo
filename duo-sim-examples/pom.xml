@@ -27,6 +27,11 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-scenario</artifactId>
         </dependency>
+        <!-- M2：M2 验收场景用 embedded 档（Curator TestingServer 等） -->
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-embedded</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-junit</artifactId>

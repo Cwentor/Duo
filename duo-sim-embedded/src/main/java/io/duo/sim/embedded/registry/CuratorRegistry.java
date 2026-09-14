@@ -99,6 +99,9 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
     @Override
     public void start() throws ComponentException {
         try {
+            if (tempDir != null) {
+                Files.createDirectories(tempDir);
+            }
             server = specFor(tempDir);
             server.start();
             facadeClient = newFacadeClient(server.getConnectString());
@@ -175,8 +178,9 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
             fire(Event.sim("sim.registry-flap-started", id.value(),
                     Map.of("kind", "embedded", "oldPort", oldPort)));
 
-            // 2) 重建整服 + 门面重连（新会话，无节点）
-            server = specFor(tempDir);
+            // 2) 重建整服（**复用旧端口**，D2：端口漂移会让 wire 客户端永远连不上）
+            //    + 门面重连（新会话，无节点）
+            server = serverOnPort(tempDir, oldPort);
             server.start();
             facadeClient = newFacadeClient(server.getConnectString());
             facadeClient.start();
@@ -208,13 +212,18 @@ public final class CuratorRegistry implements VirtualComponent, RegistryContract
     }
 
     private static TestingServer specFor(Path tempDir) throws Exception {
-        if (tempDir != null) {
-            Files.createDirectories(tempDir);
-            var spec = new org.apache.curator.test.InstanceSpec(tempDir.toFile(), 0, 0, 0,
-                    true, -1);
-            return new TestingServer(spec, true);
-        }
-        return new TestingServer(true);
+        return serverOnPort(tempDir, 0);
+    }
+
+    /**
+     * 在指定端口创建 TestingServer（port=0 → 自动分配）。
+     * flap 恢复时传入旧端口以保证 wire 客户端可重连（D2）。
+     */
+    private static TestingServer serverOnPort(Path tempDir, int port) throws Exception {
+        var spec = new org.apache.curator.test.InstanceSpec(
+                tempDir == null ? null : tempDir.toFile(),
+                port, port == 0 ? 0 : port + 1, port == 0 ? 0 : port + 2, true, -1);
+        return new TestingServer(spec, true);
     }
 
     @Override

@@ -1,0 +1,39 @@
+name: m2-reelection-acceptance
+topology:
+  - id: zk
+    contract: registry
+    tier: embedded                      # Curator TestingServer：真实 ZK 协议 + 真实端口
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "job-a,job-b,job-c,job-d"
+      # D1：SUT 走 wire 路径（真实 Curator 客户端连 ZK 端口）；地址经 SutContext 注入
+      registry.mode: zk
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry, path: wire }     # SUT 真实客户端（D1）
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 4
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry, path: direct }   # 框架组件走同进程门面（D1b）
+behaviors:
+  profiles:
+    # duration 25s：flap@12s 后留 ~13s 恢复窗口（真实 ZK 会话超时/重连需要时间）
+    default: { duration: 25s, jitter: 0.0, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline:
+  - at: 12s
+    action: registry-flap
+    target: zk
+assertions:
+  - masterReelectedWithin: { seconds: 30 }   # flap@12s + 30s 窗口 < DAG 25s+恢复
+  - noTaskLost: { requireAllSuccess: true }
+  - eventSequence: [sim.fault-injected, sut.leader-elected]

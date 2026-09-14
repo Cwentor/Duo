@@ -122,7 +122,13 @@ public final class ScenarioEngine implements AutoCloseable {
         specById.values().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().ifPresent(s -> runtime.markSut(s.id()));
 
-        manager.startAll(order.stream().filter(byId::containsKey).toList(), byId::get);
+        // 注意：startSut 预启动的依赖（如 registry）已 adopt 进 manager 且已 start；
+        // 这里必须排除它们，否则会被二次 start（CuratorRegistry 二次 start 会重建
+        // TestingServer → 已注册节点全丢，worker 发现失败）
+        manager.startAll(order.stream()
+                .filter(byId::containsKey)
+                .filter(id -> !manager.live().containsKey(id))
+                .toList(), byId::get);
         started = true;
         // 时间线执行器（T16）：全部组件启动完成的当前时刻为 t0，非空才启动
         if (!scenario.timeline().isEmpty()) {
@@ -191,9 +197,30 @@ public final class ScenarioEngine implements AutoCloseable {
             var cls = Class.forName(spec.launch().main());
             var main = (io.duo.sim.kernel.api.SutMain)
                     cls.getDeclaredConstructor().newInstance();
+            // T31(a)：SUT 的 wire 端点注入——按 SUT 的 wiring 槽解析目标节点的实际端点
+            // （wire 槽 → 目标 endpoints() 地址；如 embedded registry 的 ZK 端口）。
+            // 这正是 D1 的前提：SUT 经 SutContext.endpointByContract() 取 ZK 地址。
+            Map<String, String> sutEndpoints = new LinkedHashMap<>();
+            for (var slot : spec.wiring().entrySet()) {
+                var slotSpec = slot.getValue();
+                var targetNode = specById.get(slotSpec.node());
+                if (targetNode == null) {
+                    continue;
+                }
+                String contract = slotSpec.contract() == null ? slot.getKey()
+                        : slotSpec.contract();
+                VirtualComponent target = byId.get(targetNode.id());
+                if (target == null) {
+                    continue;
+                }
+                var eps = target.endpoints();
+                if (!eps.isEmpty()) {
+                    sutEndpoints.put(contract.toLowerCase(), eps.get(0).address());
+                }
+            }
             // SUT 退出事件 → 场景结束信号（M0：不新增 DSL 字段）
             var launcher = new io.duo.sim.kernel.sut.SutLauncher(
-                    spec.id(), main, Map.copyOf(byId), spec.config(), Map.of(),
+                    spec.id(), main, Map.copyOf(byId), spec.config(), sutEndpoints,
                     e -> {
                         // 统一经 bus 汇流：内存流与录制共用单一订阅路径（T21）
                         bus.publish(e);
