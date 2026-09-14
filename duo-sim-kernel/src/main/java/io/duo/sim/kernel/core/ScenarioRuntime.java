@@ -49,6 +49,11 @@ public final class ScenarioRuntime {
         this.recorder = recorder;
     }
 
+    /** 外部事件汇入统一流（T22 custom-hook 等扩展点用；与注入事件同源录制）。 */
+    public void emitExternal(Event event) {
+        recorder.accept(event);
+    }
+
     public void registerTarget(String id, Target t) {
         targets.put(id, t);
     }

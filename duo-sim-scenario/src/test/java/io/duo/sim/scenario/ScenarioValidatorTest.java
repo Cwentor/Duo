@@ -209,15 +209,27 @@ class ScenarioValidatorTest {
     // ---- M0 assertions 警告 ----
 
     @Test
-    void assertionsSectionProducesWarningNotError() {
+    void validAssertionsSectionPassesValidation() {
+        // M1 T20：assertions 从"M0 忽略警告"升级为解析校验（合法断言通过）
         var v = new ScenarioValidator(registry());
         var s = new Scenario("t",
                 List.of(node("m", "scheduler", "real", true, null)),
                 new Scenario.Behaviors(Map.of(), List.of()),
-                List.of(), List.of(Map.of("noTaskLost", true)));
+                List.of(), List.of(Map.of("noTaskLost", Map.of("requireAllSuccess", true))));
         var r = v.validate(s);
-        assertTrue(r.ok());
-        assertEquals(1, r.warnings().size());
-        assertTrue(r.warnings().get(0).contains("M0"));
+        assertTrue(r.ok(), r.errors().toString());
+        assertTrue(r.warnings().isEmpty());
+    }
+
+    @Test
+    void unknownAssertionFailsValidation() {
+        var v = new ScenarioValidator(registry());
+        var s = new Scenario("t",
+                List.of(node("m", "scheduler", "real", true, null)),
+                new Scenario.Behaviors(Map.of(), List.of()),
+                List.of(), List.of(Map.of("bogusAssertion", Map.of())));
+        var r = v.validate(s);
+        assertFalse(r.ok());
+        assertTrue(String.join(";", r.errors()).contains("unknown assertion"));
     }
 }

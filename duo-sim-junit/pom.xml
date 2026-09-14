@@ -19,5 +19,12 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-scenario</artifactId>
         </dependency>
+        <!-- 编程式断言包装（DuoAssertions）需要 JUnit API 作为编译期依赖 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${junit.version}</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

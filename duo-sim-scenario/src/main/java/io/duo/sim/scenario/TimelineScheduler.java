@@ -26,6 +26,7 @@ public final class TimelineScheduler implements AutoCloseable {
 
     private final ScenarioRuntime runtime;
     private final ScenarioResult result;
+    private final HookRegistry hooks;
     private final List<Scenario.TimelineEntry> entries;
     private final ScheduledExecutorService ticker =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -38,9 +39,16 @@ public final class TimelineScheduler implements AutoCloseable {
 
     public TimelineScheduler(List<Scenario.TimelineEntry> entries,
                              ScenarioRuntime runtime, ScenarioResult result) {
+        this(entries, runtime, result, new HookRegistry());
+    }
+
+    public TimelineScheduler(List<Scenario.TimelineEntry> entries,
+                             ScenarioRuntime runtime, ScenarioResult result,
+                             HookRegistry hooks) {
         this.entries = List.copyOf(entries);
         this.runtime = runtime;
         this.result = result;
+        this.hooks = hooks;
     }
 
     /** 以当前时刻为 t0 调度全部时间线动作。 */
@@ -62,6 +70,17 @@ public final class TimelineScheduler implements AutoCloseable {
 
     /** 触发单个动作（包内可见供测试）。 */
     void fire(Scenario.TimelineEntry e) {
+        // custom-hook（T22）：target 可为 SUT（§7.2 豁免），不经 ScenarioRuntime 寻址
+        if ("custom-hook".equals(e.action())) {
+            var r = hooks.execute(e.target(), e.params(), ev -> {
+                // hook 事件经 ScenarioRuntime 的 recorder 汇入统一事件流
+                runtime.emitExternal(ev);
+            });
+            if (!r.success()) {
+                result.recordInjectionFailure("custom-hook", e.target(), r.reason());
+            }
+            return;
+        }
         String target = e.target();
         var addr = parseTarget(target);
         if (addr == null) {

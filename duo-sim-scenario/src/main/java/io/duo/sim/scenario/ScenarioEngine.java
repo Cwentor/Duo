@@ -52,6 +52,7 @@ public final class ScenarioEngine implements AutoCloseable {
     private volatile boolean started;
     private volatile SutStopper sutStopper;
     private volatile TimelineScheduler timeline;
+    private volatile EventRecorder recorder;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
@@ -338,6 +339,35 @@ public final class ScenarioEngine implements AutoCloseable {
         manager.stopAll();
         bus.publish(Event.sim("sim.scenario-finished", scenario.name(), Map.of()));
         started = false;
+        if (recorder != null) {
+            recorder.flush(); // T21：录制落盘（审查材料）
+        }
+        evaluateAssertions(); // T20：YAML 内置评估写入 ScenarioResult（场景结束判定）
+    }
+
+    /** 录制文件路径（场景启动后可用；供审查/比对，T21）。 */
+    public java.nio.file.Path recordingPath() {
+        return recorder == null ? null : recorder.outputFile();
+    }
+
+    /** YAML assertions 内置评估（T20）：逐条评估写入 result；解析失败即一级失败（不静默）。 */
+    private void evaluateAssertions() {
+        if (scenario.assertions() == null || scenario.assertions().isEmpty()) {
+            return;
+        }
+        List<io.duo.sim.kernel.assertion.Assertion> assertions;
+        try {
+            assertions = io.duo.sim.kernel.assertion.AssertionParser
+                    .parse(scenario.assertions());
+        } catch (RuntimeException e) {
+            result.recordAssertion("<parse>", false, e.getMessage());
+            return;
+        }
+        List<Event> snapshot = List.copyOf(recorded);
+        for (var a : assertions) {
+            var outcome = a.evaluate(snapshot);
+            result.recordAssertion(outcome.name(), outcome.passed(), outcome.detail());
+        }
     }
 
     @Override

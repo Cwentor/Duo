@@ -198,8 +198,14 @@ public final class ScenarioValidator {
                 errors.add("timeline target '" + componentId + "' is not a node");
                 continue;
             }
-            if (targetNode.sut() && !"custom-hook".equals(t.action())) {
-                errors.add("timeline target '" + componentId + "' is SUT (§7.2)");
+            // custom-hook（§7.2 豁免，T22）：target 可为 SUT，且不受 supportedFaults/
+            // instanceControl 约束——它是用户钩子，不是故障注入动作
+            if ("custom-hook".equals(t.action())) {
+                continue;
+            }
+            if (targetNode.sut()) {
+                errors.add("timeline target '" + componentId
+                        + "' is SUT (§7.2; custom-hook excepted)");
             }
             var m = metadataByNode.get(componentId);
             if (m != null) {
@@ -237,10 +243,13 @@ public final class ScenarioValidator {
             }
         }
 
-        // M0：assertions 节 → 显式警告（计入校验结果）
+        // M1 T20：assertions 节解析校验（未知断言名/形态错误即启动前失败，不静默忽略）
         if (scenario.assertions() != null && !scenario.assertions().isEmpty()) {
-            warnings.add("assertions section present but M0 runtime evaluation is not "
-                    + "delivered (§11, M1); ignored for now");
+            try {
+                io.duo.sim.kernel.assertion.AssertionParser.parse(scenario.assertions());
+            } catch (RuntimeException e) {
+                errors.add("assertions: " + e.getMessage());
+            }
         }
 
         return new Report(errors, warnings);
