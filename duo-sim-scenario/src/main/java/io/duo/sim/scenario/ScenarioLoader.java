@@ -134,7 +134,9 @@ public final class ScenarioLoader {
                     bindings.add(new Scenario.Binding(str(bm.get("node")),
                             str(bm.get("profile")),
                             match.get("taskName") == null ? null
-                                    : String.valueOf(match.get("taskName"))));
+                                    : String.valueOf(match.get("taskName")),
+                            match.get("label") == null ? null
+                                    : String.valueOf(match.get("label"))));
                 }
             }
         }

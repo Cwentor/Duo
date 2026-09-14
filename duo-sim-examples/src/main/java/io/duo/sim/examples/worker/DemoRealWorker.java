@@ -182,11 +182,20 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
             try {
                 var entry = behaviors.resolve(d.taskName());
                 var profile = new BehaviorProfile(entry.durationMillis(), entry.jitterRatio(),
-                        entry.successRate(), entry.exceptionType(), entry.logLines());
-                var r = profile.execute(d.taskName(), new Random());
-                inst.conn.write(new TaskStatus(d.taskId(), inst.name,
-                        r.success() ? TaskStatus.SUCCESS : TaskStatus.FAILED,
-                        r.errorMessage()));
+                        entry.successRate(), entry.exceptionType(), entry.logLines(),
+                        entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+                var r = profile.execute(d.taskName(), new Random(), pct ->
+                        ctx.eventBus().publish(Event.sim("sim.worker-task-progress",
+                                id.instanceSourceId(inst.index),
+                                Map.of("taskId", d.taskId(), "progress", pct))));
+                if (entry.neverReport()) {
+                    ctx.eventBus().publish(Event.sim("sim.worker-task-unreported",
+                            id.instanceSourceId(inst.index), Map.of("taskId", d.taskId())));
+                } else {
+                    inst.conn.write(new TaskStatus(d.taskId(), inst.name,
+                            r.success() ? TaskStatus.SUCCESS : TaskStatus.FAILED,
+                            r.errorMessage()));
+                }
             } catch (Exception e) {
                 // 回报失败由失联检测兜底
             } finally {

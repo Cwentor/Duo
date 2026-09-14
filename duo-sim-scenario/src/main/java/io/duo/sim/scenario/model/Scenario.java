@@ -44,8 +44,8 @@ public record Scenario(String name,
                             List<Binding> bindings) {
     }
 
-    /** 匹配规则 M0 两级（精确任务名 > default）；M1 扩标签/通配。 */
-    public record Binding(String node, String profile, String taskName) {
+    /** 匹配规则 M1 四级（精确任务名 > 标签 > 通配 > default）：taskName 可含 * 通配，label 为标签匹配。 */
+    public record Binding(String node, String profile, String taskName, String label) {
     }
 
     /** 时间线动作（M1 T16 起由 TimelineScheduler 自动执行；at/duration 带单位，duration 可空）。 */

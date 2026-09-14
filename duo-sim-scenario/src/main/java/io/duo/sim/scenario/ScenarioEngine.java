@@ -240,9 +240,14 @@ public final class ScenarioEngine implements AutoCloseable {
             if (p == null) {
                 continue;
             }
-            String prefix = (b.taskName() == null || "default".equals(b.profile()))
-                    ? "behaviors.default."
-                    : "behaviors.named." + b.taskName() + ".";
+            String prefix;
+            if ("default".equals(b.profile()) || (b.taskName() == null && b.label() == null)) {
+                prefix = "behaviors.default.";
+            } else if (b.label() != null) {
+                prefix = "behaviors.by-label." + b.label() + ".";
+            } else {
+                prefix = "behaviors.named." + b.taskName() + ".";
+            }
             p.forEach((k, v) -> cfg.put(prefix + k, v));
         }
     }

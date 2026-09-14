@@ -239,12 +239,21 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         inst.running.add(exec);
         Thread.ofVirtual().name(inst.name + "-task-" + d.taskId()).start(() -> {
             try {
-                var outcome = behaviors.resolve(d.taskName());
-                var profile = new BehaviorProfile(outcome.durationMillis(),
-                        outcome.jitterRatio(), outcome.successRate(),
-                        outcome.exceptionType(), outcome.logLines());
-                var result = profile.execute(d.taskName(), new Random());
-                if (exec.cancelled) {
+                var entry = behaviors.resolve(d.taskName());
+                var profile = new BehaviorProfile(entry.durationMillis(),
+                        entry.jitterRatio(), entry.successRate(),
+                        entry.exceptionType(), entry.logLines(),
+                        entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+                // M1 T17：progress 上报（periodic 模式按进度回调 → 事件）
+                var result = profile.execute(d.taskName(), new Random(), pct ->
+                        fire(Event.sim("sim.worker-task-progress",
+                                id.instanceSourceId(inst.index),
+                                Map.of("taskId", d.taskId(), "progress", pct))));
+                if (entry.neverReport()) {
+                    // M1 T17：neverReport＝回报通道丢失——终态丢弃（槽位仍释放，供超时回收演练）
+                    fire(Event.sim("sim.worker-task-unreported",
+                            id.instanceSourceId(inst.index), Map.of("taskId", d.taskId())));
+                } else if (exec.cancelled) {
                     conn.write(new TaskStatus(d.taskId(), inst.name,
                             TaskStatus.CANCELLED, "cancelled by master"));
                 } else {
@@ -267,12 +276,6 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 inst.running.remove(exec);
             }
         });
-    }
-
-    private long parseDuration(String taskName) {
-        // M0：时长来自剧本（behaviors.named.<task>.duration / default）；此处仅兜底
-        var entry = behaviors.resolve(taskName);
-        return entry != null ? entry.durationMillis() : 1000L;
     }
 
     @Override
