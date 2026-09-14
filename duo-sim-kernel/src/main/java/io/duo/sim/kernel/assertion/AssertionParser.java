@@ -50,6 +50,8 @@ public final class AssertionParser {
                     listParam(value, name));
             case "affectedTasksAtLeast" -> Assertions.affectedTasksAtLeast(
                     (int) longParam(value, "min", 1L));
+            case "masterReelectedWithin" -> Assertions.masterReelectedWithin(
+                    longParam(value, "seconds", 30L));
             default -> throw new IllegalArgumentException(
                     "unknown assertion: " + name);
         };

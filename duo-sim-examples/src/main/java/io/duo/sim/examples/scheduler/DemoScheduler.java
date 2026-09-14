@@ -44,6 +44,11 @@ public final class DemoScheduler implements SutMain {
     private SutContext ctx;
     /** 派发选择器（T19(a)）：freeSlots 视图 + 最大者/轮转。 */
     private final DispatchSelector selector = new DispatchSelector();
+    /** registry 接入（D1：direct 门面 或 wire 真实 ZK 客户端）。 */
+    private RegistryAccess registryAccess;
+    /** 选主代次（每次成功注册递增；载荷进 sut.leader-elected）。 */
+    private final java.util.concurrent.atomic.AtomicInteger leaderEpoch =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /** worker 连接的下行推送。 */
     private static final class WorkerFeed {
@@ -64,11 +69,10 @@ public final class DemoScheduler implements SutMain {
         // 1) 绑定自身 Duo 端点并注册到 registry（发现路径，§2）
         server = new ServerSocket();
         server.bind(new InetSocketAddress("127.0.0.1", 0));
-        RegistryContract registry = ctx.direct(io.duo.sim.kernel.api.Contract.REGISTRY,
-                RegistryContract.class)
-                .orElseThrow(() -> new IllegalStateException(
-                        "demo-scheduler requires direct registry binding"));
-        registry.registerEndpoint("scheduler", "127.0.0.1:" + server.getLocalPort());
+        // M2 D1：两种接入路径——direct（virtual 档门面，M0/M1 路径）或 wire（embedded 档
+        // 真实 ZK，SUT 代码切 ZK 客户端）。按 wiring 配置与上下文自动选择。
+        registryAccess = resolveRegistryAccess();
+        registryAccess.register(server.getLocalPort());
         ctx.ready(); // 就绪：端点已可被发现
 
         // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务）
@@ -198,6 +202,132 @@ public final class DemoScheduler implements SutMain {
         }
     }
 
+    /**
+     * registry 接入解析（M2 D1）：
+     * <ul>
+     *   <li>{@code registry.mode=zk}（或 config 给出 {@code registry.connectString}）→
+     *       **wire 路径**：用真实 Curator 客户端连 embedded registry 的 ZK 端口，
+     *       注册临时节点 + 监听连接状态，断线重连后**重新注册**并发布
+     *       {@code sut.leader-elected}（这正是 M2 要验证的 SUT 自愈逻辑）；</li>
+     *   <li>否则 → **direct 路径**：用注入的 {@link RegistryContract} 门面（M0/M1 路径）。</li>
+     * </ul>
+     */
+    private RegistryAccess resolveRegistryAccess() {
+        String connectString = ctx.config().get("registry.connectString");
+        if (connectString == null) {
+            connectString = ctx.endpointByContract().get("registry");
+        }
+        String mode = ctx.config().getOrDefault("registry.mode",
+                connectString == null ? "direct" : "zk");
+        if ("zk".equals(mode) && connectString != null) {
+            return new ZkRegistryAccess(connectString);
+        }
+        RegistryContract facade = ctx.direct(io.duo.sim.kernel.api.Contract.REGISTRY,
+                RegistryContract.class)
+                .orElseThrow(() -> new IllegalStateException(
+                        "demo-scheduler requires registry access: neither wire connectString "
+                                + "nor direct facade available"));
+        return new DirectRegistryAccess(facade);
+    }
+
+    /** registry 接入抽象（D1 双路径）。 */
+    private interface RegistryAccess {
+        void register(int duoPort);
+    }
+
+    /** direct 路径：注入门面（virtual 档；M0/M1 行为保持）。 */
+    private final class DirectRegistryAccess implements RegistryAccess {
+        private final RegistryContract facade;
+
+        DirectRegistryAccess(RegistryContract facade) {
+            this.facade = facade;
+        }
+
+        @Override
+        public void register(int duoPort) {
+            facade.registerEndpoint("scheduler", "127.0.0.1:" + duoPort);
+            ctx.events().publish("sut.leader-elected",
+                    Map.of("epoch", leaderEpoch.incrementAndGet(),
+                            "endpoint", "127.0.0.1:" + duoPort, "mode", "direct"));
+        }
+    }
+
+    /**
+     * wire 路径（M2 D1）：真实 Curator 客户端。连接状态监听：LOST → 会话失效；
+     * RECONNECTED → **重新注册端点**（临时节点随会话消失，真实 ZK 语义）+ 发布
+     * {@code sut.leader-elected}（epoch 递增）——"重新选主"事实。
+     */
+    private final class ZkRegistryAccess implements RegistryAccess {
+        private final org.apache.curator.framework.CuratorFramework client;
+        private final String connectString;
+        private volatile int duoPort;
+
+        ZkRegistryAccess(String connectString) {
+            this.connectString = connectString;
+            this.client = org.apache.curator.framework.CuratorFrameworkFactory.builder()
+                    .connectString(connectString)
+                    .retryPolicy(new org.apache.curator.retry.ExponentialBackoffRetry(200, 10))
+                    .build();
+        }
+
+        @Override
+        public void register(int port) {
+            this.duoPort = port;
+            client.getConnectionStateListenable().addListener((c, state) -> {
+                if (state == org.apache.curator.framework.state.ConnectionState.RECONNECTED
+                        || state == org.apache.curator.framework.state.ConnectionState.CONNECTED) {
+                    try {
+                        writeEndpointNode();
+                        ctx.events().publish("sut.leader-elected",
+                                Map.of("epoch", leaderEpoch.incrementAndGet(),
+                                        "endpoint", "127.0.0.1:" + duoPort,
+                                        "mode", "zk", "state", state.name()));
+                    } catch (Exception e) {
+                        ctx.events().publish("sut.leader-election-failed",
+                                Map.of("error", String.valueOf(e.getMessage())));
+                    }
+                }
+            });
+            client.start();
+            try {
+                if (!client.blockUntilConnected(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("ZK client cannot connect: " + connectString);
+                }
+                writeEndpointNode();
+                ctx.events().publish("sut.leader-elected",
+                        Map.of("epoch", leaderEpoch.incrementAndGet(),
+                                "endpoint", "127.0.0.1:" + duoPort, "mode", "zk"));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("ZK connect interrupted", e);
+            } catch (Exception e) {
+                throw new IllegalStateException("ZK registration failed: " + e.getMessage(), e);
+            }
+        }
+
+        private void writeEndpointNode() throws Exception {
+            String path = "/duo/endpoints/scheduler";
+            if (client.checkExists().forPath("/duo/endpoints") == null) {
+                client.create().creatingParentsIfNeeded().forPath("/duo/endpoints");
+            }
+            byte[] data = ("127.0.0.1:" + duoPort)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (client.checkExists().forPath(path) == null) {
+                client.create().forPath(path, data);
+            } else {
+                client.setData().forPath(path, data);
+            }
+        }
+
+        void close() {
+            try {
+                client.close();
+            } catch (RuntimeException ignored) {
+                // 尽力而为
+            }
+        }
+    }
+
     private Map<String, List<String>> readDag(Map<String, String> config) {
         String tasksCfg = config.getOrDefault("dag.tasks",
                 "load-orders,clean-orders,build-features,unstable-task,aggregate-report");
@@ -255,6 +385,9 @@ public final class DemoScheduler implements SutMain {
     }
 
     private void closeAll() {
+        if (registryAccess instanceof ZkRegistryAccess zk) {
+            zk.close();
+        }
         for (var c : workerConns) {
             try {
                 c.close();

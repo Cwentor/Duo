@@ -239,6 +239,50 @@ public final class Assertions {
         };
     }
 
+    /**
+     * masterReelectedWithin：注册中心闪断后"重新选主"（M2 T29）。
+     *
+     * <p>起点＝{@code sim.fault-injected} 且 {@code payload.action=registry-flap}；
+     * 成功＝窗口内出现 {@code sut.leader-elected}（SUT 在重新注册成功后发布的事实，
+     * §7.3）。首次注册的 leader-elected（闪断之前）不满足窗口起点约束。
+     */
+    public static Assertion masterReelectedWithin(long windowSeconds) {
+        return new Assertion() {
+            @Override
+            public String name() {
+                return "masterReelectedWithin";
+            }
+
+            @Override
+            public Outcome evaluate(List<Event> events) {
+                Event flap = events.stream()
+                        .filter(e -> e.type().equals("sim.fault-injected"))
+                        .filter(e -> "registry-flap".equals(e.payload().get("action")))
+                        .findFirst().orElse(null);
+                if (flap == null) {
+                    return new Outcome(name(), false,
+                            "no registry-flap fault-injected event found");
+                }
+                Instant deadline = flap.timestamp().plus(Duration.ofSeconds(windowSeconds));
+                Event reelect = events.stream()
+                        .filter(e -> e.type().equals("sut.leader-elected"))
+                        .filter(e -> e.timestamp().isAfter(flap.timestamp()))
+                        .findFirst().orElse(null);
+                if (reelect == null) {
+                    return new Outcome(name(), false,
+                            "no sut.leader-elected after flap (master did not re-register)");
+                }
+                if (reelect.timestamp().isAfter(deadline)) {
+                    return new Outcome(name(), false,
+                            "leader re-elected after deadline: " + reelect.timestamp());
+                }
+                return new Outcome(name(), true,
+                        "leader re-elected within " + windowSeconds + "s: "
+                                + reelect.payload());
+            }
+        };
+    }
+
     /** affectedTasksAtLeast：crash 时该实例持有的在途任务数 ≥ min（防空真守护）。 */
     public static Assertion affectedTasksAtLeast(int min) {
         return new Assertion() {

@@ -181,6 +181,59 @@ class AssertionsTest {
         assertTrue(ok.passed(), ok.detail());
     }
 
+    // ---- T29 masterReelectedWithin ----
+
+    @Test
+    void masterReelectedWithinPassesOnTimelyReelection() {
+        List<Event> events = new ArrayList<>();
+        events.add(sim("sim.fault-injected", "zk", 10, Map.of("action", "registry-flap")));
+        events.add(sut("sut.leader-elected", "master", 13, Map.of("epoch", 2)));
+        var o = Assertions.masterReelectedWithin(30).evaluate(events);
+        assertTrue(o.passed(), o.detail());
+    }
+
+    @Test
+    void masterReelectedWithinFailsWithoutReelection() {
+        List<Event> events = new ArrayList<>();
+        events.add(sim("sim.fault-injected", "zk", 10, Map.of("action", "registry-flap")));
+        events.add(sut("sut.leader-elected", "master", 3, Map.of("epoch", 1))); // 闪断前
+        var o = Assertions.masterReelectedWithin(30).evaluate(events);
+        assertFalse(o.passed(), o.detail());
+        assertTrue(o.detail().contains("no sut.leader-elected after flap"), o.detail());
+    }
+
+    @Test
+    void masterReelectedWithinFailsOutsideWindow() {
+        List<Event> events = new ArrayList<>();
+        events.add(sim("sim.fault-injected", "zk", 10, Map.of("action", "registry-flap")));
+        events.add(sut("sut.leader-elected", "master", 50, Map.of("epoch", 2)));
+        var o = Assertions.masterReelectedWithin(30).evaluate(events);
+        assertFalse(o.passed(), o.detail());
+        assertTrue(o.detail().contains("after deadline"), o.detail());
+    }
+
+    @Test
+    void masterReelectedWithinIgnoresCrashOnlyScenario() {
+        // 无 flap 事件（只有 crash）→ 断言失败（起点缺失）
+        List<Event> events = new ArrayList<>();
+        events.add(sim("sim.fault-injected", "workers-3", 10, Map.of("action", "crash")));
+        events.add(sut("sut.leader-elected", "master", 12, Map.of("epoch", 2)));
+        var o = Assertions.masterReelectedWithin(30).evaluate(events);
+        assertFalse(o.passed(), o.detail());
+        assertTrue(o.detail().contains("no registry-flap"), o.detail());
+    }
+
+    @Test
+    void parserAcceptsMasterReelectedWithin() {
+        var parsed = AssertionParser.parse(List.of(
+                Map.of("masterReelectedWithin", Map.of("seconds", 20))));
+        assertTrue(parsed.get(0).name().equals("masterReelectedWithin"));
+        List<Event> events = new ArrayList<>();
+        events.add(sim("sim.fault-injected", "zk", 10, Map.of("action", "registry-flap")));
+        events.add(sut("sut.leader-elected", "master", 15, Map.of("epoch", 2)));
+        assertTrue(parsed.get(0).evaluate(events).passed());
+    }
+
     @Test
     void parserAcceptsYamlShapes() {
         var parsed = AssertionParser.parse(List.of(

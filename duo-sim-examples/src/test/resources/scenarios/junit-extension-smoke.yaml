@@ -1,0 +1,31 @@
+name: junit-extension-smoke
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "t1,t2"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 2
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 100ms, jitter: 0.0, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline: []
+assertions:
+  - noTaskLost: { requireAllSuccess: true }

@@ -31,5 +31,10 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-junit</artifactId>
         </dependency>
+        <!-- D1：demo-scheduler 作为真实 SUT 用 ZK 客户端连 embedded registry（wire 路径） -->
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-framework</artifactId>
+        </dependency>
     </dependencies>
 </project>
