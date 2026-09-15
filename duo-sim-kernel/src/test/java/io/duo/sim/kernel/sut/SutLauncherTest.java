@@ -120,7 +120,7 @@ class SutLauncherTest {
      * 循环多轮以暴露 JIT 预热后才显现的竞态——修复前该场景误判率约 71%（长生命周期 JVM）。
      */
     @Test
-    void readyThenImmediateCrashIsNotStartupFailure() {
+    void readyThenImmediateCrashIsNotStartupFailure() throws Exception {
         int iterations = 3_000;
         for (int i = 0; i < iterations; i++) {
             SutMain main = ctx -> {
@@ -134,9 +134,11 @@ class SutLauncherTest {
             } catch (ComponentException ex) {
                 throw new AssertionError("第 " + i + " 轮误判为启动失败：" + ex.getMessage(), ex);
             }
-            // 崩溃事实仍须经 exitState 传达（run() 线程与 start() 并发，故轮询）
-            for (int spin = 0; spin < 10_000 && launcher.exitState() == null; spin++) {
-                Thread.onSpinWait();
+            // 崩溃事实仍须经 exitState 传达（run() 线程与 start() 并发，故限时轮询——
+            // 全仓回归的高负载 JVM 下自旋预算会早于线程调度耗尽，须按时间而非迭代数等待）
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (launcher.exitState() == null && System.nanoTime() < deadline) {
+                Thread.sleep(1);
             }
             assertNotNull(launcher.exitState(), "第 " + i + " 轮：崩溃未反映到 exitState");
             assertFalse(launcher.exitState().normal());

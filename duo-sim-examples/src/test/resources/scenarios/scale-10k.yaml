@@ -1,0 +1,36 @@
+# M4 压测 · 万档（计划 T37，-Dduo.scale=true 显式触发）。
+# 与千档唯一差异：count 10000——同一场景文件换数即万级规模（§14 验收口径）。
+name: scale-heartbeat-10k
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "load-a,load-b"
+      # D3：万档采样更稀（每 1000 条发 1 条），事件流体量按采样率而非原始心跳量增长
+      heartbeat.eventSampleRate: "1000"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 10000
+    capacity: { slots: 1 }
+    config:
+      heartbeat.interval.ms: "1000"
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 30s, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+assertions:
+  - noTaskLost: { requireAllSuccess: true }

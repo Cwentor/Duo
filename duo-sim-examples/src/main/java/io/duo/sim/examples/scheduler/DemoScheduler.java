@@ -36,6 +36,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class DemoScheduler implements SutMain {
 
+    /** 注册阶段（首帧）读超时：半开连接不得无限占用资源（M4 压测）。 */
+    private static final int REGISTER_TIMEOUT_MS = 10_000;
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ServerSocket server;
     private final List<FrameConnection> workerConns = new CopyOnWriteArrayList<>();
@@ -49,6 +52,22 @@ public final class DemoScheduler implements SutMain {
     /** 选主代次（每次成功注册递增；载荷进 sut.leader-elected）。 */
     private final java.util.concurrent.atomic.AtomicInteger leaderEpoch =
             new java.util.concurrent.atomic.AtomicInteger();
+    /**
+     * 心跳事件采样率（M4 压测 D3）：config {@code heartbeat.eventSampleRate}，缺省 1＝全量。
+     * 每 N 条心跳发 1 条 sut.heartbeat 事件——万级实例 × 1s 心跳即 1 万事件/s，
+     * 事件流/录制体积随事件量线性涨，聚合语义上可采样（断言库无逐心跳断言需求）。
+     */
+    private volatile int heartbeatEventSampleRate = 1;
+    /** 收到的心跳总数（含被采样丢弃的）——吞吐 meter 的事实源。 */
+    private final java.util.concurrent.atomic.AtomicLong heartbeatTotal =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** 当前 meter 窗口内的心跳数。 */
+    private final java.util.concurrent.atomic.AtomicLong heartbeatWindow =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** 已 accept 的连接数（M4 压测诊断：区分「未拨号/被拒」与「accept 后注册卡死」）。 */
+    private final java.util.concurrent.atomic.AtomicLong accepted =
+            new java.util.concurrent.atomic.AtomicLong();
+    private volatile Thread heartbeatMeter;
 
     /** worker 连接的下行推送。 */
     private static final class WorkerFeed {
@@ -68,7 +87,8 @@ public final class DemoScheduler implements SutMain {
 
         // 1) 绑定自身 Duo 端点并注册到 registry（发现路径，§2）
         server = new ServerSocket();
-        server.bind(new InetSocketAddress("127.0.0.1", 0));
+        // M4 T36：accept backlog 调大（万级并发拨号下缺省 50 会拒连；SUT 自身变更，D1）
+        server.bind(new InetSocketAddress("127.0.0.1", 0), 4096);
         // M2 D1：两种接入路径——direct（virtual 档门面，M0/M1 路径）或 wire（embedded 档
         // 真实 ZK，SUT 代码切 ZK 客户端）。按 wiring 配置与上下文自动选择。
         registryAccess = resolveRegistryAccess();
@@ -81,11 +101,14 @@ public final class DemoScheduler implements SutMain {
             throw new IllegalStateException("demo-scheduler: empty DAG (check dag.tasks)");
         }
         stateMachine = new SchedulerStateMachine(dag, new StateListener());
+        heartbeatEventSampleRate = Integer.parseInt(ctx.config().getOrDefault(
+                "heartbeat.eventSampleRate", "1"));
         ctx.events().publish("sut.scheduler-started",
                 Map.of("tasks", String.join(",", stateMachine.topoTasks())));
 
         // 3) accept worker 拨号
         Thread acceptor = Thread.ofVirtual().name("demo-scheduler-accept").start(this::acceptLoop);
+        startHeartbeatMeter();
         try {
             // 4) 等全部任务终态（状态机驱动；run() 返回即 sut.exited）
             while (running.get() && !stateMachine.allTerminal()) {
@@ -96,7 +119,42 @@ public final class DemoScheduler implements SutMain {
         } finally {
             running.set(false);
             acceptor.interrupt();
+            stopHeartbeatMeter();
             closeAll();
+        }
+    }
+
+    /**
+     * 心跳吞吐 meter（M4 T36）：每 5s 发布一条 {@code sut.heartbeat-meter} 事件
+     * （窗口心跳数 / 速率 / 累计）——压测吞吐的真实事实源（不随采样率失真，D3 配套）。
+     */
+    private void startHeartbeatMeter() {
+        heartbeatMeter = Thread.ofVirtual().name("demo-scheduler-hb-meter").start(() -> {
+            while (running.get()) {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                long window = heartbeatWindow.getAndSet(0);
+                long total = heartbeatTotal.get();
+                if (window > 0 || total > 0) {
+                    ctx.events().publish("sut.heartbeat-meter", Map.of(
+                            "windowHeartbeats", window,
+                            "ratePerSec", window / 5.0,
+                            "total", total,
+                            "accepted", accepted.get(),
+                            "feeds", feeds.size()));
+                }
+            }
+        });
+    }
+
+    private void stopHeartbeatMeter() {
+        Thread m = heartbeatMeter;
+        if (m != null) {
+            m.interrupt();
         }
     }
 
@@ -104,12 +162,41 @@ public final class DemoScheduler implements SutMain {
         try {
             while (running.get()) {
                 Socket s = server.accept();
-                var feed = register(s);
-                Thread.ofVirtual().name("demo-scheduler-feed-" + feed.name)
-                        .start(() -> readFeed(feed));
+                accepted.incrementAndGet();
+                // 每连接独立虚拟线程（M4 压测修复）：注册/读取的任何失败只影响该连接，
+                // 不拖垮 accept 环——旧实现 register 在 accept 线程内串行执行且只捕
+                // IOException，一个坏连接即可让整个 acceptor 静默死亡（万级爬坡下
+                // ~800 条已建立连接永远无人 accept，客户端无超时则永久挂起、无离线事件）
+                Thread.ofVirtual().name("demo-scheduler-conn").start(() -> handleConnection(s));
             }
         } catch (IOException e) {
             // server 关闭
+        }
+    }
+
+    /** 单连接处理：注册（限时）→ 稳态读取。注册阶段失败仅丢弃该连接（§12 不静默）。 */
+    private void handleConnection(Socket s) {
+        WorkerFeed feed = null;
+        try {
+            s.setSoTimeout(REGISTER_TIMEOUT_MS); // 首帧/注册限时：半开连接不阻塞资源
+            feed = register(s);
+            s.setSoTimeout(0); // 稳态读可无限期等待下行
+            readFeed(feed);
+        } catch (IOException | RuntimeException e) {
+            // 注册阶段失败（feed==null）：仅丢弃该连接并记一级事件；
+            // 稳态 IOException 已在 readFeed 内处理（onFeedLost）；
+            // 稳态 RuntimeException（状态机异常等）→ 防御性按失联收敛
+            if (feed == null) {
+                ctx.events().publish("sut.register-failed", Map.of(
+                        "error", String.valueOf(e.getMessage())));
+            } else if (running.get()) {
+                onFeedLost(feed);
+            }
+            try {
+                s.close();
+            } catch (IOException ignored) {
+                // 尽力而为
+            }
         }
     }
 
@@ -139,9 +226,13 @@ public final class DemoScheduler implements SutMain {
                     // T19(c)：线协议 TaskStatus 自带 instanceName——透传给状态事件（断言数据契约）
                     stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail(),
                             ts.instanceName());
-                } else if (msg instanceof HeartbeatReport) {
-                    ctx.events().publish("sut.heartbeat",
-                            Map.of("instance", ((HeartbeatReport) msg).instanceName()));
+                } else if (msg instanceof HeartbeatReport hb) {
+                    long n = heartbeatTotal.incrementAndGet();
+                    heartbeatWindow.incrementAndGet();
+                    if (n % heartbeatEventSampleRate == 0) {
+                        ctx.events().publish("sut.heartbeat",
+                                Map.of("instance", hb.instanceName()));
+                    }
                 } else if (msg instanceof SlotReport sr) {
                     // T19(a)：维护调度侧槽位视图（此前被静默丢弃）
                     if (feed.name.equals(sr.instanceName())) {

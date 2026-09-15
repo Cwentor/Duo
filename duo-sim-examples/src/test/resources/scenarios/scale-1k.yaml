@@ -1,0 +1,37 @@
+# M4 压测 · 千档（计划 T36/T37，-Dduo.scale=true 显式触发，常规回归不跑）
+# 口径：1000 worker 实例 × 1s 心跳（可配 heartbeat.interval.ms），无故障时间线，
+# DAG 2 条 30s 长任务维持 SUT 存活窗口，测「注册爬坡 → 稳态心跳吞吐 → 全终态」闭环。
+name: scale-heartbeat-1k
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "load-a,load-b"
+      # D3：心跳事件采样——每 100 条发 1 条 sut.heartbeat（吞吐以 sut.heartbeat-meter 为准）
+      heartbeat.eventSampleRate: "100"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 1000
+    capacity: { slots: 1 }
+    config:
+      heartbeat.interval.ms: "1000"
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 30s, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+assertions:
+  - noTaskLost: { requireAllSuccess: true }

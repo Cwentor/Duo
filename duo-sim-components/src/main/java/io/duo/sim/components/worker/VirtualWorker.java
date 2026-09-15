@@ -52,7 +52,11 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
 
     private static final long DISCOVER_INTERVAL_MS = 500;
     private static final int DISCOVER_MAX_TRIES = 20;
-    private static final long HEARTBEAT_INTERVAL_MS = 100;
+    /** 心跳周期缺省值；可用 config {@code heartbeat.interval.ms} 覆盖（M4 压测：万级实例下调大）。 */
+    private static final long DEFAULT_HEARTBEAT_INTERVAL_MS = 100;
+    /** 连接重试（M4 压测 T36）：万级并发拨号下 accept 队列可能瞬时满，退避重试防误判离线。 */
+    private static final int CONNECT_MAX_TRIES = 3;
+    private static final long CONNECT_RETRY_BACKOFF_MS = 250;
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
@@ -60,6 +64,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     private volatile int cpuPerInstance = 4;
     private volatile int memGbPerInstance = 8;
     private volatile int totalSlots = 4;
+    private volatile long heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
     private volatile BehaviorResolver behaviors;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -117,6 +122,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 ctx.config().getOrDefault("capacity.memGB", "8"));
         this.totalSlots = Integer.parseInt(
                 ctx.config().getOrDefault("capacity.slots", String.valueOf(cpuPerInstance)));
+        this.heartbeatIntervalMs = Long.parseLong(ctx.config().getOrDefault(
+                "heartbeat.interval.ms", String.valueOf(DEFAULT_HEARTBEAT_INTERVAL_MS)));
         this.behaviors = BehaviorResolver.fromConfig(ctx.config());
         for (int i = 1; i <= count; i++) {
             instances.put(i, new InstanceState(i, id.instanceSourceId(i), totalSlots));
@@ -142,7 +149,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                     () -> runInstance(inst, masterAddr));
             inst.thread = t;
         }
-        fire(Event.sim("sim.worker-started", id.value(), Map.of("instances", count)));
+        fire(Event.sim("sim.worker-started", id.value(),
+                Map.of("instances", count, "heartbeatIntervalMs", heartbeatIntervalMs)));
     }
 
     private String discoverMaster() {
@@ -170,43 +178,99 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     private void runInstance(InstanceState inst, String masterAddr) {
         inst.alive.set(true);
         final long gen = inst.generation.incrementAndGet();
+        // 拨号错峰（M4 压测）：实例号×1ms（封顶 10s）确定性错开握手洪峰
+        try {
+            Thread.sleep(Math.min(inst.index, DIAL_STAGGER_CAP_MS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
         int colon = masterAddr.lastIndexOf(':');
         String host = masterAddr.substring(0, colon);
         int port = Integer.parseInt(masterAddr.substring(colon + 1));
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port));
-            FrameConnection conn = new FrameConnection(socket);
-            inst.connection = conn;
-            conn.write(new RegisterRequest(inst.name, cpuPerInstance, memGbPerInstance));
-            DuoMessage resp = conn.read();
-            if (!(resp instanceof RegisterResponse r) || !r.accepted()) {
-                inst.alive.set(false);
-                return;
-            }
-            conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
-            // 读下行线程（派发/取消）
-            inst.readerThread = Thread.ofVirtual().name(inst.name + "-reader")
-                    .start(() -> readDownstream(inst, conn, gen));
-            // 心跳 + 槽位上报
-            while (inst.alive.get() && running.get() && inst.generation.get() == gen) {
-                if (frozen.get()) {
-                    Thread.sleep(HEARTBEAT_INTERVAL_MS); // freeze：不发心跳（注入通路属 M1）
-                    continue;
+        try {
+            String failure = null;
+            for (int attempt = 1; attempt <= HANDSHAKE_MAX_TRIES; attempt++) {
+                try (Socket socket = new Socket()) {
+                    connectWithRetry(socket, host, port);
+                    socket.setSoTimeout(REGISTER_READ_TIMEOUT_MS); // 注册握手限时（§12 快速失败）
+                    FrameConnection conn = new FrameConnection(socket);
+                    inst.connection = conn;
+                    conn.write(new RegisterRequest(inst.name, cpuPerInstance, memGbPerInstance));
+                    DuoMessage resp = conn.read();
+                    String reason = resp instanceof RegisterResponse rr
+                            ? (rr.accepted() ? null : "register rejected: " + rr.reason())
+                            : "no register response";
+                    if (reason != null) {
+                        failure = reason; // 明确拒绝：重试无意义，快速失败
+                        break;
+                    }
+                    conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
+                    socket.setSoTimeout(0); // 稳态：下行读可无限期等待（读线程独立）
+                    // 读下行线程（派发/取消）
+                    inst.readerThread = Thread.ofVirtual().name(inst.name + "-reader")
+                            .start(() -> readDownstream(inst, conn, gen));
+                    // 心跳 + 槽位上报（周期可配，M4 T36）
+                    while (inst.alive.get() && running.get() && inst.generation.get() == gen) {
+                        if (frozen.get()) {
+                            Thread.sleep(heartbeatIntervalMs); // freeze：不发心跳（注入通路属 M1）
+                            continue;
+                        }
+                        conn.write(new HeartbeatReport(inst.name, heartbeatSeq.incrementAndGet()));
+                        conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
+                        Thread.sleep(heartbeatIntervalMs);
+                    }
+                    return; // 正常退出循环（停止/代次更替）
+                } catch (IOException e) {
+                    failure = String.valueOf(e.getMessage()); // 连接/握手失败：退避重试
+                    if (inst.generation.get() != gen || !running.get()) {
+                        return; // 停止/重启中：属正常收敛，不算离线（不刷离线事件）
+                    }
+                    if (attempt < HANDSHAKE_MAX_TRIES) {
+                        Thread.sleep(HANDSHAKE_RETRY_BACKOFF_MS * attempt);
+                    }
                 }
-                conn.write(new HeartbeatReport(inst.name, heartbeatSeq.incrementAndGet()));
-                conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
-                Thread.sleep(HEARTBEAT_INTERVAL_MS);
             }
+            // 握手重试耗尽或明确拒绝＝实例离线（发射事件，M4 T36 诊断改进：
+            // 此前静默吞掉，万级注册爬坡失败无从定位——注册类故障必须可观测，§12 精神）
+            fire(Event.sim("sim.worker-instance-offline", inst.name,
+                    Map.of("error", String.valueOf(failure))));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (IOException e) {
-            // 连接断开＝实例离线（master 侧感知）
         } finally {
             if (inst.generation.get() == gen) {
                 inst.alive.set(false);
             }
             closeQuietly(inst);
         }
+    }
+
+    /** 连接重试（M4 压测 T36）：失败退避后重试，超限抛最后一次异常（实例离线由调用方 finally 收敛）。 */
+    private static final int CONNECT_TIMEOUT_MS = 5_000;
+    /** 注册握手读超时（M4 压测）：master 无人应答的半开连接必须限时收敛（§12）。 */
+    private static final int REGISTER_READ_TIMEOUT_MS = 10_000;
+
+    /** 连接+注册握手整体重试（M4 压测）：万级并发握手洪峰下单次超时≠实例不可用，退避重试。 */
+    private static final int HANDSHAKE_MAX_TRIES = 3;
+    private static final long HANDSHAKE_RETRY_BACKOFF_MS = 500;
+    /** 拨号错峰上限（M4 压测）：index×1ms、封顶 10s，平滑握手洪峰（确定性，无随机）。 */
+    private static final long DIAL_STAGGER_CAP_MS = 10_000;
+
+    private static void connectWithRetry(Socket socket, String host, int port)
+            throws IOException, InterruptedException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= CONNECT_MAX_TRIES; attempt++) {
+            try {
+                socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
+                return;
+            } catch (IOException e) {
+                last = e;
+                if (attempt < CONNECT_MAX_TRIES) {
+                    Thread.sleep(CONNECT_RETRY_BACKOFF_MS);
+                }
+            }
+        }
+        throw last;
     }
 
     private void readDownstream(InstanceState inst, FrameConnection conn, long gen) {

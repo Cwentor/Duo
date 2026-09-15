@@ -41,6 +41,19 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- container 档（M4 T38）：Testcontainers 桥（§6：本地 Docker 按需拉起真容器） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.20.4</version>
+        </dependency>
+        <!-- 显式钉住 jackson-annotations：testcontainers→docker-java 传递 2.10.3，
+             会胜过 fabric8 mock 需要的 2.17+（JsonKey 在 2.17 才有，否则 NoClassDefFound） -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.18.2</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.curator</groupId>
             <artifactId>curator-test</artifactId>
