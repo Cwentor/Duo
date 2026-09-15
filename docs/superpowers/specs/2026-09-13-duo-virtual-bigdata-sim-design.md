@@ -345,6 +345,8 @@ wiring: { registry: { node: zk, path: direct } }  # 显式 interface-direct
 | **M3 控制面** | ~2 周 | REST/CLI 热注入（可选极简拓扑视图） | 运行中手动注入故障并观察自愈 |
 | **M4 规模与桥接** | 按需 | 万级心跳压测（虚拟线程调优）、Testcontainers 桥（embedded 模块容器档）、加速时钟评估、第三方 SUT 协议适配器（依赖协议工件与内核公开 SPI） | 千~万 Worker 心跳压测报告 |
 
+> M4 已于 2026-09-15 完成：压测报告 `docs/superpowers/acceptance/2026-09-15-duo-m4-scale-report.md`（千档 993 HB/s、万档 9,928 HB/s，注册 100%），验收记录 `docs/superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md`。加速时钟与第三方适配器按 §17 决策处理（前者推迟，后者不绑定产品按需立专项）。
+
 每个阶段以可运行场景文件 + 通过的验收断言收尾。
 
 ## 15. 技术选型
@@ -368,8 +370,8 @@ wiring: { registry: { node: zk, path: direct } }  # 显式 interface-direct
 
 ## 17. 开放问题
 
-1. 第三方 SUT 协议适配器（如 DolphinScheduler Worker 协议）的优先级与版本基线——M4 前再定。
-2. 虚拟时钟加速是否进路线图——依赖 SUT 是否可注入 `Clock`，M4 评估。
+1. 第三方 SUT 协议适配器（如 DolphinScheduler Worker 协议）的优先级与版本基线——**M4 决策（2026-09-15）：不绑定具体产品，维持 SPI 就绪，按需立专项**（无指定产品即无验收口径；接入要素——协议工件/内核 SPI/real 档接入路径——均已就绪）。触发条件与边界见 M4 验收记录 §三 D5。
+2. 虚拟时钟加速是否进路线图——依赖 SUT 是否可注入 `Clock`，**M4 评估（2026-09-15）：推迟**。理由：收益前提（缩短 wall-time）与 M4 压测目标（真实吞吐）冲突，且改造面覆盖全部 SUT 与真实后端（embedded/container 档会话超时不可虚拟化）；`SimClock` 接口已预留，无返工成本。触发条件见 M4 验收记录 §三 D4。
 
 ---
 

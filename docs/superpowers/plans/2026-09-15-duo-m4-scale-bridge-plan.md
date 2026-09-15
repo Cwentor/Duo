@@ -3,7 +3,7 @@
 - 日期：2026-09-15
 - 依据：设计文档 v1.0（冻结）§14 M4 行「万级心跳压测（虚拟线程调优）、Testcontainers 桥（embedded 模块容器档）、加速时钟评估、第三方 SUT 协议适配器（按需）」；§16 风险 1、§17 开放问题 1/2
 - 前置：M3 已验收（2026-09-15）；验收报告发现的两处缺陷（SutLauncher 字段遮蔽 + 诊断回归）与 LOW 观察（eventsSince O(n²)）已在 7ac458b 修复——eventsSince 改下标切片正是 M4 万级事件规模的前置条件
-- 状态：**已实施完成**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md`，压测报告见 `docs/superpowers/acceptance/2026-09-15-duo-m4-scale-report.md`
+- 状态：**已实施完成，M4 关闭**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md`，压测报告见 `docs/superpowers/acceptance/2026-09-15-duo-m4-scale-report.md`
 
 ---
 
