@@ -114,4 +114,25 @@ public final class ZookeeperContainerRegistry extends ZkBackedRegistry {
         throw new UnsupportedOperationException(
                 "registry-flap is not supported on container tier (D6): " + action.type());
     }
+
+    /**
+     * 生命周期 {@code restart} 守卫（M4 独立验收 HIGH 整改）。
+     *
+     * <p>{@link ZkBackedRegistry#restart()} 是 {@code stop(GRACEFUL) + start()}，**不经过**
+     * {@link #inject(FaultAction)}/{@link #clear(FaultAction)}，故上面的 {@code FaultInjectable}
+     * 守卫对生命周期动作形同虚设；而 {@code ScenarioValidator} 对 {@code crash}/{@code restart}
+     * 显式豁免 {@code supportedFaults} 校验（§7.2 生命周期动作设计使然），因此这条路径**没有任何
+     * 上层拦截**。容器档一旦执行 restart，Testcontainers 会重新映射随机宿主端口，wire 客户端
+     * 按 D2「复用旧端口」重连永远失败，且没有失败路径——表现为**永久挂起**。
+     *
+     * <p>故此处显式拒绝（§7.2「无降级」）：容器档不支持任何形式的整服重启。
+     * 若将来需要支持，应改为固定宿主端口（{@code PortBinding}）后覆写为本类的「保端口重建」，
+     * 而不是放开父类的 stop→start。
+     */
+    @Override
+    public void restart() {
+        throw new UnsupportedOperationException("restart is not supported on container tier "
+                + "(D6: Testcontainers remaps the host port, wire clients cannot reconnect "
+                + "to the old endpoint — no degradation path, §7.2)");
+    }
 }
