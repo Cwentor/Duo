@@ -116,3 +116,47 @@ M3 全部实现位于 `duo-sim-control`，只消费既有公开 API
   客户端只需轮询 `status`，无需主动触发停止。
 - **录制文件路径**：演示两个模式共用场景名，故 `build/scenarios/m3-inject-demo/events.jsonl`
   为后运行者覆盖（顺序执行无影响；并发运行同一场景需改名）。
+
+## 5. 验收后缺陷处置（`7ac458b` 修复 + 2026-09-18 独立复验）
+
+验收报告（第三节）在 `016914f` 中发现的高严重度缺陷与 LOW 观察，已由提交 `7ac458b`
+处置；本节记录 2026-09-18 的**独立复验**（只读探针，`git status` 全程干净，未改动任何项目文件）。
+
+**复验方法**：把 `016914f` 的缺陷态（外层 + 内层同名 `readyConfirmed` 字段遮蔽、
+`finally` 无 `countDown`）与当前工作树并排编译到 `build/verify-016914f/`（构建产物，受 `.gitignore` 覆盖），
+用同一探针（只走 kernel 公开 API）对照实测：
+
+| 探针场景 | `016914f` 缺陷态 | 当前工作树 |
+| --- | --- | --- |
+| `run()` 在 ready 前**正常返回** | 15ms 快速失败，`SUT exited before ready` | 22ms，同样报真实根因 |
+| `run()` 在 ready 前**抛异常** | 2ms，含崩溃根因 | 2ms，同样含根因 |
+| `ready` 后立即崩溃（同 JVM 循环 3000 轮） | **误判 2583/3000（86.1%）**，第 1 轮即误判 | **0/3000（0.0%）** |
+
+上表第 1 行看似正常，是因为该行的对照版本同时还原了「无 `countDown`」与「静默正常返回」两个条件。
+**单独还原「无 `countDown`」时，`finally` 仍会放行，故 `run()` 在 ready 前正常返回仍报真实根因**；
+真正退化的是**同时**要求 `run()` 静默正常返回（`exitState` 不被写入）的组合——此组合下 `5019ms →
+SUT ready timeout (5000ms)`（缺省 60s 档即 60024ms），而修复版本 15~22ms 即报真实根因。
+即：验收报告第三节判定的「诊断回归」是**条件性**的（缺陷态下 `exitState == null` 已足以短路快速失败），
+不再是结构性的；修复后放行动作无条件发生，两条路径都稳定快速失败。
+
+**字节码级证据**（`javap -p -c`，对当前构建产物）：
+
+- `SutContextImpl` 已**无** `readyConfirmed` 字段（唯一真值只存在于外层 `SutLauncher`）；
+- `SutContextImpl.ready()`：`aload_0; getfield owner; iconst_1; putfield SutLauncher.readyConfirmed` —— 写入外层字段；
+- `SutLauncher`：`readyConfirmed` 仅有两处引用——`start()` 的 `getfield` 判定、
+  `runAndWatch()` `finally` 中位于 `stopDone.countDown()` 之前的无条件 `ctx.readyLatch.countDown()`。
+
+**既有测试的可证伪性**：新增的 3 条回归测试对 `016914f` 版本**必然失败**
+（`readyThenImmediateCrashIsNotStartupFailure` 报「第 N 轮误判为启动失败」；
+`runReturningBeforeReadyFailsFastWithRealCause` 实测 `SUT ready timeout (5000ms)` 而非
+`exited before ready`），对当前版本全绿——两处缺陷若回归，测试会立即拦下。
+
+**LOW 观察（`ScenarioHost.eventsSince` O(n²)）**：已改按下标切片（内核事件流是只追加
+`CopyOnWriteArrayList`，下标天然稳定），`javap` 确认 `seqByEvent` / `lookupIdentity` 均不再存在，
+单次调用为 O(新增)。
+
+**结论**：两处缺陷与第四节观察**均已处置**（`7ac458b`），本次独立复验确认修复后行为正确
+且回归测试具备可证伪性；仅表格第 1 行的「缺陷态基线」受两个条件叠加影响（见上文说明），
+不影响「竞态未修好 → 已修好」的主结论。
+本次整仓回归 `./mvnw.sh -o clean test` → BUILD SUCCESS，02:37 min，**221 测 0 失败**
+（5 条 skip 均为设计明文门控：4 条容器档无 Docker + 1 条压测未开开关）。
