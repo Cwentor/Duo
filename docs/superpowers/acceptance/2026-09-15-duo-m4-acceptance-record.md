@@ -61,3 +61,29 @@
 - 4 条 `ZookeeperContainerRegistryTest`：本机无 Docker，`@EnabledIf` 按 §13 自动 skip（skip 路径本身即 D6 的验证目标）；元数据/注册期一致性校验在该类内为纯本地断言，有 Docker 环境即全跑。
 - 1 条 `ScaleAcceptanceTest`：压测档由 `-Dduo.scale=true` 显式触发（实测数据见 §一 与压测报告）。
 
+---
+
+## 六、2026-09-18 独立验收后的整改与复验（本记录追加）
+
+独立验收（2026-09-18）对 M4 给出**有条件通过**，两项需处置项与本记录相关的处置如下；
+完整取证见 `docs/superpowers/acceptance/2026-09-18-duo-m4-independent-verification-record.md`。
+
+| # | 独立验收结论 | 本轮处置 | 提交 |
+| --- | --- | --- | --- |
+| 1 | **[HIGH]** 容器档 `restart()` 绕过 `inject()`/`clear()` 守卫：`ZkBackedRegistry.restart()` 是 stop→start，Testcontainers 换宿主端口后 wire 客户端按 D2 复用旧端口永远连不上且无失败路径 → **永久挂起** | `ZookeeperContainerRegistry` 覆写 `restart()` 显式抛 `UnsupportedOperationException`（§7.2 无降级）；provider 元数据注释明确「`supportedFaults=∅` 不足以表达该约束（生命周期动作在校验期被 `ScenarioValidator` 豁免）」 | `317e9af` |
+| 2 | **[MEDIUM]** 容器档守卫用例全被 `@EnabledIf(dockerAvailable)` 吃掉，无 Docker 时「不支持＝显式拒绝」这一安全属性无人验证 | 新增 `ZookeeperContainerRegistryGuardTest`（5 条，**不标** `@EnabledIf`）：元数据 + SPI 解析 + restart/flap 显式拒绝 + 守卫先于 Docker 访问 | `317e9af` |
+| 3 | **[MEDIUM]** `ControlPlaneAcceptanceTest` 注入点靠 `sleep(1000)` 而非断言 | 改为 `awaitInFlightTaskOnWorkers2()`：轮询事件流断言 workers-2 上有「已派发且未终态」任务才注入 | `6d44ccc` |
+| 4 | **[LOW]** M3 记录「合计 213」不可复算 | M3 记录 §2.1 已补快照语义说明（213＝M3 关闭时 `abdfc44` 一代；`7ac458b` → 219；`ed2f054` → 221） | 随本次提交 |
+
+**规模判据复验**：本轮**核对**（未重跑）了两档指标 JSON 与录制流，逐项自洽——
+注册 1000/10000、峰值 993.0/9928.4、累计 29717/252624、meter 6/6、事件总行数 3246/26528 全部吻合；
+按本记录 §四.4 的既有断言口径复算，首个 `sut.dag-terminal` **之前**的 `sut.instance-lost` 两档均为 **0**。
+**限制**：上述产物位于 `.gitignore` 覆盖的 `build/` 下，不是提交快照；本机未执行 `-Dduo.scale=true`，
+故这是既存产物的自洽性核对，不是新一次独立复现。
+
+> **修正（2026-09-18）**：§五「全仓回归」的 221 为 **`ed2f054`/`74dd0b1` 快照**；本轮整改后（`317e9af` + `6d44ccc`）
+> 实跑 `./mvnw.sh -o clean test` → BUILD SUCCESS，02:41 min，分布协议 9 + kernel 57 + scenario 31 + components 42
+> + embedded 39（skip 4） + junit 0 + control 0 + examples 48（skip 1）＝ **226 run / 0 失败 / 5 skip**，
+> 与整改前 221 的差额正是新增的 `ZookeeperContainerRegistryGuardTest` 5 条。测试数随改动变化，
+> 记录中的合计值一律按对应提交理解。
+
