@@ -51,9 +51,9 @@ real worker 的 `SutMain`；仓库当前没有，故 virtual scheduler 的覆盖
 **版本一致**；1.x 坐标 `org.testcontainers:postgresql` 只发布到 1.21.4，与 2.x 核心混用会踩到
 2.x 已删除的 shaded commons-io/lang3，**明令禁止**（pom 注释已写明）。
 
-**如实记录（未闭合）**：本机无 Docker，6 条真机用例全部 skip（surefire 计数可见），
-真实 PG 往返/事务回滚/停机 health 未在本机取证；须由 CI `container` job（Docker + `--fail-on-skip`）复验，
-**该 CI 取证尚未发生**。
+**如实记录（已闭合）**：本机无 Docker，6 条真机用例在本机全部 skip（surefire 计数可见）；
+真实 PG 往返/事务回滚/停机 health 已由 CI `container` job（Docker + `--fail-on-skip`）取证为绿——
+见 §5.1。
 
 ---
 
@@ -122,3 +122,18 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 
 - 上一轮基线：280 测 / 5 skip。本轮净增 61 测（components +61 中含移入的 18）。
 - 每个 skip 都可解释（无 Docker / 压测开关），无静默跳过。
+
+---
+
+## 5.1 远端 CI 取证（commit `4cb9d8a`，run 35341365256）
+
+| job | 结果 | 关键输出 |
+| --- | --- | --- |
+| `regression (no Docker)` | ✅ 3m24s | skip 汇总 **TOTAL 341 / fail 0 / error 0 / skip 11**，逐条列出 11 个被跳过的用例名（4 ZK 容器 + 6 PG 容器 + 1 压测） |
+| `container tier (Docker)` | ✅ 1m11s | **`PostgresContainerStoreTest` Tests run: 6 / fail 0 / error 0 / skip 0**（真 PostgreSQL 往返 15.8s）、`ZookeeperContainerRegistryTest` 4/4、`ZookeeperContainerRegistryGuardTest` 5/5；`--fail-on-skip` 门禁：`skipped cases: none` |
+| `scale` | ⏸ 按设计（nightly/手动） | — |
+
+- 该 run 是**新容器档首次在真 Docker 上执行**：`org.testcontainers:testcontainers-postgresql:2.0.5` 与
+  `org.postgresql:postgresql:42.7.4` 由 CI 在线解析并跑通，验证了「与核心同版」的依赖选择正确
+  （此前 1.20.4 模块 + 2.0.5 核心的混用方案已废弃）。
+- 结论：交付物 2 中「容器档真机路径」的取证缺口**闭合**。

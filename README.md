@@ -108,7 +108,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ```
 
 CI（`.github/workflows/ci.yml`）：`regression`（无 Docker）/ `container`（有 Docker，断言 skip=0）/
-`scale`（nightly，产物留档）三个 job。
+`scale`（nightly，产物留档）三个 job。M5 第 4 轮后最近一次：run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256) `regression` ✅ 341/0/0/11、`container` ✅（真 PostgreSQL 6/6 + 真 ZK 4/4，skip=0 门禁通过）。
 
 ### 5.3 跑一个场景（CLI 控制面）
 

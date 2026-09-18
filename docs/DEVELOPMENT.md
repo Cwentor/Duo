@@ -152,8 +152,8 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 >
 > **尚未闭环（诚实记录）**：M5 交付物 6（金标准场景集，G4：每个契约一正例 + 一故障例）仍开放；
 > virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
-> 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**尚未在 CI 上观测到绿**
-> （本机无 Docker，只能 skip）。
+> 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**已在 CI 上取证为绿**
+> （本机无 Docker，只能 skip）——**已在 CI container job 取证为绿**（run 35341365256：PG 6/6、ZK 4/4、skip=0 门禁通过）。
 
 ### 3.3 两条明文门控
 

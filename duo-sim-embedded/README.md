@@ -35,7 +35,7 @@
 - **刻意不发** `sim.store-connection-closed`——与既有 `H2Store` 同因：SUT 持有的是裸 JDBC 连接，
   其关闭不可观测（不发明观测不到的事实）。
 - 该档 6 条用例（`PostgresContainerStoreTest`）标 Docker 门控，本机无 Docker 时 skip；
-  **尚未在 CI `container` job 上观测到绿**（该 job 带 `--fail-on-skip`，是它们必须跑通的地方）。
+  **已在 CI `container` job 上取证为绿**（run 35341365256：`PostgresContainerStoreTest` 6/6、`ZookeeperContainerRegistryTest` 4/4，`skip=0` 门禁通过）。
 
 ## 门控
 
