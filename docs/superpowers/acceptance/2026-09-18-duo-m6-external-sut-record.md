@@ -144,12 +144,14 @@ instance-lost=[workers-2(requeued=job-c)]
 | 层 | 改动 |
 | --- | --- |
 | 协议 | `TaskStatus.REJECTED`：worker **未受理**（满载/连接不可写）时显式回报，语义＝「从未执行」 |
-| worker | `onDispatch` 不可受理即 `reject()`（回报 REJECTED + 发 `sim.worker-task-rejected` 事件 + 刷新槽位）；受理路径改为「确认可写后再占用槽位」；`freeSlots` 改 `AtomicInteger`；受理/拒绝后**立即上报槽位**（不等心跳，把视图滞后窗口压到一个 RTT） |
+| worker | `onDispatch` 不可受理即 `reject()`（回报 REJECTED + 发 `sim.worker-task-rejected` 事件 + 刷新槽位）；受理路径改为「确认可写后再占用槽位」；`freeSlots` 改 `AtomicInteger`；受理/拒绝后**立即上报槽位**（不等心跳，把视图滞后窗口压到一个 RTT）。`VirtualWorker`（virtual 档）与 `DemoRealWorker`（real 档）**同构修复**，两档行为一致 |
 | 调度 | `SchedulerStateMachine.onRejected`：任务回 PENDING、**回滚尝试计数**（准入失败不占 `MAX_ATTEMPTS`，否则一次瞬时满载即判死）、发 `sut.task-rejected` 事实；`MAX_REJECTIONS=12` 兜底——超限即判 FAILED 并跳过下游，**DAG 必然终态**（宁可显式失败，绝不静默挂起） |
 
 **验证**：新增 5 条回归用例——worker 侧 2 条（满载显式拒绝且不占槽位/不发执行状态；被拒任务在槽位释放后
 **重派可跑到终态**）、状态机侧 3 条（拒绝后回 PENDING + 回滚 attempts + 不发重试事实；迟到拒绝幂等忽略；
-连续拒绝超限 → FAILED + 下游 SKIPPED）。全量回归 **263 测 / 0 失败 / 5 skip**。
+连续拒绝超限 → FAILED + 下游 SKIPPED）。`DemoRealWorker`（real 档）的镜像修复由 M0 档位切换验收
+`TierSwapAcceptanceTest`（3 例）覆盖正常通路，其拒绝分支与 `VirtualWorker` 逐行同构、由上述用例守护。
+全量回归 **263 测 / 0 失败 / 5 skip**。
 
 ---
 

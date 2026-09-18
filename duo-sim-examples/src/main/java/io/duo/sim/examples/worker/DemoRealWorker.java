@@ -169,15 +169,19 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
 
     private void dispatch(Inst inst, TaskDispatch d) {
         if (inst.freeSlots.get() <= 0) {
+            // G9（与 VirtualWorker 同构）：满载**显式拒绝**，不得静默丢弃——否则调度侧仍视任务为
+            // RUNNING，任务永久丢失、DAG 永不终态（§12「不静默」）。
+            reject(inst, d, "no free slot");
             return;
         }
-        inst.freeSlots.decrementAndGet();
         try {
             inst.conn.write(new TaskAck(d.taskId(), inst.name));
         } catch (IOException e) {
-            inst.freeSlots.incrementAndGet();
+            reject(inst, d, "connection lost: " + e.getMessage());
             return;
         }
+        inst.freeSlots.decrementAndGet(); // 受理成功后才占用槽位
+        reportSlots(inst); // 槽位变更即上报，缩小调度侧视图滞后窗口
         Thread.ofVirtual().name(inst.name + "-task-" + d.taskId()).start(() -> {
             try {
                 var entry = behaviors.resolve(d.taskName());
@@ -202,6 +206,31 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
                 inst.freeSlots.incrementAndGet();
             }
         });
+    }
+
+    /**
+     * 显式拒绝一次不可受理的派发（G9，与 {@code VirtualWorker} 同构）：回报
+     * {@link TaskStatus#REJECTED} + 发 {@code sim.worker-task-rejected} 事实 + 刷新槽位视图，
+     * **不占用槽位、不启动执行线程**。
+     */
+    private void reject(Inst inst, TaskDispatch d, String reason) {
+        try {
+            inst.conn.write(new TaskStatus(d.taskId(), inst.name, TaskStatus.REJECTED, reason));
+        } catch (IOException ignored) {
+            // 连接已断：拒绝回报丢失，调度侧失联检测兜底
+        }
+        reportSlots(inst);
+        ctx.eventBus().publish(Event.sim("sim.worker-task-rejected",
+                id.instanceSourceId(inst.index), Map.of("taskId", d.taskId(), "reason", reason)));
+    }
+
+    /** 立即上报当前槽位（G9）：槽位变化后不等心跳，缩小调度侧视图滞后窗口。 */
+    private void reportSlots(Inst inst) {
+        try {
+            inst.conn.write(new SlotReport(inst.name, inst.freeSlots.get(), totalSlots));
+        } catch (IOException ignored) {
+            // 连接不可写：心跳周期上报兜底
+        }
     }
 
     @Override

@@ -12,7 +12,7 @@
 | `DemoScheduler` | `scheduler` / `real`（**参考 SUT**） | 实现 `SutMain`（阻塞 `run`）+ `ctx.onStop` 协作停止；真实调度状态机（DAG + 重试 + 失败转移 + 派发选择 + 崩溃转移）；经 `SutEventPublisher` 发布 `sut.*` 内部事实。**仅用于验收，不是产品代码** |
 | `SchedulerStateMachine` | — | DAG 依赖编排、`onInstanceLost` 崩溃转移、终态与事件归属；**派发被拒重排**（`onRejected`：回滚尝试、`MAX_REJECTIONS` 兜底判 FAILED，保证 DAG 必然终态——G9） |
 | `DispatchSelector` | — | 槽位视图、最大空闲优先、平局轮转、未上报不参与 |
-| `DemoRealWorker` | `worker` / `real`（kernel-hosted） | 讲 Duo 线协议的真实 worker；M0 档位切换验收的 `real` 档 |
+| `DemoRealWorker` | `worker` / `real`（kernel-hosted） | 讲 Duo 线协议的真实 worker；M0 档位切换验收的 `real` 档；与 `VirtualWorker` 同构的**满载显式拒绝**（`TaskStatus.REJECTED`）与槽位即时上报 |
 
 SPI 注册：`DemoSchedulerProvider`、`DemoRealWorkerProvider`。
 
