@@ -52,9 +52,11 @@ public final class ZookeeperContainerRegistry extends ZkBackedRegistry {
         try {
             container = new GenericContainer<>(DockerImageName.parse(image))
                     .withExposedPorts(ZK_PORT)
-                    // ZK 就绪判定：AdminServer(8080) 的绑定日志 + TCP 端口可连双保险，
-                    // 端口 8080 未暴露故只作日志信号，不作连通判据
-                    .waitingFor(Wait.forLogMessage(".*binding to local address.*", 1)
+                    // ZK 就绪判定：客户端端口(2181)绑定日志——zookeeper:3.9 实际输出
+                    // 「binding to port /0.0.0.0:2181」(NIOServerCnxnFactory)。
+                    // 原正则 ".*binding to local address.*" 在该镜像日志中不存在(匹配数 0)，
+                    // 必然耗满 startupTimeout 后失败——容器档真机复验时暴露(M4 D6 遗留)。
+                    .waitingFor(Wait.forLogMessage(".*binding to port.*", 1)
                             .withStartupTimeout(Duration.ofMinutes(2)));
             container.start();
         } catch (RuntimeException e) {
