@@ -2,7 +2,7 @@
 
 - 日期：2026-09-18
 - 基线：`0.1.0-SNAPSHOT`，M0–M4 已完成并验收；**本轮（2026-09-18）已完成 M7 最小子集 + M6 主线**，
-  全量回归 **258 测 0 失败 / 5 skip**（3.4 分钟，确定性无 Docker 档）
+  全量回归 **263 测 0 失败 / 5 skip**（3.4 分钟，确定性无 Docker 档）
 - 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）
 - 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D9 已全部拍板，无悬空决策）
 
@@ -61,8 +61,8 @@
 | **G5** | **故障动作与钩子未闭环**：`freeze`/`slow`/`resource-exhaust` 仅常量声明（无实现声明 `supportedFaults`，写入即校验期拒绝）；`HookRegistry` 无 `ScenarioEngine` 注入入口，YAML 时间线里的 `custom-hook` 必然「no hook registered」 | `FaultAction` 常量 vs Provider `Set.of(...)`；`ScenarioEngine` 内部 `new HookRegistry()` | T5「故障可注入」的动作面窄；用户扩展点不可用 | P1 |
 | **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
 | **G7** | **DSL 断链与设计偏差**：`jitter`/`failAt` 不接受 `%` 形态；`logLines` 未接入；~~`ready` 校验文案写 `config.ready.*`~~（M6 已修正为 `launch.ready` 并改为启动前校验）；~~`ready.timeout` 未消费~~（M6 已消费） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读) | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | P1（剩余项） |
-| **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；**无 `LICENSE`**；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 法务状态不明确；本地压测数据仍不随提交留存 | P1（剩余：LICENSE/发布） |
-| **G9** | **派发通路可静默丢弃 → 间歇性挂起**（M7 CI 首跑暴露）：调度侧槽位视图来自 worker 周期 `SlotReport`，与 `pumpDispatches()` 之间存在窄竞争窗口（陈旧报告把已占用槽位重标为空闲）；`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态、场景永久挂起。表现为 `ControlPlaneAcceptanceTest` 在 2 vCPU runner 上偶发「90s 仍 RUNNING」（本地 16 核连跑未复现） | CI run 35324375056 失败现场（`events=2744`、状态 RUNNING）+ 代码 `VirtualWorker.java:293`、`DispatchSelector` | CI 门禁低概率假红；违反 §12「不静默」 | **P1** |
+| **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
+| **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**本轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
 
 ---
 
@@ -157,8 +157,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
    - `container` job：有 Docker，跑容器档（`ZookeeperContainerRegistryTest` 4 条）并**断言 skip=0**；
    - `scale` job（nightly / 手动触发）：`-Dduo.scale=true`，把 `build/scale/*.json` 与录制上传为 artifact
      ——直接解决 G8「规模数据不可追溯」。
-3. **许可与发布**（**未做**，下一轮）：`LICENSE`（Apache-2.0，§15 已选）；`maven-source-plugin` / `javadoc`；
-   版本策略与 `CHANGELOG.md`。
+3. **许可与发布**：✅ `LICENSE`（Apache-2.0 全文，本轮补齐）；**未做**（下一轮）：`maven-source-plugin` /
+   `javadoc`、版本策略与 `CHANGELOG.md`。
 4. **依赖与质量门禁**（**未做**，下一轮）：`dependency:analyze`、可选覆盖率报告（JaCoCo）。
 
 **验收标准**
@@ -169,11 +169,10 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
   [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561) `regression` ✓ 2m57s、
   `container` ✓ 32s（`--fail-on-skip` 门禁通过＝容器档无 skip）、`scale` 按设计仅 nightly/手动触发；
 - ✅ 压测产物作为 artifact 可从 CI 下载并与报告逐项比对——`scale` job 的 upload-artifact
-  （`build/scale/*.json` + `build/scenarios/**/events.jsonl`）；regression job 亦归档事件录制便于失败回放。
+  （`build/scale/*.json` + `**/build/scenarios/**/events.jsonl`）；regression job 亦归档事件录制便于失败回放。
 
-> ⚠️ 遗留风险（**G9**）：`ControlPlaneAcceptanceTest` 在同一提交的前一次 CI run 中出现过一次间歇性挂起
-> （2 vCPU runner 独有，本地 16 核连跑 7 次 + 满载干扰未复现）。已交付失败自诊断与事件录制归档，
-> 根因收口列为下一轮 P1。
+> ✅ 遗留风险已闭合（**G9**）：`ControlPlaneAcceptanceTest` 的间歇性挂起在 CI run 35326005487 上**复现并定位**
+> （调度侧把重派任务发给已满实例 → worker 静默丢弃 → 永久挂起），本轮完成修复 + 5 条回归用例 + 失败自诊断。
 
 ---
 
@@ -285,14 +284,13 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 项 | 结果 |
 | --- | --- |
 | 拍板 | D1–D6 全部拍板（`DECISIONS.md`），实施中新增 D7–D9 |
-| M7-1 Wrapper | `mvnw` / `mvnw.cmd` / `.mvn/wrapper/maven-wrapper.properties`（Maven 3.9.11，script-only）；删除 `mvnw.sh`；`.gitattributes` 钉 LF/CRLF 与可执行位 |
+| M7-1 Wrapper | `mvnw` / `mvnw.cmd` / `.mvn/wrapper/maven-wrapper.properties`（Maven 3.9.11，script-only）；删除 `mvnw.sh`；`.gitattributes` 钉 LF/CRLF 与可执行位；`LICENSE`（Apache-2.0 全文） |
 | M7-2 CI | `.github/workflows/ci.yml` 三 job（regression/container/scale）+ `.github/scripts/skip-summary.sh`（skip 逐条可见，`--fail-on-skip` 门禁）；`-Dduo.docker.enabled=false` 确定性无 Docker 门控；**远端取证：run [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561) `regression` ✓ 2m57s / `container` ✓ 32s（skip=0 门禁通过）** |
 | M6 | `ReadyProbe`（探针规格与单次探测）、`ExternalSutLauncher`（配置文件/stdout 兜底/退出观测/失败销毁）、`ScenarioEngine` external 通路（代起与 attach、`${java}` 展开、结束不杀进程 + 警告）、校验规则 4 加固（`configOut` 必填、探针启动前校验） |
 | 缺陷修正 | ① `sim.fault-injected`/`sim.fault-cleared` 改为**先因后果**落流；② `mvnw` 可执行位（Windows `core.fileMode=false` 覆盖 `--chmod=+x` 导致 CI 全红）；③ 新增失败自诊断 + CI 归档事件录制 |
-| 新发现（下一轮收口） | **G9**：派发通路可静默丢弃 → 间歇性挂起（CI 首跑暴露，本地未复现；已交付可诊断性，根因待证据收口） |
-| 测试 | 全量回归 **258 测 / 0 失败 / 5 skip**（3.4 分钟）：kernel 76、scenario 41、examples 51（含 M6 端到端 3 例）、embedded 39、components 42、protocol 9 |
-| 未做（下一轮） | M7 的 LICENSE/发布配置/质量门禁；M5 全部；M8 全部；G9 根因与修复 |
+| **G9 修复（本轮收口）** | 证据：CI run [35326005487](https://github.com/Cwentor/Duo/actions/runs/35326005487) 复现（`dispatch-per-task={job-c=2}`、`last-status={job-c=RETRYING@workers-2}`、`dispatch-per-instance={workers-3=2}`）→ 调度侧把重派任务发给**实际已满**的 `workers-3`，worker 静默丢弃 → 永久挂起。修复：`TaskStatus.REJECTED` 显式拒绝 + 调度侧回滚尝试重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报（详见验收记录 §4.1） |
+| 测试 | 全量回归 **263 测 / 0 失败 / 5 skip**（3.0 分钟）：kernel 76、scenario 41、examples 54（含 M6 端到端 3 例、G9 3 例）、embedded 39、components 44（含 G9 2 例）、protocol 9 |
+| 未做（下一轮） | M7 的发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁；M5 全部；M8 全部 |
 
 > **下一轮的入口建议**：按 §5 顺序启动 **M5（契约与档位补全 + DSL 断链修复 + 金标准场景集）**，
-> 并行补 **M7 的 LICENSE/发布配置**；**G9**（派发静默丢弃 → 间歇挂起）作为 P1 缺陷优先于 M8，
-> 因为它会让 CI 门禁低概率假红；M8 待契约面稳定后再定指标口径。
+> 并行补 **M7 的发布配置**；M8 待契约面稳定后再定指标口径。

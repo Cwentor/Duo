@@ -104,16 +104,16 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | `duo-sim-protocol` | 9 | 0 |
 | `duo-sim-kernel` | 76 | 0 |
 | `duo-sim-scenario` | 41 | 0 |
-| `duo-sim-components` | 42 | 0 |
+| `duo-sim-components` | 44 | 0 |
 | `duo-sim-embedded` | 39 | **4**（无 Docker，`-Dduo.docker.enabled=false` 强制） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 51 | **1**（未开压测开关） |
-| **合计** | **258** | **5** |
+| `duo-sim-examples` | 54 | **1**（未开压测开关） |
+| **合计** | **263** | **5** |
 
 ```bash
 ./mvnw -o -B test "-Dduo.docker.enabled=false"   # → BUILD SUCCESS，约 3.4 分钟
-bash .github/scripts/skip-summary.sh             # → 258 run / 0 fail / 5 skip（逐条可解释）
+bash .github/scripts/skip-summary.sh             # → 263 run / 0 fail / 5 skip（逐条可解释）
 ```
 
 > M6 新增 21 条（内核 18：`ExternalSutLauncherTest` 10 + `ReadyProbeTest` 8；examples 3：
@@ -239,7 +239,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 258 测全绿」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 263 测全绿」）。
 
 ---
 

@@ -4,6 +4,8 @@
 mvnw text eol=lf
 mvnw.cmd text eol=crlf
 *.sh text eol=lf
+# 许可全文按官方原样（LF）保存：许可证常被逐字节比对/校验
+LICENSE text eol=lf
 
 # 二进制/产物不参与换行转换
 *.jar binary

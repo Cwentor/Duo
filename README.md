@@ -6,7 +6,7 @@
 - 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
 - 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
 - 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 均已实施完成并验收**
-- 最近一次全量回归（2026-09-18，M6/M7 落地后）：`./mvnw -o -B test "-Dduo.docker.enabled=false"` → **BUILD SUCCESS，258 测 0 失败 / 5 skip（均为设计明文门控）**
+- 最近一次全量回归（2026-09-18，M6/M7 落地后）：`./mvnw -o -B test "-Dduo.docker.enabled=false"` → **BUILD SUCCESS，263 测 0 失败 / 5 skip（均为设计明文门控）**
 - 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
 
 ---
@@ -100,7 +100,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 258 测（含 5 条设计门控 skip）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 263 测（含 5 条设计门控 skip）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
@@ -221,8 +221,8 @@ assertions:
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | 🟡 部分 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；`freeze`/`slow`/`resource-exhaust` 仅有常量声明 |
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议 |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 3.4 分钟、258 测全绿（`-Dduo.docker.enabled=false` 确定性无 Docker） |
-| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7）**已交付；**无 LICENSE 文件**；CI 待远端首跑取证 |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 3.4 分钟、263 测全绿（`-Dduo.docker.enabled=false` 确定性无 Docker） |
+| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7，远端全绿）**已交付；发布产物（source/javadoc）未做；CI 门禁存在低概率假红（G9） |
 
 完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
@@ -242,5 +242,4 @@ assertions:
 
 ## 10. 许可
 
-设计文档 §15 选定 **Apache-2.0**（大数据生态惯例）。
-⚠️ 仓库当前**尚未落 `LICENSE` 文件**，已在 [路线图 M7](docs/ROADMAP.md#m7--工程化与-ci) 列为待办。
+**Apache-2.0**（设计文档 §15 选定，大数据生态惯例）——完整许可文本见仓库根目录 [`LICENSE`](LICENSE)。
