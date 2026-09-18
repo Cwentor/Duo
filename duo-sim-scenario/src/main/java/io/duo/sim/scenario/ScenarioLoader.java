@@ -62,7 +62,7 @@ public final class ScenarioLoader {
         Object launchRaw = n.get("launch");
         if (launchRaw instanceof Map<?, ?> lm) {
             launch = new Scenario.Launch(str(lm.get("mode")), str(lm.get("main")),
-                    str(lm.get("configOut")));
+                    str(lm.get("configOut")), str(lm.get("command")));
             // launch.ready.{type,port,timeout} → config.ready.*（DSL ready 声明统一落 config）
             Object readyRaw = lm.get("ready");
             if (readyRaw instanceof Map<?, ?> rm) {

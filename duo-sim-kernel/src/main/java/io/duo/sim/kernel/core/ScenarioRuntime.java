@@ -14,8 +14,11 @@ import java.util.function.Consumer;
 
 /**
  * ScenarioRuntime 注入通路（§10/§7.2，计划 T10）：
- * target 解析（含实例下标）→ 能力校验（元数据，无降级）→ 分发（crash/restart 生命周期
- * 或 FaultInjectable）→ {@code sim.fault-injected} 事件。
+ * target 解析（含实例下标）→ 能力校验（元数据，无降级）→ {@code sim.fault-injected} 事件
+ * → 分发（crash/restart 生命周期或 FaultInjectable）。
+ *
+ * <p>顺序为「先因后果」：框架的注入事件先落流，组件反应事件随后（M6 验收暴露的顺序缺陷修正，
+ * 详见 {@link #inject}）。
  *
  * <p>校验三查（§7.2）：① target 可解析（下标 ∈ [1,count]）；② 动作在 supportedFaults
  * 或属 crash/restart 生命周期；③ 带下标时实现必须 instanceControl。
@@ -76,17 +79,23 @@ public final class ScenarioRuntime {
         }
         Target t = targets.get(componentId);
         Integer idx = action.target().instanceIndex();
+        // 因果顺序（M6 验收暴露的缺陷修正）：§11 断言以 sim.fault-injected 为观测窗口**起点**
+        // （failoverWithin / masterReelectedWithin），故它是「因」，必须先于组件反应事件（果）落流。
+        // 旧顺序（先 dispatch 后记录）会让组件在同一调用内发布的反应事件排在因之前——
+        // 如 embedded registry-flap 的 sim.registry-flap-started/cleared 早于 sim.fault-injected，
+        // 使 `eventSequence: [sim.fault-injected, <反应事件>]` 恒不可满足。
+        recorder.accept(Event.sim("sim.fault-injected",
+                idx == null ? componentId : t.component().id().instanceSourceId(idx),
+                Map.of("action", action.type())));
         try {
             dispatch(t, idx, action);
         } catch (RuntimeException e) {
+            // 派发失败：因已落流，另记一级失败事件（§12 不静默）——语义＝「已下达但目标未执行」
             InjectionResult r = InjectionResult.fail("dispatch threw: " + e.getMessage());
             recorder.accept(Event.sim("sim.fault-inject-failed", componentId,
                     Map.of("action", action.type(), "reason", r.reason())));
             return r;
         }
-        recorder.accept(Event.sim("sim.fault-injected",
-                idx == null ? componentId : t.component().id().instanceSourceId(idx),
-                Map.of("action", action.type())));
         return InjectionResult.ok();
     }
 
@@ -109,13 +118,14 @@ public final class ScenarioRuntime {
             return failAndRecord(componentId, action,
                     "component does not implement FaultInjectable");
         }
+        // 同上（因果顺序）：sim.fault-cleared 先落流再派发，保证「窗口收尾」先于组件反应事件
+        recorder.accept(Event.sim("sim.fault-cleared", componentId,
+                Map.of("action", action.type())));
         try {
             fi.clear(action);
         } catch (RuntimeException e) {
             return failAndRecord(componentId, action, "clear threw: " + e.getMessage());
         }
-        recorder.accept(Event.sim("sim.fault-cleared", componentId,
-                Map.of("action", action.type())));
         return InjectionResult.ok();
     }
 

@@ -156,9 +156,16 @@ public final class ScenarioValidator {
                     }
                 }
             }
-            if (!n.config().containsKey("ready.type")) {
-                errors.add("external node " + n.id() + " must declare a ready probe "
-                        + "(config: {ready.type: tcp, ready.port: ..., ready.timeout: ...})");
+            // M6：端点配置文件是内核→SUT 端点告知的主途径（§7.3），external 节点必须声明
+            if (n.launch().configOut() == null || n.launch().configOut().isBlank()) {
+                errors.add("external node " + n.id() + " must declare launch.configOut "
+                        + "(endpoint config file — §7.3 主途径)");
+            }
+            // M6：探针声明与端口可用性在**启动前**校验（§12 快速失败，不拖到运行期）
+            try {
+                io.duo.sim.kernel.sut.ReadyProbe.spec(n.config(), firstExposedPort(n));
+            } catch (RuntimeException e) {
+                errors.add("external node " + n.id() + ": " + e.getMessage());
             }
         }
 
@@ -277,6 +284,15 @@ public final class ScenarioValidator {
 
     private static boolean isExternal(Scenario.NodeSpec n) {
         return n.launch() != null && "external".equals(n.launch().mode());
+    }
+
+    /** external 节点的兜底探针端口（首个非 0 expose 端口；无则 0＝由 ReadyProbe 报错）。 */
+    private static int firstExposedPort(Scenario.NodeSpec n) {
+        return n.exposes().stream()
+                .filter(e -> e.port() != null && e.port() > 0)
+                .mapToInt(Scenario.ExposeSpec::port)
+                .findFirst()
+                .orElse(0);
     }
 
     private static boolean isPortBusy(int port) {

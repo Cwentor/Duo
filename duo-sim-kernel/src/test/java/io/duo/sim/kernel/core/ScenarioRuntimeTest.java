@@ -112,6 +112,53 @@ class ScenarioRuntimeTest {
         assertEquals(List.of("inject:registry-flap"), f.actions);
     }
 
+    /**
+     * M6 验收暴露的顺序缺陷修正：{@code sim.fault-injected} 是「因」，必须先于组件在注入过程中
+     * 发布的反应事件（果）——否则以它为观测窗口起点的断言（failoverWithin / masterReelectedWithin）
+     * 与 {@code eventSequence: [sim.fault-injected, <反应>]} 都会失效。
+     */
+    @Test
+    void faultInjectedEventPrecedesComponentReactionEvents() {
+        var reacting = new ReactingFixture("zk", events::add);
+        runtime.registerTarget("zk", new ScenarioRuntime.Target(reacting, "zk", 1));
+
+        assertTrue(runtime.inject(new FaultAction("registry-flap",
+                FaultAction.ComponentAddress.of(new ComponentId("zk")),
+                Map.of(), null)).success());
+
+        List<String> order = events.stream().map(Event::type).toList();
+        assertEquals(List.of("sim.fault-injected", "sim.registry-flap-started", "sim.registry-flap-cleared"),
+                order, "注入事件（因）必须排在组件反应事件（果）之前");
+
+        events.clear();
+        assertTrue(runtime.clear(new FaultAction("registry-flap",
+                FaultAction.ComponentAddress.of(new ComponentId("zk")),
+                Map.of(), null)).success());
+        assertEquals(List.of("sim.fault-cleared", "sim.registry-flap-cleared"),
+                events.stream().map(Event::type).toList(), "清除事件同样先因后果");
+    }
+
+    /** 在 inject/clear 过程中发布反应事件的 fixture（模拟 VirtualRegistry/CuratorRegistry）。 */
+    static class ReactingFixture extends FaultFixture {
+        private final java.util.function.Consumer<Event> sink;
+
+        ReactingFixture(String id, java.util.function.Consumer<Event> sink) {
+            super(id, 1, Set.of("registry-flap"));
+            this.sink = sink;
+        }
+
+        @Override public void inject(FaultAction action) {
+            super.inject(action);
+            sink.accept(Event.sim("sim.registry-flap-started", id().value(), Map.of()));
+            sink.accept(Event.sim("sim.registry-flap-cleared", id().value(), Map.of()));
+        }
+
+        @Override public void clear(FaultAction action) {
+            super.clear(action);
+            sink.accept(Event.sim("sim.registry-flap-cleared", id().value(), Map.of()));
+        }
+    }
+
     /** 未实现 InstanceControl 的整组组件。 */
     static class BareFixture implements VirtualComponent {
         volatile boolean stoppedWhole;

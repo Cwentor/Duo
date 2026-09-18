@@ -53,6 +53,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private final CountDownLatch sutExit = new CountDownLatch(1);
     private volatile boolean started;
     private volatile SutStopper sutStopper;
+    /** external SUT 启动器（M6；in-process 形态为 null）——生命周期归用户，故公开句柄。 */
+    private volatile io.duo.sim.kernel.sut.ExternalSutLauncher externalSut;
     private volatile TimelineScheduler timeline;
     private final EventRecorder recorder;
 
@@ -153,24 +155,51 @@ public final class ScenarioEngine implements AutoCloseable {
     }
 
     /**
-     * 启动 in-process SUT（T12 接入）：反射实例化 {@code launch.main} 的 SutMain，
-     * directBindings＝已启动组件（nodeId→实例），ready 后登记停止器；
-     * {@code sut.exited/sut.crashed} 事件自动触发场景结束信号。
+     * 启动 SUT（M6：in-process 与 external 两形态）。
      *
-     * <p>调用时机：SUT 须在内核组件**之前**启动（其 Duo 端点要写进 registry，
-     * workers 的发现等待语义依赖它；计划风险 5）。
+     * <p>调用时机：SUT 须在内核组件**之前**启动（in-process 的 Duo 端点要写进 registry，
+     * workers 的发现等待语义依赖它；external 的 ready 探针同理——计划风险 5）。
+     *
+     * <p>两形态共用：① SUT 的依赖先起（纳入 manager 拆除序列）；② 按 wiring 槽把目标节点
+     * **实际**端点解析为 SUT 端点清单（external 形态写入端点配置文件，§7.3 主途径）。
+     * {@code sut.exited/sut.crashed} 事件自动触发场景结束信号。
      */
     public SutLauncherHandle startSut() {
         var spec = scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
-        if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
-            throw new IllegalStateException("M0 engine only supports in-process SUT launch");
-        }
-        // SUT 的 direct 依赖须先就绪（如 registry）：实例化并启动（纳入管理器拆除序列）
-        Map<String, WiringResolver.NodeView> views = new LinkedHashMap<>();
-        scenario.nodes().forEach(n -> views.put(n.id(), toView(n)));
         Map<String, Scenario.NodeSpec> specById = new LinkedHashMap<>();
         scenario.nodes().forEach(n -> specById.put(n.id(), n));
+        startDirectDependencies(spec, specById);
+        Map<String, String> sutEndpoints = sutEndpoints(spec, specById);
+
+        if (isExternal(spec)) {
+            return startExternalSut(spec, sutEndpoints);
+        }
+        if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
+            throw new IllegalStateException("SUT launch.mode must be in-process (with main) "
+                    + "or external (with configOut): " + spec.id());
+        }
+        try {
+            var cls = Class.forName(spec.launch().main());
+            var main = (io.duo.sim.kernel.api.SutMain)
+                    cls.getDeclaredConstructor().newInstance();
+            var launcher = new io.duo.sim.kernel.sut.SutLauncher(
+                    spec.id(), main, Map.copyOf(byId), spec.config(), sutEndpoints,
+                    this::onSutEvent,
+                    java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"),
+                    readyTimeoutMs(spec.config()));
+            launcher.start();
+            registerSutStopper(launcher::stop);
+            return new SutLauncherHandle(spec, launcher);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot launch SUT main: "
+                    + spec.launch().main(), e);
+        }
+    }
+
+    /** SUT 的依赖先起：实例化 + start + adopt（纳入统一拆除序列），供两形态共用。 */
+    private void startDirectDependencies(Scenario.NodeSpec spec,
+                                         Map<String, Scenario.NodeSpec> specById) {
         for (var slot : spec.wiring().values()) {
             String targetId = slot.node();
             if (byId.containsKey(targetId)) {
@@ -193,65 +222,153 @@ public final class ScenarioEngine implements AutoCloseable {
             runtime.registerTarget(targetId, new ScenarioRuntime.Target(
                     dep, targetId, depSpec.count() == null ? 1 : depSpec.count()));
         }
-        try {
-            var cls = Class.forName(spec.launch().main());
-            var main = (io.duo.sim.kernel.api.SutMain)
-                    cls.getDeclaredConstructor().newInstance();
-            // T31(a)：SUT 的 wire 端点注入——按 SUT 的 wiring 槽解析目标节点的实际端点
-            // （wire 槽 → 目标 endpoints() 地址；如 embedded registry 的 ZK 端口）。
-            // 这正是 D1 的前提：SUT 经 SutContext.endpointByContract() 取 ZK 地址。
-            Map<String, String> sutEndpoints = new LinkedHashMap<>();
-            for (var slot : spec.wiring().entrySet()) {
-                var slotSpec = slot.getValue();
-                var targetNode = specById.get(slotSpec.node());
-                if (targetNode == null) {
-                    continue;
-                }
-                String contract = slotSpec.contract() == null ? slot.getKey()
-                        : slotSpec.contract();
-                VirtualComponent target = byId.get(targetNode.id());
-                if (target == null) {
-                    continue;
-                }
-                var eps = target.endpoints();
-                if (!eps.isEmpty()) {
-                    sutEndpoints.put(contract.toLowerCase(), eps.get(0).address());
-                }
+    }
+
+    /**
+     * SUT 端点清单（T31(a)）：按 SUT 的 wiring 槽解析目标节点的实际端点
+     * （wire 槽 → 目标 endpoints() 地址；如 embedded registry 的 ZK 端口）。
+     */
+    private Map<String, String> sutEndpoints(Scenario.NodeSpec spec,
+                                             Map<String, Scenario.NodeSpec> specById) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (var slot : spec.wiring().entrySet()) {
+            var slotSpec = slot.getValue();
+            var targetNode = specById.get(slotSpec.node());
+            if (targetNode == null) {
+                continue;
             }
-            // SUT 退出事件 → 场景结束信号（M0：不新增 DSL 字段）
-            var launcher = new io.duo.sim.kernel.sut.SutLauncher(
-                    spec.id(), main, Map.copyOf(byId), spec.config(), sutEndpoints,
-                    e -> {
-                        // 统一经 bus 汇流：内存流与录制共用单一订阅路径（T21）
-                        bus.publish(e);
-                        if (e.type().equals("sut.exited")) {
-                            notifySutExit(true);
-                        } else if (e.type().equals("sut.crashed")) {
-                            notifySutExit(false);
-                        }
-                    },
-                    java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"));
-            launcher.start();
-            registerSutStopper(launcher::stop);
-            return new SutLauncherHandle(spec, launcher);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("cannot launch SUT main: "
-                    + spec.launch().main(), e);
+            String contract = slotSpec.contract() == null ? slot.getKey()
+                    : slotSpec.contract();
+            VirtualComponent target = byId.get(targetNode.id());
+            if (target == null) {
+                continue;
+            }
+            var eps = target.endpoints();
+            if (!eps.isEmpty()) {
+                out.put(contract.toLowerCase(), eps.get(0).address());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * external SUT 启动（M6）：写端点配置文件 → 可选代起子进程 → ready 探针。
+     * 生命周期归用户（§7.3）：场景结束不杀进程，句柄经 {@link #externalSut()} 暴露。
+     */
+    private SutLauncherHandle startExternalSut(Scenario.NodeSpec spec,
+                                               Map<String, String> sutEndpoints) {
+        var launcher = new io.duo.sim.kernel.sut.ExternalSutLauncher(
+                spec.id(), splitCommand(spec.launch().command()), spec.config(), sutEndpoints,
+                this::onSutEvent,
+                spec.launch().configOut() == null
+                        ? null : java.nio.file.Path.of(spec.launch().configOut()),
+                firstExposedPort(spec));
+        launcher.start();
+        this.externalSut = launcher;
+        return new SutLauncherHandle(spec, null, launcher);
+    }
+
+    /** SUT 事件汇流（内存流与录制共用单一订阅路径，T21）+ 生命周期事实 → 场景结束信号。 */
+    private void onSutEvent(Event e) {
+        bus.publish(e);
+        if (e.type().equals("sut.exited")) {
+            notifySutExit(true);
+        } else if (e.type().equals("sut.crashed")) {
+            notifySutExit(false);
         }
     }
 
-    /** SUT 启动句柄。 */
+    /** {@code ready.timeout} 全链路消费（M6 交付物 2）：in-process 与 external 同口径。 */
+    private static long readyTimeoutMs(Map<String, String> config) {
+        String timeout = config.get("ready.timeout");
+        return timeout == null || timeout.isBlank()
+                ? io.duo.sim.kernel.sut.SutLauncher.DEFAULT_READY_TIMEOUT_MS
+                : io.duo.sim.kernel.util.Durations.parseMillis(timeout);
+    }
+
+    /** external 节点的兜底探针端口（首个非 0 expose 端口）。 */
+    private static int firstExposedPort(Scenario.NodeSpec n) {
+        return n.exposes().stream()
+                .filter(e -> e.port() != null && e.port() > 0)
+                .mapToInt(Scenario.ExposeSpec::port)
+                .findFirst()
+                .orElse(0);
+    }
+
+    /**
+     * 命令行切分（M6 决策 D7）：按空白切分，支持单/双引号包裹的参数，并展开
+     * {@code ${java}}（当前 JVM 的 java 可执行文件）与 {@code ${java.home}} 占位符——
+     * 使场景 YAML 不写死本机 JDK 路径（跨机器/跨 CI 可复用）。
+     */
+    static List<String> splitCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return List.of();
+        }
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                } else {
+                    current.append(c);
+                }
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (Character.isWhitespace(c)) {
+                if (current.length() > 0) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) {
+            tokens.add(current.toString());
+        }
+        return tokens.stream().map(ScenarioEngine::expandPlaceholders).toList();
+    }
+
+    private static String expandPlaceholders(String token) {
+        String javaHome = System.getProperty("java.home");
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        String javaBin = javaHome + java.io.File.separator + "bin" + java.io.File.separator
+                + (windows ? "java.exe" : "java");
+        return token.replace("${java}", javaBin).replace("${java.home}", javaHome);
+    }
+
+    /** SUT 启动句柄（M6：in-process 与 external 两形态各持一侧，互斥）。 */
     public static final class SutLauncherHandle {
         final Scenario.NodeSpec spec;
         final io.duo.sim.kernel.sut.SutLauncher launcher;
+        final io.duo.sim.kernel.sut.ExternalSutLauncher external;
 
         SutLauncherHandle(Scenario.NodeSpec spec, io.duo.sim.kernel.sut.SutLauncher launcher) {
-            this.spec = spec;
-            this.launcher = launcher;
+            this(spec, launcher, null);
         }
 
+        SutLauncherHandle(Scenario.NodeSpec spec, io.duo.sim.kernel.sut.SutLauncher launcher,
+                          io.duo.sim.kernel.sut.ExternalSutLauncher external) {
+            this.spec = spec;
+            this.launcher = launcher;
+            this.external = external;
+        }
+
+        /** in-process 启动器（external 形态为 null）。 */
         public io.duo.sim.kernel.sut.SutLauncher launcher() {
             return launcher;
+        }
+
+        /** external 启动器（in-process 形态为 null）。 */
+        public io.duo.sim.kernel.sut.ExternalSutLauncher external() {
+            return external;
+        }
+
+        public boolean isExternal() {
+            return external != null;
         }
     }
 
@@ -359,6 +476,14 @@ public final class ScenarioEngine implements AutoCloseable {
         this.sutStopper = s;
     }
 
+    /**
+     * external SUT 启动器句柄（M6 决策 D7）：生命周期归用户，内核不杀进程，
+     * 调用方经此拿到 {@code process()} 自行终止（attach 形态为 null）。
+     */
+    public io.duo.sim.kernel.sut.ExternalSutLauncher externalSut() {
+        return externalSut;
+    }
+
     public void stop() {
         if (!started) {
             return;
@@ -371,6 +496,18 @@ public final class ScenarioEngine implements AutoCloseable {
             manager.registerExtraStop("sut", sutStopper::stopSut);
         }
         manager.stopAll();
+        // external SUT 生命周期归用户（§7.3）：只拆接线，**不杀**进程——终态发事件 + 警告提示
+        if (externalSut != null && externalSut.leftRunning()) {
+            Long pid = externalSut.pid();
+            String hint = "external SUT process (pid " + pid + ") is still running: lifecycle "
+                    + "belongs to the user (§7.3) — terminate it manually";
+            bus.publish(Event.sim("sim.external-process-left-running",
+                    scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
+                            .findFirst().map(Scenario.NodeSpec::id).orElse("sut"),
+                    Map.of("pid", pid == null ? -1L : pid)));
+            warnings.add(hint);
+            result.recordWarning(hint);
+        }
         bus.publish(Event.sim("sim.scenario-finished", scenario.name(), Map.of()));
         started = false;
         if (recorder != null) {

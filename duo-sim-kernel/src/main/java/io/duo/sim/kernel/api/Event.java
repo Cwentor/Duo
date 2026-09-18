@@ -26,7 +26,12 @@ public record Event(String type, String sourceId, Instant timestamp, Map<String,
             "sim.registry-flap-cleared",
             "sim.fault-inject-failed",
             "sim.sut-exited",
-            "sim.sut-crashed");
+            "sim.sut-crashed",
+            // M6：external SUT 生命周期与端点告知（§7.3；内核探测，非 SUT 事实）
+            "sim.external-process-started",
+            "sim.external-endpoint",
+            "sim.external-sut-ready",
+            "sim.external-process-left-running");
 
     public static Event sim(String type, String sourceId, Map<String, Object> payload) {
         if (!type.startsWith(SIM_PREFIX)) {

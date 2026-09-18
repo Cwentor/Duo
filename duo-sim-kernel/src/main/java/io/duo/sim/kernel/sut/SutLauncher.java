@@ -30,7 +30,8 @@ public final class SutLauncher implements AutoCloseable {
     public record ExitState(boolean exited, boolean normal, String error) {
     }
 
-    private static final long DEFAULT_READY_TIMEOUT_MS = 60_000;
+    /** ready 回调默认超时（§7.3；可由节点 config {@code ready.timeout} 覆盖，M6 交付物 2）。 */
+    public static final long DEFAULT_READY_TIMEOUT_MS = 60_000;
     private static final long STOP_TIMEOUT_MS = 10_000;
 
     private final String sutId;

@@ -27,8 +27,19 @@ public record Scenario(String name,
                            String impl) {
     }
 
-    /** launch: mode ∈ {in-process, external}；in-process 需 main，external 需 configOut。 */
-    public record Launch(String mode, String main, String configOut) {
+    /**
+     * launch: mode ∈ {in-process, external}；in-process 需 main，external 需 configOut。
+     *
+     * <p>{@code command}（M6，决策 D7）仅 external 用：内核代起的外部进程命令行，
+     * 空＝attach 形态（进程由用户自行启动，内核只写端点配置 + 探针就绪）。
+     * 支持 {@code ${java}} / {@code ${java.home}} 占位符，避免场景文件写死本机路径。
+     */
+    public record Launch(String mode, String main, String configOut, String command) {
+
+        /** 兼容构造（M6 前的三字段形态，{@code command} 缺省＝attach）。 */
+        public Launch(String mode, String main, String configOut) {
+            this(mode, main, configOut, null);
+        }
     }
 
     /** exposes: [{contract, port, addr?}]；port 0＝内核分配；external 节点必须显式声明。 */

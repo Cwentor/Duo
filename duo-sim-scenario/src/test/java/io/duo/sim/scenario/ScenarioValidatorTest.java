@@ -167,6 +167,89 @@ class ScenarioValidatorTest {
         assertTrue(all.contains("ready probe"));
     }
 
+    // ---- 规则 4（M6：configOut / 探针声明在启动前校验）----
+
+    @Test
+    void externalRequiresConfigOut() {
+        var v = new ScenarioValidator(registry());
+        int port = freePort();
+        var ext = new Scenario.NodeSpec("m", "scheduler", "real", true,
+                new Scenario.Launch("external", null, null), // 缺 configOut
+                Map.of("ready.type", "tcp", "ready.port", String.valueOf(port)),
+                List.of(new Scenario.ExposeSpec("scheduler", port, "127.0.0.1")),
+                Map.of(), null, Map.of(), null);
+        var r = v.validate(scenario(List.of(ext)));
+        assertTrue(String.join(";", r.errors()).contains("launch.configOut"),
+                () -> String.join(";", r.errors()));
+    }
+
+    @Test
+    void externalRejectsUnknownProbeType() {
+        var v = new ScenarioValidator(registry());
+        int port = freePort();
+        var ext = new Scenario.NodeSpec("m", "scheduler", "real", true,
+                new Scenario.Launch("external", null, "build/x.properties"),
+                Map.of("ready.type", "udp", "ready.port", String.valueOf(port)),
+                List.of(new Scenario.ExposeSpec("scheduler", port, "127.0.0.1")),
+                Map.of(), null, Map.of(), null);
+        var r = v.validate(scenario(List.of(ext)));
+        assertTrue(String.join(";", r.errors()).contains("unsupported ready.type"),
+                () -> String.join(";", r.errors()));
+    }
+
+    @Test
+    void externalProbeWithoutPortOrExposesFails() {
+        var v = new ScenarioValidator(registry());
+        var ext = new Scenario.NodeSpec("m", "scheduler", "real", true,
+                new Scenario.Launch("external", null, "build/x.properties"),
+                Map.of("ready.type", "tcp"),
+                List.of(), Map.of(), null, Map.of(), null);
+        var r = v.validate(scenario(List.of(ext)));
+        assertTrue(String.join(";", r.errors()).contains("needs a port"),
+                () -> String.join(";", r.errors()));
+    }
+
+    @Test
+    void externalProbeWithBadTimeoutUnitFails() {
+        var v = new ScenarioValidator(registry());
+        int port = freePort();
+        var ext = new Scenario.NodeSpec("m", "scheduler", "real", true,
+                new Scenario.Launch("external", null, "build/x.properties", "${java} -jar s.jar"),
+                Map.of("ready.type", "http", "ready.port", String.valueOf(port),
+                        "ready.timeout", "30"), // 无单位（Durations 拒绝）
+                List.of(new Scenario.ExposeSpec("scheduler", port, "127.0.0.1")),
+                Map.of(), null, Map.of(), null);
+        var r = v.validate(scenario(List.of(ext)));
+        assertTrue(String.join(";", r.errors()).contains("lacks a unit"),
+                () -> String.join(";", r.errors()));
+    }
+
+    @Test
+    void wellFormedExternalNodePasses() {
+        // external SUT 消费 wire 面（worker 有端点）＋ 显式端口 ＋ configOut ＋ 探针声明
+        var v = new ScenarioValidator(registry());
+        int port = freePort();
+        var ext = new Scenario.NodeSpec("m", "scheduler", "real", true,
+                new Scenario.Launch("external", null, "build/x.properties",
+                        "${java} -jar third-party.jar"),
+                Map.of("ready.type", "tcp", "ready.port", String.valueOf(port),
+                        "ready.timeout", "30s"),
+                List.of(new Scenario.ExposeSpec("scheduler", port, "127.0.0.1")),
+                Map.of("worker", new Scenario.WiringSpec("w", "worker", null)),
+                null, Map.of(), null);
+        var r = v.validate(scenario(List.of(ext, node("w", "worker", "virtual", false, null))));
+        assertTrue(r.ok(), () -> String.join(";", r.errors()));
+    }
+
+    /** 取一个当前空闲端口（规则 8 会检查固定端口占用）。 */
+    private static int freePort() {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            return s.getLocalPort();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     // ---- 规则 6 ----
 
     @Test
