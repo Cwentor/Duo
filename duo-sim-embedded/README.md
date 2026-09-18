@@ -1,0 +1,31 @@
+# duo-sim-embedded
+
+**embedded / container 档适配**：JVM 内真实第三方协议实现，与按需拉起的真容器。
+
+- 依赖：`duo-sim-kernel`、`curator-framework`/`curator-test`、`h2`、`kubernetes-server-mock`（Fabric8）、`testcontainers`
+- 测试：39 条，其中 **4 条容器档用例在无 Docker 时按设计 skip**（`mvn -o -pl duo-sim-embedded test`）
+- SPI 注册：`CuratorRegistryProvider`、`H2StoreProvider`、`Fabric8K8sMockProvider`、`ZookeeperContainerProvider`
+
+## 实现
+
+| 实现 | 契约/档位 | 端点形态 | 说明 |
+| --- | --- | --- | --- |
+| `CuratorRegistry` | `registry` / `embedded` | `THIRD_PARTY` + `interfaceDirect` | **双面**：`endpoints()` 暴露真实 ZK 端口（SUT 用真实 Curator 客户端）；同进程门面实现 `RegistryContract`（框架组件 direct 消费）。门面持有**独立会话**，闪断时两者都断、各自重连。支持 `registry-flap`（`TestingServer.restart`，**瞬时整服重启**，`duration` 被忽略） |
+| `ZkBackedRegistry` | — | — | 双面骨架抽取（供 embedded 与 container 复用） |
+| `ZookeeperContainerRegistry` | `registry` / `container` | `THIRD_PARTY` + `interfaceDirect` | Testcontainers ZK。**不支持 `registry-flap`，且 `restart()` 显式抛 `UnsupportedOperationException`**——换宿主端口会让 wire 客户端永久挂起（M4 独立验收 HIGH 整改） |
+| `H2Store` | `store` / `embedded` | `THIRD_PARTY` | 真实 H2 内存库：建表/插入/查询/事务提交回滚、连接事件、慢查询事件、自定义 `jdbcUrl`。**无 interface-direct**（SUT 用真实 JDBC 驱动） |
+| `Fabric8K8sMock` | `resource` / `embedded` | `THIRD_PARTY` | `KubernetesMockServer` 非 CRUD 模式 + 显式 expect；Pod CRUD 经真实 K8s REST 往返；重启重建 |
+
+## 依赖坑（改动前必读）
+
+- `curator-test`、`kubernetes-server-mock` 都需**排除传递的 `junit-jupiter-api` / `junit-platform-commons`**，
+  否则与项目的 JUnit 5.11.4 冲突导致 surefire 测试发现失败。
+- `jackson-annotations` 显式钉到 `2.18.2`：Testcontainers → docker-java 会传递 `2.10.3`，
+  压过 Fabric8 mock 需要的 `2.17+`（`JsonKey` 缺失 → `NoClassDefFoundError`）。
+
+## 门控
+
+容器档用例标 `@EnabledIf(dockerAvailable)`；同时有 `ZookeeperContainerRegistryGuardTest`（5 条，**不标门控**）
+离线验证「不支持＝显式拒绝」这一安全属性——**安全属性不能只被门控覆盖**（M4 独立验收教训）。
+
+→ [架构说明 · 双面实现](../docs/ARCHITECTURE.md#53-双面实现third_party--interfacedirecttrue-并存) · [开发指南 · 依赖纪律](../docs/DEVELOPMENT.md#5-模块依赖纪律)
