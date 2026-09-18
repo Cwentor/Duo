@@ -280,6 +280,25 @@ class VirtualEngineTest {
         assertNotNull(before);
     }
 
+    /**
+     * 代际隔离守卫（CI 实测漂移）：重启时被中断的旧任务线程仍会走到 finally，
+     * 若不设代际，它归还的槽位会计入**新一代**（实测 freeSlots 2 → 3）。
+     */
+    @Test
+    void restartDoesNotLetStaleTaskThreadsDriftSlotCount() throws Exception {
+        start(Map.of("capacity.slots", "2", "behaviors.default.duration", "300"));
+        engine.submit(TASK, 1, 1);
+        assertEquals(1, engine.freeSlots());
+
+        engine.restart();
+        assertEquals(2, engine.freeSlots(), "重启＝内部状态全新");
+        Thread.sleep(600); // 越过旧任务原定 duration：旧线程此刻必然已走完 finally
+        assertEquals(2, engine.freeSlots(), "旧代际任务不得污染新代际计数（曾实测 2→3）");
+        assertEquals(0, engine.inFlightTasks());
+        assertTrue(events.stream().noneMatch(e -> "sim.engine-task-status".equals(e.type())
+                && "CANCELLED".equals(e.payload().get("state"))),
+                "旧代际任务不得向新一代报终态事实（事实由 sim.engine-restarted 记账）");
+    }
     @Test
     void logLinesAreEmittedAsEngineFacts() throws Exception {
         start(Map.of("behaviors.named." + TASK + ".duration", "20",

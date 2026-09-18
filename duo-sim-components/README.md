@@ -3,7 +3,7 @@
 **virtual 档组件库**：进程内状态机与 Duo 协议组件。
 
 - 依赖：`duo-sim-kernel`、`duo-sim-protocol`
-- 测试：110 条（`./mvnw -o -pl duo-sim-components -am test`），含由 `examples` 迁入的调度状态机 18 条
+- 测试：111 条（`./mvnw -o -pl duo-sim-components -am test`），含由 `examples` 迁入的调度状态机 18 条
 - SPI 注册（`META-INF/services/io.duo.sim.kernel.spi.ComponentProvider`）：
   `VirtualRegistryProvider`、`VirtualWorkerProvider`、`VirtualSchedulerProvider`、`VirtualEngineProvider`、
   `VirtualFilestoreProvider`、`VirtualMessageBrokerProvider`、`VirtualResourceProvider`

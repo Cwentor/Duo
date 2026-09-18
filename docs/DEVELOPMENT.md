@@ -104,15 +104,15 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | `duo-sim-protocol` | 12 | 0 |
 | `duo-sim-kernel` | 76 | 0 |
 | `duo-sim-scenario` | 47 | 0 |
-| `duo-sim-components` | 110 | 0 |
+| `duo-sim-components` | 111 | 0 |
 | `duo-sim-embedded` | 55 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
 | `duo-sim-examples` | 41 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
-| **合计** | **341** | **11** |
+| **合计** | **342** | **11** |
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：341 测 / 11 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：342 测 / 11 skip（本机无 Docker）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上，未单独复测）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
@@ -130,9 +130,9 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > `VirtualWorkerTest` 1：`logLines` 逐行落流且顺序在终态之前）、examples 3
 > （`CustomHookAcceptanceTest` 2：YAML 端到端 + 未注册名显式失败；`ScenarioHostTest` 1：宿主注入）。
 >
-> **M5 第 4 轮净增 61 条（280 → 341）**，明细：
+> **M5 第 4 轮净增 62 条（280 → 342）**，明细：
 >
-> - **components 49 → 110（+61）**：新增 43 条——`VirtualFilestoreTest` 8、`VirtualMessageBrokerTest` 7、
+> - **components 49 → 111（+62）**：新增 44 条——`VirtualFilestoreTest` 8、`VirtualMessageBrokerTest` 7、
 >   `VirtualResourceManagerTest` 6、`VirtualEngineTest` 11、`VirtualSchedulerTest` 8（真实 DUO_PORT + 真实
 >   registry + 线上假 worker 的 wire 级用例）、`VirtualWorkerTest` 新增 3 条故障用例（该文件现 16 条）；
 >   另**接收从 `examples` 迁入的 18 条**（`SchedulerStateMachineTest` 11 + `DispatchSelectorTest` 7）——
@@ -279,7 +279,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 341 测 / 11 skip（无 Docker）」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 342 测 / 11 skip（无 Docker）」）。
 
 ---
 

@@ -113,7 +113,7 @@ run 35341908188（纯文档提交）的 `regression` job 红：`VirtualScheduler
 
 - 理由：`duo-sim-components` 不能依赖 `duo-sim-examples`，而两档调度器共用同一份语义；
   复制一份实现必然走偏（与 G9「worker 两档同构修复」同一纪律）。
-- 副作用（可核对）：examples 测试数 57 → 41，components 49 → 110。
+- 副作用（可核对）：examples 测试数 57 → 41，components 49 → 111。
 
 ---
 
@@ -129,19 +129,19 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 | duo-sim-protocol | 12 | 0 |
 | duo-sim-kernel | 76 | 0 |
 | duo-sim-scenario | 47 | 0 |
-| duo-sim-components | 110 | 0 |
+| duo-sim-components | 111 | 0 |
 | duo-sim-embedded | 55 | 10（4 ZookeeperContainer + 6 PostgresContainer，无 Docker） |
 | duo-sim-junit | 0 | 0 |
 | duo-sim-control | 0 | 0 |
 | duo-sim-examples | 41 | 1（ScaleAcceptanceTest，压测开关未开） |
-| **合计** | **341** | **11** |
+| **合计** | **342** | **11** |
 
-- 上一轮基线：280 测 / 5 skip。本轮净增 61 测（components +61 中含移入的 18）。
+- 上一轮基线：280 测 / 5 skip。本轮净增 62 测（components +62 中含移入的 18）。
 - 每个 skip 都可解释（无 Docker / 压测开关），无静默跳过。
 
 ---
 
-## 5.1 远端 CI 取证（commit `4cb9d8a`，run 35341365256）
+## 5.1 远端 CI 取证（commit `4cb9d8a`，run 35341365256；数字为该 run 当时实测）
 
 | job | 结果 | 关键输出 |
 | --- | --- | --- |

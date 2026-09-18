@@ -83,6 +83,8 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
     private final AtomicBoolean resourceExhausted = new AtomicBoolean(false);
     /** slow（M5-3）：置位后执行时长乘以 {@link #slowFactor}（倍数来自 config，不叠加）。 */
     private final AtomicBoolean slowActive = new AtomicBoolean(false);
+    /** 生命周期代际：stop/restart 递增，用于让上一代任务线程彻底沉默（不污染新一代计数与事实）。 */
+    private final AtomicLong generation = new AtomicLong();
     private final AtomicInteger freeSlots = new AtomicInteger();
     private final AtomicLong taskSeq = new AtomicLong();
     private final AtomicLong progressSeq = new AtomicLong();
@@ -163,6 +165,9 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
                 t.interrupt();
             }
         }
+        // 代际递增：被中断的任务线程在 finally 里会归还槽位——若不设代际，
+        // 上一代任务的归还会计入**新一代**的计数（CI 实测 freeSlots 2→3 的漂移）
+        generation.incrementAndGet();
         runningTasks.clear();
         freeSlots.set(slots);
         if (server != null && !server.isClosed()) {
@@ -437,6 +442,8 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
     private void launch(FrameConnection conn, String taskId, String taskName, int cpu, int memGB) {
         TaskExecution exec = new TaskExecution(taskId);
         runningTasks.add(exec);
+        // 代际快照：本任务只对**自己这一代**的计数与事实负责（stop/restart 后旧任务必须彻底沉默）
+        final long gen = generation.get();
         Thread t = Thread.ofVirtual().name(id.value() + "-task-" + taskId).unstarted(() -> {
             try {
                 var entry = behaviors.resolve(taskName);
@@ -447,12 +454,21 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
                         entry.successRate(), entry.exceptionType(), entry.logLines(),
                         entry.failAtPercent(), entry.neverReport(), entry.progressMode());
                 var result = profile.execute(taskName, new Random(), pct -> {
+                    if (gen != generation.get()) {
+                        return; // 旧代际：不再对外报进展
+                    }
                     awaitUnfrozen(); // freeze：进展对外停摆（挂起回调）
                     fire(Event.sim("sim.engine-task-progress", id.value(),
                             Map.of("taskId", taskId, "progress", pct)));
                 });
+                if (gen != generation.get()) {
+                    return; // stop/restart 已终结本代际：不再报日志/终态（事实由 stopped/crashed 记账）
+                }
                 emitLogs(taskId, taskName, entry.logLines());
                 awaitUnfrozen(); // freeze：终态回报挂起（clear 后补报）
+                if (gen != generation.get()) {
+                    return;
+                }
                 if (entry.neverReport()) {
                     fire(Event.sim("sim.engine-task-unreported", id.value(),
                             Map.of("taskId", taskId)));
@@ -463,12 +479,17 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                reportTerminal(conn, taskId, TaskStatus.CANCELLED,
-                        exec.cancelled ? "cancelled" : "interrupted");
+                if (gen == generation.get()) {
+                    reportTerminal(conn, taskId, TaskStatus.CANCELLED,
+                            exec.cancelled ? "cancelled" : "interrupted");
+                }
             } finally {
-                runningTasks.remove(exec);
-                freeSlots.incrementAndGet();
-                reportSlots();
+                // 只有本代际的任务才归还槽位：否则上一代任务的归还会计入新一代（计数漂移）
+                if (gen == generation.get()) {
+                    runningTasks.remove(exec);
+                    freeSlots.incrementAndGet();
+                    reportSlots();
+                }
             }
         });
         exec.thread = t;

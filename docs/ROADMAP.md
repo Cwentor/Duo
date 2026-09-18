@@ -3,7 +3,7 @@
 - 日期：2026-09-18
 - 基线：`0.1.0-SNAPSHOT`，M0–M4 已完成并验收；**本轮（2026-09-18 第 4 轮）完成 M5 交付物 1/2/3
   （契约补全 + 档位补全 + 三个故障动作）**，此前第 3 轮已完成 M7 最小子集 + M6 主线 + M5 前两项（G7/custom-hook）；
-  全量回归 **341 测 0 失败 / 11 skip**（无 Docker 档确定性可复现）
+  全量回归 **342 测 0 失败 / 11 skip**（无 Docker 档确定性可复现）
 - 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）
 - 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D9 已全部拍板，无悬空决策）
 
@@ -42,7 +42,7 @@
 | T4 | 行为可控 | 🟢 **基本达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配；**行为模型已由 worker 与 engine 两侧消费（M5 第 4 轮 `VirtualEngine` 复用 `BehaviorResolver`）** | 余项：行为模型未进入 message/filestore/resource（这三者无任务语义，属设计边界） |
 | T5 | 故障可注入 | 🟢 **基本达成** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；`custom-hook` 已闭环；**`freeze`/`slow`/`resource-exhaust` 已落地（M5 第 4 轮）**：`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource，三者幂等且显式拒绝 | 无「动作 × 档位」的成对故障场景集（G4） |
 | T6 | 真实反馈 | 🟡 **部分** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档 Testcontainers 桥；**store container 档已补真 PostgreSQL（M5 第 4 轮，CI container job 已取证：6/6 绿、skip=0）** | 第三方 SUT 接入需 external（G2）；适配器未做（§17 决策：按需立专项）；容器档真机路径已由 CI 取证（ZK 4 + PG 6 全绿） |
-| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 341 测（无 Docker 档，components 110 为最大头）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
+| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 342 测（无 Docker 档，components 111 为最大头）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | 🟡 **部分** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；**标准 Wrapper + CI 三 job 远端全绿（M7 最小子集，本轮）** | **无 LICENSE**；CI 门禁存在低概率假红（G9） |
 
 **一句话结论**：框架的**内核与机制层已经完整**（T1/T7 达成，T3/T4/T5/T6 的机制已具备），
@@ -142,7 +142,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **第 4 轮实测证据**（`.\mvnw.cmd -o -B test`，无 Docker 档）
 
-- 全量回归 **341 测 0 失败 / 11 skip**（components 110、embedded 55 含 10 skip、examples 41 含 1 skip）
+- 全量回归 **342 测 0 失败 / 11 skip**（components 111、embedded 55 含 10 skip、examples 41 含 1 skip）
 - 新增用例：components 43（`VirtualEngineTest` 11、`VirtualSchedulerTest` 8、`VirtualFilestoreTest` 8、
   `VirtualMessageBrokerTest` 7、`VirtualResourceManagerTest` 6）+ `VirtualWorkerTest` 3 条故障用例
   + embedded 16（PG 容器 6 门控 + 守卫 10）+ examples 2（`NewContractsAcceptanceTest`）
@@ -153,7 +153,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
   wire 与同进程两条通路各写一份；16 路并发提交 / 2 槽位实测**修复前 5 个被受理**（超发 3），
   改为 CAS 原子占槽（`tryReserveSlot()`）后恒为 2 受理 / 14 显式拒绝
 - 远端 CI 取证（run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)）：
-  `regression` ✅ 341/0/0/11（skip 逐条可解释）、`container` ✅
+  `regression` ✅ 342/0/0/11（skip 逐条可解释）、`container` ✅
   **`PostgresContainerStoreTest` 6/6 且 skip=0**（真 PostgreSQL 往返，`--fail-on-skip` 门禁通过）
 - 剩余一处未闭合：「SUT 落在 worker 侧」需要 examples 提供 real worker 的 `SutMain`（当前不存在），
   故 virtual scheduler 的覆盖是**线协议级**（真实 DUO_PORT + 真实 registry + 假 worker）

@@ -6,7 +6,7 @@
 - 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
 - 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
 - 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M6 external SUT 均已实施完成并验收；M5 进行中（DSL 断链 G7 与 custom-hook 已闭合；第 4 轮补齐 `scheduler`/`engine`/`message`/`filestore` 的 virtual 档与 `store` 的 container 档，金标准场景集 G4 仍开放）、M7 最小子集已交付**
-- 最近一次全量回归（2026-09-18，M5 第 4 轮后）：`.\mvnw.cmd -o -B test` → **341 测 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
+- 最近一次全量回归（2026-09-18，M5 第 4 轮后）：`.\mvnw.cmd -o -B test` → **342 测 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
 - 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
 
 ---
@@ -101,14 +101,14 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 341 测（11 条设计门控 skip：容器档 10 + 压测 1）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 342 测（11 条设计门控 skip：容器档 10 + 压测 1）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
 ```
 
 CI（`.github/workflows/ci.yml`）：`regression`（无 Docker）/ `container`（有 Docker，断言 skip=0）/
-`scale`（nightly，产物留档）三个 job。M5 第 4 轮后最近一次：run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256) `regression` ✅ 341/0/0/11、`container` ✅（真 PostgreSQL 6/6 + 真 ZK 4/4，skip=0 门禁通过）。
+`scale`（nightly，产物留档）三个 job。M5 第 4 轮后最近一次：run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256) `regression` ✅ 342/0/0/11、`container` ✅（真 PostgreSQL 6/6 + 真 ZK 4/4，skip=0 门禁通过）。
 
 ### 5.3 跑一个场景（CLI 控制面）
 
@@ -228,7 +228,7 @@ assertions:
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议；container 档另有真 PostgreSQL（本机无 Docker 时 6 条用例 skip，**该档在 CI `container` job 上尚未观测到绿**） |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 341 测 / 11 skip（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 342 测 / 11 skip（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7，远端连续 4 次全绿）**已交付；发布产物（source/javadoc）未做 |
 
 完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
