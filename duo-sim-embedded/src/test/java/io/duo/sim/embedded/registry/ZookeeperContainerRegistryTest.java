@@ -49,6 +49,11 @@ class ZookeeperContainerRegistryTest {
 
     /** Docker 探活（§13 无 Docker 自动 skip；@EnabledIf 使 skip 在 surefire 计数中可见）。 */
     static boolean dockerAvailable() {
+        // CI 回归 job 用 -Dduo.docker.enabled=false 显式关闭容器档：让「常规回归零 Docker 依赖」
+        // 成为确定性事实，而不是「恰好这台机器没 Docker」（M7/T8：skip 必须可见、可解释）
+        if ("false".equalsIgnoreCase(System.getProperty("duo.docker.enabled", "true"))) {
+            return false;
+        }
         try (Socket s = new Socket()) {
             String endpoint = System.getProperty("duo.docker.host", "");
             if (!endpoint.isBlank()) {

@@ -1,0 +1,10 @@
+# 换行与可执行位钉死（M7）：Wrapper 与 CI 脚本必须能在 Linux/macOS 上直接执行，
+# 不随开发者的 core.autocrlf 设置漂移（CRLF 的 `#!/bin/sh` 会 "bad interpreter"）。
+* text=auto
+mvnw text eol=lf
+mvnw.cmd text eol=crlf
+*.sh text eol=lf
+
+# 二进制/产物不参与换行转换
+*.jar binary
+*.png binary

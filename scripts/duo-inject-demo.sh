@@ -8,7 +8,7 @@
 # 用法：bash scripts/duo-inject-demo.sh [scenario.yaml]
 # 退出码：0 = 两个演示均通过（注入成功、断言通过、无任务丢失）。
 #
-# 前置：先构建一次（./mvnw.sh -o install -DskipTests）。
+# 前置：先构建一次（./mvnw -o install -DskipTests）。
 set -e
 
 cd "$(dirname "$0")/.."
@@ -16,7 +16,8 @@ cd "$(dirname "$0")/.."
 SCENARIO="${1:-duo-sim-examples/src/main/resources/scenarios/m3-inject-demo.yaml}"
 PORT="${DUO_DEMO_PORT:-0}"   # 0 = 由内核分配空闲端口（避免与遗留进程撞端口）
 
-# 与 mvnw.sh 同源的 JDK 21（Git Bash 下 JAVA_HOME 须为 POSIX 路径）
+# JDK 21（与 ./mvnw 同一工具链；Git Bash 下 JAVA_HOME 须为 POSIX 路径）
+# 缺省回落到作者本机路径——其他机器请显式 `export JAVA_HOME=...`
 export JAVA_HOME="${JAVA_HOME:-/c/Users/cwt15/devtools/jdk-21.0.12.1+1}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
@@ -31,7 +32,7 @@ JAVA_IO_OPTS="-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UT
 
 echo "== 构建类路径 =="
 # 用 maven 解析第三方依赖（避免手写 jar 路径与版本漂移——原脚本硬编码 zookeeper 3.9.3 而实际为 3.9.2）
-./mvnw.sh -o -q -pl duo-sim-examples dependency:build-classpath \
+./mvnw -o -q -pl duo-sim-examples dependency:build-classpath \
     -Dmdep.outputFile=target/demo-classpath.txt -DincludeScope=runtime >/dev/null
 DEPS="$(cat duo-sim-examples/target/demo-classpath.txt)"
 

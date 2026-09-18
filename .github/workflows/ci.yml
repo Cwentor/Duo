@@ -1,0 +1,101 @@
+name: CI
+
+# M7 交付物 2（ROADMAP §4）：三个 job —— regression（无 Docker，常规门禁）、
+# container（有 Docker，容器档真实往返）、scale（nightly / 手动，压测产物留档）。
+# 决策 D8（docs/DECISIONS.md）：CI 在线解析依赖 + setup-java 的 m2 缓存；本地开发维持 -o 离线。
+# 原则（T8）：**skip 必须可见、可解释**——每个 job 都打印 skip 汇总，容器档还显式断言「不许 skip」。
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # nightly 压测（UTC 18:00 = 次日 02:00 CST）
+    - cron: '0 18 * * *'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: regression (no Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      # 无 Docker 档：显式关闭容器档（-Dduo.docker.enabled=false），保证「常规回归零 Docker 依赖」
+      # 是**确定**的而不是「恰好这台机器没 Docker」
+      - name: mvnw test
+        run: ./mvnw -B -Dduo.docker.enabled=false test
+      - name: skip summary (must be visible)
+        if: always()
+        run: bash .github/scripts/skip-summary.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-surefire-reports
+          path: '**/target/surefire-reports/*.txt'
+          if-no-files-found: warn
+
+  container:
+    name: container tier (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: docker info
+        run: docker info --format '{{.ServerVersion}}'
+      # 容器档真实往返（ZookeeperContainerRegistryTest 4 条）
+      - name: container tests
+        run: >-
+          ./mvnw -B -pl duo-sim-embedded -am test
+          -Dtest='ZookeeperContainer*' -Dsurefire.failIfNoSpecifiedTests=false
+      # 有 Docker 时容器档**不许 skip**：skip>0 即门禁失败（T8「skip 可解释」）
+      - name: assert container tests really ran
+        if: always()
+        run: bash .github/scripts/skip-summary.sh --fail-on-skip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-surefire-reports
+          path: '**/target/surefire-reports/*.txt'
+          if-no-files-found: warn
+
+  scale:
+    name: scale (nightly / manual)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      # 压测产物落 build/scale/*.json（.gitignore 覆盖，故必须作为 artifact 留档 —— G8）
+      - name: scale tests
+        run: ./mvnw -B -Dduo.scale=true -Dduo.docker.enabled=false test
+      - name: skip summary (must be visible)
+        if: always()
+        run: bash .github/scripts/skip-summary.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scale-artifacts
+          path: |
+            build/scale/*.json
+            build/scenarios/**/events.jsonl
+          if-no-files-found: warn
