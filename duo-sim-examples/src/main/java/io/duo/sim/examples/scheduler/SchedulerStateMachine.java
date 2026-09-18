@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * demo-scheduler 的调度状态机（计划 T13，钉死三件事）：DAG 依赖 + 有界重试 + 失败转移。
@@ -57,8 +58,7 @@ public final class SchedulerStateMachine {
         volatile Phase phase = Phase.PENDING;
         volatile int attempts = 0;
         /** 被拒绝次数（G9：准入失败计数，独立于 attempts）。 */
-        final java.util.concurrent.atomic.AtomicInteger rejections =
-                new java.util.concurrent.atomic.AtomicInteger();
+        final AtomicInteger rejections = new AtomicInteger();
 
         TaskState(String name) {
             this.name = name;
