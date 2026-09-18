@@ -56,6 +56,8 @@ public final class ScenarioEngine implements AutoCloseable {
     /** external SUT 启动器（M6；in-process 形态为 null）——生命周期归用户，故公开句柄。 */
     private volatile io.duo.sim.kernel.sut.ExternalSutLauncher externalSut;
     private volatile TimelineScheduler timeline;
+    /** custom-hook 注册表（M5/G5）：可用 {@link #withHooks} 注入，默认空表。 */
+    private HookRegistry hookRegistry = new HookRegistry();
     private final EventRecorder recorder;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
@@ -66,6 +68,21 @@ public final class ScenarioEngine implements AutoCloseable {
                 scenario.name(), "events.jsonl"));
         bus.subscribe(recorded::add);
         bus.subscribe(recorder::onEvent);
+    }
+
+    /**
+     * 注入自定义 hook 注册表（M5/G5 修复，DSL §3）：YAML 时间线的 {@code custom-hook} 动作据此执行。
+     * 此前引擎内部固定 {@code new HookRegistry()}，用户无处注册，动作必然「no hook registered」失败。
+     * 返回 {@code this} 便于 {@code ScenarioEngine.validated(...).withHooks(h)} 链式调用。
+     */
+    public ScenarioEngine withHooks(HookRegistry hooks) {
+        this.hookRegistry = java.util.Objects.requireNonNull(hooks, "hooks");
+        return this;
+    }
+
+    /** 当前 hook 注册表（默认空表；已注册的 hook 可被 YAML 时间线调用）。 */
+    public HookRegistry hooks() {
+        return hookRegistry;
     }
 
     /** 加载即校验（§8 快速失败：errors 非空抛 IllegalArgumentException）。 */
@@ -134,7 +151,7 @@ public final class ScenarioEngine implements AutoCloseable {
         started = true;
         // 时间线执行器（T16）：全部组件启动完成的当前时刻为 t0，非空才启动
         if (!scenario.timeline().isEmpty()) {
-            timeline = new TimelineScheduler(scenario.timeline(), runtime, result);
+            timeline = new TimelineScheduler(scenario.timeline(), runtime, result, hookRegistry);
             timeline.start();
         }
         bus.publish(Event.sim("sim.scenario-started", scenario.name(), Map.of()));

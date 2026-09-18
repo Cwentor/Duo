@@ -3,7 +3,7 @@
 **参考实现 + 场景 + 全部验收测试**——既是示例，也是本项目的验收载体。
 
 - 依赖：`kernel`、`protocol`、`components`、`scenario`、`embedded`、`control`、`junit`、`curator-framework`
-- 测试：54 条，其中 **1 条压测用例未开 `-Dduo.scale` 时按设计 skip**
+- 测试：57 条，其中 **1 条压测用例未开 `-Dduo.scale` 时按设计 skip**
 
 ## 参考实现
 
@@ -24,6 +24,7 @@ SPI 注册：`DemoSchedulerProvider`、`DemoRealWorkerProvider`。
 | `src/main/resources/scenarios/m1-failover-acceptance.yaml` | M1 金标准（4 并行任务 + crash/registry-flap/restart + 4 断言） |
 | `src/main/resources/scenarios/m3-inject-demo.yaml` | M3 热注入（`timeline: []`） |
 | `src/test/resources/scenarios/m2-reelection-acceptance.yaml` | M2 金标准（embedded ZK 双路径 wiring + 重选主） |
+| `src/test/resources/scenarios/m5-custom-hook-acceptance.yaml` | M5 金标准（时间线 `custom-hook` → 用户 hook → `eventSequence` 断言） |
 | `src/test/resources/scenarios/junit-extension-smoke.yaml` | `@VirtualCluster` 冒烟 |
 | `src/test/resources/scenarios/scale-{1k,10k}.yaml` | M4 压测（`-Dduo.scale=true`） |
 
@@ -37,6 +38,7 @@ SPI 注册：`DemoSchedulerProvider`、`DemoRealWorkerProvider`。
 | `ControlPlaneAcceptanceTest` / `ScenarioHostTest` / `RestControlServerTest` / `DuoCliTest` | M3：REST/CLI 热注入、错误映射、拓扑视图 |
 | `ScaleAcceptanceTest` | M4：千/万 Worker 心跳压测（门控） |
 | `ExternalSutAcceptanceTest` | **M6：不可改码第三方 SUT 端到端**（零依赖 `FakeThirdPartySut.java` 代起 → 端点告知双途径 → ready → 时间线注入 → 旁路断言 → 结束不杀进程；另含正常退出/崩溃两例） |
+| `CustomHookAcceptanceTest` | **M5：YAML 时间线驱动用户自定义 hook**（`m5-custom-hook-acceptance.yaml` 调 `scale-out` → hook 发 `sut.hook-scale-out` → YAML `eventSequence` 断言；未注册名＝显式 injectionFailure） |
 | `VirtualClusterExtensionTest` | JUnit 扩展生命周期 |
 
 ```bash

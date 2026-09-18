@@ -3,7 +3,7 @@
 **virtual 档组件库**：进程内状态机与 Duo 协议组件。
 
 - 依赖：`duo-sim-kernel`、`duo-sim-protocol`
-- 测试：44 条（`./mvnw -o -pl duo-sim-components -am test`）
+- 测试：49 条（`./mvnw -o -pl duo-sim-components -am test`）
 - SPI 注册（`META-INF/services/io.duo.sim.kernel.spi.ComponentProvider`）：
   `VirtualRegistryProvider`、`VirtualWorkerProvider`
 
@@ -19,9 +19,9 @@
 | 类 | 职责 |
 | --- | --- |
 | `BehaviorProfile` | 8 字段行为模型：`duration`/`jitter`/`successRate`/`exception`/`logLines`/`failAt`/`neverReport`/`progress`；`failAt` 确定性截断；`neverReport` 丢弃回报；`progress=periodic` 每 25% 回调 |
-| `BehaviorResolver` | 从 config 解析剧本（`behaviors.default.` / `behaviors.named.<X>.` / `behaviors.by-label.<L>.`）；匹配优先级 **精确名 > 标签 > 通配 > default** |
+| `BehaviorResolver` | 从 config 解析剧本（`behaviors.default.` / `behaviors.named.<X>.` / `behaviors.by-label.<L>.`）；匹配优先级 **精确名 > 标签 > 通配 > default**（**整条命中，不逐字段合并**）；`jitter` 接受 `0.1` 或 `20%`、`failAt` 接受 `60` 或 `60%`，越界报错点出配置键 |
 
-> `logLines` 已在 `BehaviorProfile` 中，但 `BehaviorResolver` 目前固定传空列表——**DSL 写了不生效**，
-> 见 [DSL 偏差表](../docs/SCENARIO-DSL.md#8-现状与设计偏差务必先读) 第 3 条。
+> `logLines` **已接入 DSL（M5，G7 闭合）**：逗号串或 YAML 列表均可，执行期逐行发
+> `sim.worker-log`（`{task}`/`{taskId}` 占位符可展开），virtual 与 real 两档 worker 同构。
 
 → [架构说明 · 契约与档位](../docs/ARCHITECTURE.md#5-契约与档位) · [DSL · 行为剧本](../docs/SCENARIO-DSL.md#2-behaviors-行为剧本)

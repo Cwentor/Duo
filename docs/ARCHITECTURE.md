@@ -20,6 +20,10 @@
                       ┌────────────────────┐
                       │ duo-sim-protocol   │  Duo 线协议帧/报文（只依赖 Jackson）
                       └─────────┬──────────┘
+```
+`FrameConnection` 的并发契约：**读侧单线程**（并发读会互相偷帧），**写侧多线程安全**
+（生产侧同一条连接上有心跳主循环线程、下行读线程的拒绝回报、任务线程的终态回报/槽位三个写者；
+`write` 把「写入 + flush」作为临界区串行化，保证帧边界不被交错或截断）。
                                 │
    ┌────────────────────────────┴─────────────────────────────┐
    │ duo-sim-kernel                                           │  SPI/注册表/管理器/
@@ -315,8 +319,8 @@ SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，�
 | 组件 | 事件 |
 | --- | --- |
 | `VirtualRegistry` | `sim.registry-started`、`sim.registry-crashed`、`sim.registry-stopped`、`sim.registry-restarted`、`sim.registry-session-opened`、`sim.registry-session-closed`、`sim.registry-watch-error` |
-| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected` |
-| `HookRegistry` | `sim.hook-executed` |
+| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected`、`sim.worker-log`（`logLines`，M5） |
+| `HookRegistry` | `sim.hook-executed`（hook 自身 `ctx.emit(...)` 的事实排在其前） |
 
 **单一订阅路径**：SUT 侧事件与注入事件都经 `bus.publish` 汇流，内存流与录制共用同一订阅点，
 保证两条流事件数一致（M1 T21 修复的真实缺陷：早期 SUT sink 与 ScenarioRuntime 绕过 bus 导致录制不全）。

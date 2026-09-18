@@ -206,7 +206,11 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                     DuoMessage resp = conn.read();
                     String reason = resp instanceof RegisterResponse rr
                             ? (rr.accepted() ? null : "register rejected: " + rr.reason())
-                            : "no register response";
+                            // §12 不静默 + 可诊断：把「实际收到了什么」写进原因，
+                            // 否则 `no register response` 无法区分「对端回了别的报文」与「对端回了 null」
+                            : "no register response (got "
+                                    + (resp == null ? "null" : resp.getClass().getSimpleName())
+                                    + ")";
                     if (reason != null) {
                         failure = reason; // 明确拒绝：重试无意义，快速失败
                         break;
@@ -331,6 +335,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                         fire(Event.sim("sim.worker-task-progress",
                                 id.instanceSourceId(inst.index),
                                 Map.of("taskId", d.taskId(), "progress", pct))));
+                emitLogs(inst, d, entry.logLines()); // G7：logLines 落流（终态之前，顺序确定）
                 if (entry.neverReport()) {
                     // M1 T17：neverReport＝回报通道丢失——终态丢弃（槽位仍释放，供超时回收演练）
                     fire(Event.sim("sim.worker-task-unreported",
@@ -362,6 +367,20 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         });
         exec.worker = taskThread;
         taskThread.start();
+    }
+
+    /**
+     * 假日志落流（G7 修复）：{@code logLines} 逐行发 {@code sim.worker-log}（诊断/断言可见），
+     * 支持 {@code {task}}/{@code {taskId}} 占位符。此前该字段被 {@code BehaviorResolver} 固定置空，
+     * DSL 写了不生效（静默无效）。
+     */
+    private void emitLogs(InstanceState inst, TaskDispatch d, java.util.List<String> lines) {
+        for (String line : lines) {
+            fire(Event.sim("sim.worker-log", id.instanceSourceId(inst.index),
+                    Map.of("taskId", d.taskId(),
+                            "line", line.replace("{task}", d.taskName())
+                                    .replace("{taskId}", d.taskId()))));
+        }
     }
 
     /**

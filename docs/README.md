@@ -72,7 +72,7 @@
 | [`acceptance/2026-09-18-duo-m4-independent-verification-record.md`](superpowers/acceptance/2026-09-18-duo-m4-independent-verification-record.md) | M4 独立复验：压测数据链核对 + 容器档 HIGH 整改取证 |
 | [`acceptance/2026-09-18-duo-m6-external-sut-record.md`](superpowers/acceptance/2026-09-18-duo-m6-external-sut-record.md) | M6 验收：external 第三方 SUT 端到端（端点告知双途径 / ready 探针 / 退出与崩溃事实 / 不杀进程）+ M7 最小子集（标准 Wrapper + CI 三 job）+ 注入事件顺序缺陷处置 |
 
-> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258**）都是**对应提交那一代**的实测数，
+> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258** / **263** / **280**）都是**对应提交那一代**的实测数，
 > 不是可复算到任意 HEAD 的不变量。当前 HEAD 的实测值见 [`../README.md`](../README.md) 顶部。
 
 ## 4. 文档维护约定

@@ -97,28 +97,34 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
 > 否则会形成 `junit ↔ examples` 循环依赖。
 
-### 3.2 当前分布（2026-09-18 实测，M6/M7 落地后）
+### 3.2 当前分布（2026-09-18 实测，M5 第 3 轮后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
-| `duo-sim-protocol` | 9 | 0 |
+| `duo-sim-protocol` | 12 | 0 |
 | `duo-sim-kernel` | 76 | 0 |
-| `duo-sim-scenario` | 41 | 0 |
-| `duo-sim-components` | 44 | 0 |
+| `duo-sim-scenario` | 47 | 0 |
+| `duo-sim-components` | 49 | 0 |
 | `duo-sim-embedded` | 39 | **4**（无 Docker，`-Dduo.docker.enabled=false` 强制） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 54 | **1**（未开压测开关） |
-| **合计** | **263** | **5** |
+| `duo-sim-examples` | 57 | **1**（未开压测开关） |
+| **合计** | **280** | **5** |
 
 ```bash
 ./mvnw -o -B test "-Dduo.docker.enabled=false"   # → BUILD SUCCESS，约 3.4 分钟
-bash .github/scripts/skip-summary.sh             # → 263 run / 0 fail / 5 skip（逐条可解释）
+bash .github/scripts/skip-summary.sh             # → 280 run / 0 fail / 5 skip（逐条可解释）
 ```
 
 > M6 新增 21 条（内核 18：`ExternalSutLauncherTest` 10 + `ReadyProbeTest` 8；examples 3：
 > `ExternalSutAcceptanceTest`），M6 修正的注入顺序缺陷另加 1 条（`ScenarioRuntimeTest`），
 > scenario 新增 10 条（校验规则 4 的 5 条 + 命令行切分 5 条）。
+>
+> M5 第 3 轮新增 17 条：protocol 3（`FrameConnectionConcurrentWriteTest`：多线程写同一连接的帧完整性
+> 守卫 + 畸形帧显式报错）、scenario 6（`ScenarioLoaderTest`：节点级 `ready` 别名/冲突报错、YAML 列表
+> 字段归一）、components 5（`BehaviorResolverM1Test` 4：百分号形态/越界报错/`logLines` 解析；
+> `VirtualWorkerTest` 1：`logLines` 逐行落流且顺序在终态之前）、examples 3
+> （`CustomHookAcceptanceTest` 2：YAML 端到端 + 未注册名显式失败；`ScenarioHostTest` 1：宿主注入）。
 
 ### 3.3 两条明文门控
 
@@ -239,7 +245,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 263 测全绿」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 280 测全绿」）。
 
 ---
 

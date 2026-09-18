@@ -17,7 +17,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>{@code behaviors.by-label.<label>.<field>}——标签表。</li>
  * </ul>
  * 字段集（M1 全集）：duration / jitter / successRate / exception /
- * failAt / neverReport / progress。
+ * failAt / neverReport / progress / logLines。
+ *
+ * <p>取值形态（G7 修复后与设计 §8 示例一致）：
+ * <ul>
+ *   <li>{@code jitter}——比率 {@code 0.1} 或百分比 {@code 20%}（等价 0.2），越界报错；</li>
+ *   <li>{@code failAt}——整数 {@code 60} 或百分比 {@code 60%}，范围 [0,100]；</li>
+ *   <li>{@code logLines}——逗号分隔的假日志模板（YAML 列表由 {@code ScenarioLoader} 归一为逗号串），
+ *       执行期逐行发 {@code sim.worker-log} 事件；支持 {@code {task}}/{@code {taskId}} 占位符。</li>
+ * </ul>
  *
  * <p>注意：标签匹配仅在 resolver 单测覆盖——线协议 {@code TaskDispatch} 报文
  * 无 label 字段，端到端覆盖留后续（M1 计划已注明）。
@@ -87,14 +95,80 @@ public final class BehaviorResolver {
     private static BehaviorEntry parseEntry(String prefix, Map<String, String> config) {
         return new BehaviorEntry(
                 parseLong(config.get(prefix + "duration"), 1000L),
-                parseDouble(config.get(prefix + "jitter"), 0.0),
+                parseRatio(prefix + "jitter", config.get(prefix + "jitter"), 0.0),
                 parseDouble(config.get(prefix + "successRate"), 1.0),
                 config.get(prefix + "exception"),
-                List.of(),
-                config.get(prefix + "failAt") == null ? null
-                        : Integer.parseInt(config.get(prefix + "failAt").trim()),
+                parseLogLines(config.get(prefix + "logLines")),
+                parsePercent(prefix + "failAt", config.get(prefix + "failAt")),
                 Boolean.parseBoolean(config.get(prefix + "neverReport")),
                 config.get(prefix + "progress"));
+    }
+
+    /**
+     * 抖动比率解析（G7 修复）：接受比率 {@code 0.1} 或百分号 {@code 20%}（设计 §8 示例形态）。
+     * 越界一律**显式报错**（不静默忽略）——静默取默认值会让 DSL 写了不生效。
+     */
+    static double parseRatio(String key, String v, double dflt) {
+        if (v == null) {
+            return dflt;
+        }
+        String t = v.trim();
+        double ratio;
+        if (t.endsWith("%")) {
+            ratio = parseNumber(key, t.substring(0, t.length() - 1).trim()) / 100.0;
+        } else {
+            ratio = parseNumber(key, t);
+        }
+        if (ratio < 0 || ratio > 1) {
+            throw new IllegalArgumentException("config '" + key + "' must be a ratio in [0,1] "
+                    + "or a percentage like 20% (got '" + t + "')");
+        }
+        return ratio;
+    }
+
+    /**
+     * 进度百分比解析（G7 修复）：接受 {@code 60} 或 {@code 60%}（设计 §8 示例形态）。
+     * 越界/非整数**显式报错**。
+     */
+    static Integer parsePercent(String key, String v) {
+        if (v == null) {
+            return null;
+        }
+        String t = v.trim();
+        String digits = t.endsWith("%") ? t.substring(0, t.length() - 1).trim() : t;
+        double n = parseNumber(key, digits);
+        if (n != Math.rint(n)) {
+            throw new IllegalArgumentException("config '" + key + "' must be an integer percent "
+                    + "(got '" + t + "')");
+        }
+        int pct = (int) n;
+        if (pct < 0 || pct > 100) {
+            throw new IllegalArgumentException("config '" + key + "' must be in [0,100] "
+                    + "(got '" + t + "')");
+        }
+        return pct;
+    }
+
+    /**
+     * 假日志模板解析（G7 修复，DSL §2.1）：逗号分隔（YAML 列表由 loader 归一为逗号串）。
+     * 空串/纯空白 → 空列表。
+     */
+    static List<String> parseLogLines(String v) {
+        if (v == null || v.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(v.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    private static double parseNumber(String key, String t) {
+        try {
+            return Double.parseDouble(t);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("config '" + key + "' is not a number: '" + t + "'");
+        }
     }
 
     /** M0 兼容：等价于 resolve(taskName, Set.of())。 */

@@ -3,7 +3,7 @@
 **Duo 线协议**的帧格式、编解码与契约报文定义。
 
 - 依赖：`jackson-databind`（**无内部模块依赖**——第三方协议适配器只需依赖本工件 + 内核公开 SPI，不依赖内核内部实现）
-- 测试：9 条（`mvn -o -pl duo-sim-protocol test`）
+- 测试：12 条（`mvn -o -pl duo-sim-protocol test`）
 
 ## 关键类
 
@@ -13,7 +13,7 @@
 | `DuoCodec` | 报文 ⇄ JSON payload ⇄ 完整帧的门面（线程安全） |
 | `DuoMessage` | 报文接口 + `@JsonSubTypes` 封闭清单（`type` 判别字段） |
 | `message/` | `register`、`register-response`、`heartbeat`、`slot`、`task-dispatch`、`task-ack`、`task-status`、`task-cancel` |
-| `FrameConnection` | 基于帧的双向连接（含交错读写） |
+| `FrameConnection` | 基于帧的双向连接：**读侧单线程**（并发读会互相偷帧）、**写侧多线程安全**（`write` 把「写入+flush」串行化，帧边界不被交错/截断——生产侧同一连接上有心跳/下行读/任务三个写者） |
 
 ## 边界
 

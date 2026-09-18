@@ -55,6 +55,13 @@ public final class ScenarioHost implements AutoCloseable {
     private ScenarioEngine engine;
     private State state = State.IDLE;
     private String lastError;
+    /** custom-hook 注册表（M5/G5）：宿主级共享，每次 start 注入引擎；YAML 时间线可调用其中 hook。 */
+    private final io.duo.sim.scenario.HookRegistry hooks = new io.duo.sim.scenario.HookRegistry();
+
+    /** 注册自定义 hook（YAML 时间线 {@code custom-hook} 动作按名调用）。 */
+    public io.duo.sim.scenario.HookRegistry hooks() {
+        return hooks;
+    }
 
     // ---- 生命周期 ----
 
@@ -66,7 +73,7 @@ public final class ScenarioHost implements AutoCloseable {
         try {
             Scenario loaded = ScenarioLoader.load(yaml);
             var registry = ContractRegistry.loadFromServiceLoader();
-            engine = ScenarioEngine.validated(loaded, registry);
+            engine = ScenarioEngine.validated(loaded, registry).withHooks(hooks);
             scenario = loaded;
             engine.startSut();
             engine.startComponents();

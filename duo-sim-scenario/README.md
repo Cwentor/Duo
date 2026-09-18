@@ -3,25 +3,26 @@
 **场景层**：YAML 解析与校验（规则 1–8）、场景编排与生命周期、时间线故障注入、事件录制、自定义钩子。
 
 - 依赖：`duo-sim-kernel`、`snakeyaml`、`jackson-databind`
-- 测试：41 条（`.\mvnw -o -pl duo-sim-scenario -am test`）
+- 测试：47 条（`.\mvnw -o -pl duo-sim-scenario -am test`）
 
 ## 关键类
 
 | 类 | 职责 |
 | --- | --- |
-| `ScenarioLoader` | YAML → `model.Scenario`（只做结构解析；`launch.ready.*` → `config["ready.*"]`、`capacity.*` → `config["capacity.*"]` 展平） |
+| `ScenarioLoader` | YAML → `model.Scenario`（只做结构解析；`launch.ready.*` **与节点级 `ready.*`** → `config["ready.*"]`（两处冲突**解析期报错**）、`capacity.*` → `config["capacity.*"]` 展平；profile 的 YAML 列表值归一为逗号串） |
 | `ScenarioValidator` | 规则 1–8 全量校验 + 警告（如 embedded registry 上 `registry-flap` 的 `duration` 被忽略）；只读静态能力元数据 |
-| `ScenarioEngine` | 校验 → `startSut()` → `startComponents()` → 时间线 → `stop()`；事件流与录制**同一订阅点**；结束时评估 YAML 断言。**SUT 宿主两形态**：`in-process`（`SutLauncher`）与 `external`（`ExternalSutLauncher`，代起/attach、`${java}` 占位符展开、结束不杀进程 + `sim.external-process-left-running` 警告）；句柄经 `externalSut()` 暴露 |
-| `TimelineScheduler` | 以「全部组件启动完成」为 t0 调度时间线；带 `duration` 的动作到期自动 `clear()`；`custom-hook` 走 `HookRegistry` |
+| `ScenarioEngine` | 校验 → `startSut()` → `startComponents()` → 时间线 → `stop()`；事件流与录制**同一订阅点**；结束时评估 YAML 断言。**SUT 宿主两形态**：`in-process`（`SutLauncher`）与 `external`（`ExternalSutLauncher`，代起/attach、`${java}` 占位符展开、结束不杀进程 + `sim.external-process-left-running` 警告）；句柄经 `externalSut()` 暴露。**hook 注入入口**：`withHooks(HookRegistry)` / `hooks()`（M5，G5 闭合） |
+| `TimelineScheduler` | 以「全部组件启动完成」为 t0 调度时间线；带 `duration` 的动作到期自动 `clear()`；`custom-hook` 走注入的 `HookRegistry` |
 | `EventRecorder` | 事件 → JSON Lines（`build/scenarios/<name>/events.jsonl`）+ `readBack()` 回读 |
-| `HookRegistry` | `custom-hook` 注册与执行（未注册＝失败，不静默）；发布 `sim.hook-executed` |
+| `HookRegistry` | `custom-hook` 注册与执行（未注册＝失败，不静默）；hook 自身 `ctx.emit(...)` 的事实在前，`sim.hook-executed` 在其后 |
 | `InteractiveTierGuard` | 拒绝交互型契约声明 embedded/container 档（该形态不存在） |
 | `ScenarioResult` | 断言结果、注入失败、警告的收集与 `snapshot()` |
 
 ## 注意
 
-- 引擎内部目前 `new HookRegistry()`，**未暴露注册入口**——YAML 时间线里的 `custom-hook` 会「no hook registered」
-  （见 [DSL 偏差表](../docs/SCENARIO-DSL.md#8-现状与设计偏差务必先读) 第 7 条，已列入路线图 M5）。
+- ~~引擎内部目前 `new HookRegistry()`，**未暴露注册入口**~~ **已修复（M5）**：`ScenarioEngine.withHooks(...)` /
+  `hooks()` 与 `ScenarioHost.hooks()` 均已提供，YAML 时间线的 `custom-hook` 有端到端验收
+  （`CustomHookAcceptanceTest`）。
 - startComponents() 必须跳过已 dopt 的节点，否则二次 start() 会重建 TestingServer 导致已注册节点全丢。
 - external SUT 的生命周期**归用户**：`stop()` 只拆接线、不杀进程（§7.3）；但**启动失败**（ready 超时 / ready 前退出）会销毁子进程（决策 D9），并逆序拆除已启动组件。
 

@@ -84,9 +84,19 @@ launch:
 | `main` | `in-process` 必填：`SutMain` 实现类的全限定名（反射实例化，需无参构造器） |
 | `command` | `external` 可选：内核代起的外部进程命令行（M6 决策 D7）。按空白切分、支持引号包裹；`${java}` / `${java.home}` 展开为**当前 JVM** 的 java 可执行文件/JDK 家目录，使场景文件不写死本机路径。**省略 `command` ＝ attach 形态**：进程由用户自行启动，内核只写端点配置 + 探针就绪（此时进程退出不可观测） |
 | `configOut` | `external` 必填：端点配置文件输出路径（§7.3 主途径；校验规则 4） |
-| `ready` | `external` 必填的探针声明；`ScenarioLoader` 把 `launch.ready.*` 展平为 `config["ready.<k>"]`，见 §1.4 |
+| `ready` | `external` 必填的探针声明；`ScenarioLoader` 把 `launch.ready.*` 展平为 `config["ready.<k>"]`，见 §1.4。**节点级 `ready:` 是等价别名**（M5 起），两者冲突（同键不同值）在**解析期报错**，不静默择一 |
 
 ### 1.4 `launch.ready`（就绪探针，M6）
+
+> **声明位置**（M5 起）：`launch.ready` 与节点级 `ready` **等价**，可任选其一：
+> ```yaml
+> - id: m
+>   contract: message
+>   tier: external
+>   launch: { mode: external, configOut: build/m.properties }
+>   ready: { type: tcp, port: 9092 }      # 节点级别名（与 launch.ready 同义）
+> ```
+> 同一节点同时写两处且**同键不同值**→ 解析期抛错（避免"以为生效的是自己写的那份"）。
 
 | 键 | 取值 | 说明 |
 | --- | --- | --- |
@@ -142,16 +152,20 @@ behaviors:
 | 字段 | 取值 | 语义 | 缺省 |
 | --- | --- | --- | --- |
 | `duration` | 带单位 `ms`/`s`/`m`，或无单位（＝毫秒） | 执行时长 | `1000` |
-| `jitter` | `[0,1]` 比率 | 时长抖动幅度：`actual = duration × (1 + jitter × U(-1,1))` | `0.0` |
+| `jitter` | `[0,1]` 比率**或百分比**（`0.1` ≡ `10%`） | 时长抖动幅度：`actual = duration × (1 + jitter × U(-1,1))` | `0.0` |
 | `successRate` | `[0,1]` | 成功率（在 `exception`/`failAt` 未触发时按概率判成败） | `1.0` |
-| `failAt` | `0`–`100` 整数 | 进度到达该百分比时**确定性失败**（执行在失败点截断） | 无 |
+| `failAt` | `0`–`100` 整数**或百分比**（`60` ≡ `60%`） | 进度到达该百分比时**确定性失败**（执行在失败点截断） | 无 |
 | `exception` | 异常类名字符串 | 每次尝试必抛（模拟报错） | 无 |
 | `neverReport` | bool | 领取后**永不回报终态**（僵尸任务；槽位照常释放） | `false` |
 | `progress` | `off` / `periodic` | `periodic` 时执行期间每 25% 进度回调一次（worker 转成 `sim.worker-task-progress`） | `off` |
-| `logLines` | — | ⚠️ **声明在 `BehaviorProfile` 但未接入 DSL**（`BehaviorResolver` 固定传空列表），见 §8 |
+| `logLines` | YAML 列表或逗号分隔串 | 假日志模板：执行期逐行发 `sim.worker-log`（`{task}`/`{taskId}` 占位符可展开）；空串＝不打 | 空 |
 
-> ⚠️ **与设计文档 §8 示例的差异**：设计示例写 `jitter: 20%`、`failAt: 60%`，**实现只接受数值**
-> （`0.1` / `60`）。写成百分号会抛 `NumberFormatException`。
+> **取值越界一律报错**（`jitter` 不在 `[0,1]`、`failAt` 不在 `[0,100]`、非数字）：错误信息点出
+> 具体配置键，不静默取默认值。
+>
+> **匹配是整条命中、不逐字段合并**：命中 `behaviors.named.X.*` 后，未写的字段取该条目的默认
+> （`duration` 1000 / `successRate` 1.0 …），**不会**回退到 `behaviors.default.*` 的对应字段。
+> 需要继承 default 的某个字段时，请显式写在该条目上。
 
 ### 2.2 匹配优先级（四级）
 
@@ -202,10 +216,27 @@ timeline:
 | `restart` | 生命周期 | ✅ 已落地 | 任意可 `restart()` 的组件（容器档 registry **显式拒绝**） |
 | `registry-flap` | FaultInjectable | ✅ 已落地 | `VirtualRegistry`（持续窗口）、`CuratorRegistry`（瞬时整服重启） |
 | `task-kill` | FaultInjectable | ✅ 已落地 | `VirtualWorker`（实例级） |
-| `custom-hook` | 用户钩子 | 🟡 通路已实现，**引擎未暴露注册入口**（见 §8） | `HookRegistry` |
+| `custom-hook` | 用户钩子 | ✅ 已落地（M5） | `HookRegistry`：`ScenarioEngine.withHooks(h)` / `engine.hooks()` / `ScenarioHost.hooks()` |
 | `freeze` | FaultInjectable | ❌ 仅有常量声明 | — |
 | `slow` | FaultInjectable | ❌ 仅有常量声明 | — |
 | `resource-exhaust` | FaultInjectable | ❌ 仅有常量声明 | — |
+
+**`custom-hook` 用法**（M5 闭环）：
+
+```java
+var hooks = new HookRegistry();
+hooks.register("quiesce", ctx -> {                    // ctx: target() / params() / emit(type, payload)
+    ctx.emit("sut.hook-quiesced", Map.of("target", ctx.target()));
+});
+try (var engine = ScenarioEngine.validated(scenario, registry).withHooks(hooks)) { ... }
+// 控制面：new ScenarioHost().hooks().register(...)（每次 start 自动注入引擎）
+```
+
+- hook 名取自 `params.hook`，其余 `params` 经 `ctx.params()` 透传；未注册的 hook 名 →
+  **`injectionFailure`（§12 不静默）**，不假装成功。
+- 事件顺序：hook 自身 `ctx.emit(...)` 的事实在前，框架的 `sim.hook-executed {hook, target}` 在其后
+  （断言写 `eventSequence: [<hook 事实>, sim.hook-executed]`）。
+- `target` 允许指向 SUT（§7.2 唯一豁免）——这正是「协作式外部干预」的用法。
 
 ### 3.2 实例寻址与无降级
 
@@ -317,14 +348,14 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 
 | # | 偏差 | 影响 | 对应路线图 |
 | --- | --- | --- | --- |
-| 1 | `jitter` 只接受 `[0,1]` 比率，不接受设计示例的 `20%` | 照抄设计 §8 示例会抛异常 | G7 |
-| 2 | `failAt` 只接受 `0–100` 整数，不接受 `60%` | 同上 | G7 |
-| 3 | `logLines` 在 `BehaviorProfile` 中声明，但 `BehaviorResolver` 固定传空列表 | DSL 写了也不生效 | G7 |
+| 1 | ~~`jitter` 只接受 `[0,1]` 比率，不接受设计示例的 `20%`~~ | **已闭合（M5）**：`0.1` 与 `20%` 等价接受，越界报错并点出配置键 | G7 ✅ |
+| 2 | ~~`failAt` 只接受 `0–100` 整数，不接受 `60%`~~ | **已闭合（M5）**：`60` 与 `60%` 等价接受，越界报错 | G7 ✅ |
+| 3 | ~~`logLines` 在 `BehaviorProfile` 中声明，但 `BehaviorResolver` 固定传空列表~~ | **已闭合（M5）**：逗号串/YAML 列表均接入，执行期逐行发 `sim.worker-log`（virtual 与 real 两档同构），`{task}`/`{taskId}` 占位符可展开 | G7 ✅ |
 | 4 | ~~`launch.mode=external` 能通过校验，但引擎抛 `M0 engine only supports in-process SUT launch`~~ | **已闭合（M6）**：external 代起/attach 两形态、端点告知双途径、ready 探针、退出/崩溃事实事件全部落地并有端到端验收 | G2 / M6 ✅ |
 | 5 | ~~`launch.ready.timeout` 被解析进 config 但引擎未消费~~ | **已闭合（M6）**：in-process 与 external 同口径消费 `ready.timeout`（缺省 60s） | G2 ✅ |
-| 6 | ~~`ScenarioValidator` 的 ready 报错文案写 `config: {ready.type: ...}`~~ | **已闭合（M6）**：文案改为 `launch.ready`，且探针 type/端口/时长在**启动前**校验（`ReadyProbe.spec`），写 `config.ready.type` 的后门随之关闭 | G7 部分 ✅ |
-| 7 | `custom-hook` 的 `HookRegistry` 无法从 `ScenarioEngine` 注入（引擎内部 `new HookRegistry()`） | YAML 时间线里的 `custom-hook` 必然「no hook registered」失败 | G5 |
-| 8 | `freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults` | 写了会被校验期拒绝（当前行为正确，属功能未实现） | G5 |
+| 6 | ~~`ScenarioValidator` 的 ready 报错文案写 `config: {ready.type: ...}`~~ | **已闭合（M6）**：文案改为 `launch.ready`，且探针 type/端口/时长在**启动前**校验（`ReadyProbe.spec`），写 `config.ready.type` 的后门随之关闭。**M5 补**：节点级 `ready:` 成为等价别名，两处冲突在解析期报错 | G7 ✅ |
+| 7 | ~~`custom-hook` 的 `HookRegistry` 无法从 `ScenarioEngine` 注入（引擎内部 `new HookRegistry()`）~~ | **已闭合（M5）**：`ScenarioEngine.withHooks/hooks()` + `ScenarioHost.hooks()`；YAML 端到端用例（含未注册名的显式失败）进常规回归 | G5 ✅ |
+| 8 | `freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults` | 写了会被校验期拒绝（当前行为正确，属功能未实现） | G5（M5 余项） |
 | 9 | `launch.command` / `${java}` 占位符是 **M6 新增的 DSL 字段**（设计文档未定义） | 设计 §7.3 只说「用户自行启动」；实现补了「内核代起并观测退出」的形态，否则验收要求的 `sut.exited`/`sut.crashed` 无法产出（决策 D7） | DECISIONS D7 |
 
 > **M6 修正的另一处实现缺陷（不在 DSL 面，但影响断言写法）**：`sim.fault-injected` 原先在
@@ -351,6 +382,10 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | `ready probe needs a port` | 既无 `ready.port` 也无非 0 `exposes` | 补其一 |
 | `timeline action 'freeze' unsupported by 'workers'` | 动作未实现 | 换 `crash`/`restart`/`registry-flap`/`task-kill` |
 | `timeline target 'workers' is SUT` | 对 SUT 注入 | 改用 `custom-hook`，或改注入替身节点 |
+| `config 'behaviors.X.jitter' must be a ratio in [0,1] or a percentage like 20%` | jitter 越界或写错形态 | 写 `0.1` 或 `10%` |
+| `config 'behaviors.X.failAt' must be in [0,100]` | failAt 越界 | 写 `60` 或 `60%` |
+| `node 'm': ready.port declared twice with conflicting values` | `launch.ready` 与节点级 `ready` 冲突 | 只留一处，或让两处取值一致 |
+| `no hook registered: <名>`（`injectionFailure`） | YAML 写了 `params.hook` 但代码没注册 | 用 `engine.hooks().register(...)` / `host.hooks().register(...)` 注册同名 hook |
 | `requires instanceControl capability` | 目标不支持实例级操作 | 去掉下标（整组）或换实现 |
 | `SUT ready timeout (60000ms)` | SUT 未在超时内调 `ctx.ready()` | 检查 SUT 启动路径；超时可用 `ready: { timeout: 90s }` 覆盖 |
 | `external SUT ready timeout (30000ms)` | external 探针到期仍不可达 | 检查进程是否监听声明的端口；或调大 `ready.timeout` |

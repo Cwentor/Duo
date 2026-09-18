@@ -73,6 +73,21 @@ public final class ScenarioLoader {
         if (configRaw instanceof Map<?, ?> cm) {
             cm.forEach((k, v) -> config.put(String.valueOf(k), String.valueOf(v)));
         }
+        // 节点级 ready（M5/G5 兼容别名，DSL §1.4）：与 launch.ready 同义；两者冲突时**显式报错**，
+        // 不静默择一（否则用户以为生效的是自己写的那份）。
+        Object nodeReadyRaw = n.get("ready");
+        if (nodeReadyRaw instanceof Map<?, ?> rm) {
+            rm.forEach((k, v) -> {
+                String key = "ready." + k;
+                String val = String.valueOf(v);
+                String prev = config.putIfAbsent(key, val);
+                if (prev != null && !prev.equals(val)) {
+                    throw new IllegalArgumentException("node '" + id + "': ready." + k
+                            + " declared twice with conflicting values ('" + prev
+                            + "' under launch.ready vs '" + val + "' at node level)");
+                }
+            });
+        }
         List<Scenario.ExposeSpec> exposes = new ArrayList<>();
         for (Map<String, Object> e :
                 (List<Map<String, Object>>) n.getOrDefault("exposes", List.of())) {
@@ -120,7 +135,7 @@ public final class ScenarioLoader {
             pm.forEach((k, v) -> {
                 Map<String, String> fields = new LinkedHashMap<>();
                 if (v instanceof Map<?, ?> fm) {
-                    fm.forEach((kk, vv) -> fields.put(String.valueOf(kk), String.valueOf(vv)));
+                    fm.forEach((kk, vv) -> fields.put(String.valueOf(kk), flatten(vv)));
                 }
                 profiles.put(String.valueOf(k), fields);
             });
@@ -141,6 +156,18 @@ public final class ScenarioLoader {
             }
         }
         return new Scenario.Behaviors(profiles, bindings);
+    }
+
+    /**
+     * profile 字段值归一为字符串（G7）：YAML 列表（如 {@code logLines: [a, b]}）→ 逗号串
+     * （{@code "a,b"}），避免 {@code List.toString()} 带方括号污染取值；其余按 {@code String.valueOf}。
+     */
+    private static String flatten(Object vv) {
+        if (vv instanceof List<?> l) {
+            return l.stream().map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(","));
+        }
+        return String.valueOf(vv);
     }
 
     private static Map<String, Object> asMap(Object o) {

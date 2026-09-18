@@ -1,8 +1,8 @@
 # Duo 发展规划 —— 如何达成最初的目标
 
 - 日期：2026-09-18
-- 基线：`0.1.0-SNAPSHOT`，M0–M4 已完成并验收；**本轮（2026-09-18）已完成 M7 最小子集 + M6 主线**，
-  全量回归 **263 测 0 失败 / 5 skip**（3.4 分钟，确定性无 Docker 档）
+- 基线：`0.1.0-SNAPSHOT`，M0–M4 已完成并验收；**本轮（2026-09-18）已完成 M7 最小子集 + M6 主线 + M5 前两项（G7/custom-hook）**，
+  全量回归 **280 测 0 失败 / 5 skip**（3.4 分钟，确定性无 Docker 档）
 - 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）
 - 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D9 已全部拍板，无悬空决策）
 
@@ -38,8 +38,8 @@
 | T1 | 可组装 | ✅ **达成** | `ScenarioLoader` + `ScenarioValidator` 规则 1–8 + `WiringResolver` 拓扑排序启动 | 契约种类少（G1/G3） |
 | T2 | 任意项可测 | 🟡 **部分** | in-process SUT 全链路闭环（`SutMain`/`SutContext`/`SutLauncher`）；**external SUT 已闭环（M6：零依赖第三方进程端到端验收）**；替身覆盖 registry/worker/store/resource | scheduler/engine 无替身档位（G3） |
 | T3 | 可替换 | 🟡 **部分** | M0 `TierSwapAcceptanceTest`：同一拓扑 `workers` 在 `virtual ↔ real` 间切换、测试代码零改动 | 仅 registry（3 档）/worker（2 档）有多档；其余单档（G3） |
-| T4 | 行为可控 | 🟡 **部分** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配 | **`logLines` 未接入 DSL**；`jitter`/`failAt` 不接受百分号（G7） |
-| T5 | 故障可注入 | 🟡 **部分** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地 | **`freeze`/`slow`/`resource-exhaust` 未落地；`custom-hook` 引擎无注册入口**（G5） |
+| T4 | 行为可控 | 🟢 **基本达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配 | **M5 已接入 `logLines`（逐行 `sim.worker-log`）与 `jitter`/`failAt` 百分号形态**；余项：行为模型仅 worker 侧消费（`engine` 虚拟组件未落地） |
+| T5 | 故障可注入 | 🟡 **部分** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；**`custom-hook` 已闭环（M5：`withHooks`/`hooks()` + YAML 端到端）** | **`freeze`/`slow`/`resource-exhaust` 未落地**（G5 余项） |
 | T6 | 真实反馈 | 🟡 **部分** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档 Testcontainers 桥 | 第三方 SUT 接入需 external（G2）；适配器未做（§17 决策：按需立专项） |
 | T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 2.5 分钟 / 226 测；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | 🟡 **部分** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；**标准 Wrapper + CI 三 job 远端全绿（M7 最小子集，本轮）** | **无 LICENSE**；CI 门禁存在低概率假红（G9） |
@@ -58,9 +58,9 @@
 | **G2** | ~~**external SUT 引擎未实现**~~ **✅ 已闭合（M6，本轮）**：`launch.mode=external` 代起/attach 两形态、端点告知双途径（配置文件 + stdout）、`tcp`/`http` ready 探针、`ready.timeout` 全链路消费、`sut.exited`/`sut.crashed` 事实与「场景结束不杀进程」全部落地 | `ExternalSutLauncher` / `ReadyProbe`；`ExternalSutAcceptanceTest`（3 例）+ `ExternalSutLauncherTest`（10 例） | — | ~~P0~~ 已闭合 |
 | **G3** | **档位覆盖窄**：`store`/`resource` 仅 embedded；`scheduler` 仅 real（无 virtual 调度桩）；`engine` 无实现 | 契约 × 档位矩阵 | T3「同一契约位可换档」只在 registry/worker 上被真正验证过 | P1 |
 | **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」，目前只有 registry（flap/重选主）与 worker（crash/task-kill）有成对场景 | `duo-sim-examples/src/*/resources/scenarios/` | 契约语义回归无门禁，新契约容易「实现了但没验证」 | P1 |
-| **G5** | **故障动作与钩子未闭环**：`freeze`/`slow`/`resource-exhaust` 仅常量声明（无实现声明 `supportedFaults`，写入即校验期拒绝）；`HookRegistry` 无 `ScenarioEngine` 注入入口，YAML 时间线里的 `custom-hook` 必然「no hook registered」 | `FaultAction` 常量 vs Provider `Set.of(...)`；`ScenarioEngine` 内部 `new HookRegistry()` | T5「故障可注入」的动作面窄；用户扩展点不可用 | P1 |
+| **G5** | **故障动作未闭环**（M5 已修一半）：~~`HookRegistry` 无 `ScenarioEngine` 注入入口~~（**已闭合 M5**：`withHooks`/`hooks()`/`ScenarioHost.hooks()` + YAML 端到端用例）；`freeze`/`slow`/`resource-exhaust` 仅常量声明（无实现声明 `supportedFaults`，写入即校验期拒绝） | `FaultAction` 常量 vs Provider `Set.of(...)` | T5「故障可注入」的动作面窄 | P1（剩余：三个故障动作） |
 | **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
-| **G7** | **DSL 断链与设计偏差**：`jitter`/`failAt` 不接受 `%` 形态；`logLines` 未接入；~~`ready` 校验文案写 `config.ready.*`~~（M6 已修正为 `launch.ready` 并改为启动前校验）；~~`ready.timeout` 未消费~~（M6 已消费） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读) | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | P1（剩余项） |
+| **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
 | **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**本轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
 
@@ -111,7 +111,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 ---
 
-### M5 — 契约与档位补全（广度）
+### M5 — 契约与档位补全（广度）🟡 **进行中（2026-09-18 第 3 轮：5/6 已落地）**
 
 **为什么现在做**：T1「可组装任意链路拓扑」与 T3「换档零改动」的**可信度取决于覆盖了多少契约位**。
 当前 8 个契约里只有 5 个有实现，且只有 2 个有多档。
@@ -120,22 +120,24 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 1. **契约补全**：`engine` 虚拟组件（复用 `TaskStub`/`BehaviorProfile` 行为模型，§9 已预留定位）；
    `scheduler` 虚拟调度桩（让 SUT 可以是 worker 侧而不是调度侧）；`filestore` virtual 本地 FS 桩
-   （端点形态 `FS_PATH`，可达）；`message` virtual 桩（按需 embedded Kafka）。
-2. **档位补全**：`store` 补 container 档（或 zonky PG embedded）；`resource` 补 virtual/container 档。
+   （端点形态 `FS_PATH`，可达）；`message` virtual 桩（按需 embedded Kafka）。⏭ **未开始**
+2. **档位补全**：`store` 补 container 档（或 zonky PG embedded）；`resource` 补 virtual/container 档。⏭ **未开始**
 3. **故障动作落地**：`freeze`、`slow`、`resource-exhaust`（各契约按需声明 `supportedFaults` +
-   实现 `FaultInjectable` + 单测幂等/拒绝语义）。
+   实现 `FaultInjectable` + 单测幂等/拒绝语义）。⏭ **未开始**
 4. **`custom-hook` 闭环**：`ScenarioEngine` 暴露 `HookRegistry` 注入入口（构造参数或 setter），
-   YAML 时间线可用自定义钩子；钩子事件参与断言。
+   YAML 时间线可用自定义钩子；钩子事件参与断言。✅ **已落地**（`withHooks`/`hooks()`/`ScenarioHost.hooks()`；
+   `CustomHookAcceptanceTest` 2 例 + `ScenarioHostTest` 1 例，含未注册名的显式失败）
 5. **DSL 断链修复（G7）**：`jitter`/`failAt` 兼容百分号；`logLines` 接入 config；`ready` 声明位置统一
-   （保留 `launch.ready`，节点级 `ready` 作为兼容别名）+ 校验文案修正。
-6. **金标准场景集（G4）**：每个契约至少一个正例 + 一个故障例，全部进常规回归。
+   （保留 `launch.ready`，节点级 `ready` 作为兼容别名）+ 校验文案修正。✅ **已落地**（G7 闭合）
+6. **金标准场景集（G4）**：每个契约至少一个正例 + 一个故障例，全部进常规回归。⏭ **未开始**
 
 **验收标准**
 
-- 8 个契约全部至少有 1 个可运行实现（`message`/`filestore` 至少 virtual 桩）；
+- 8 个契约全部至少有 1 个可运行实现（`message`/`filestore` 至少 virtual 桩）；⏳ 当前 5/8
 - `registry`/`worker`/`scheduler`/`engine` 至少各有一个「同拓扑换档」验收（测试代码零改动）；
-- 每个新契约的故障例在 CI 常规回归中执行；
-- `custom-hook` 有 YAML 端到端用例。
+  🟡 `registry`/`worker` 已有（`TierSwapAcceptanceTest`），`scheduler`/`engine` 待契约补全
+- 每个新契约的故障例在 CI 常规回归中执行；⏳
+- `custom-hook` 有 YAML 端到端用例。✅ **已达成**
 
 **风险与对策**：抽象过早（§16 风险 3）→ 坚持「每接一个新契约才泛化一次接口」的 YAGNI 节奏；
 无真实用例的契约（message/filestore）→ 只做 virtual 桩，不做 embedded/container 真协议实现。
@@ -197,16 +199,17 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 | 顺序 | 内容 | 状态 | 并行性 |
 | --- | --- | --- | --- |
-| 1 | **M7 的 CI + Wrapper（最小子集）** | ✅ **本轮完成**（远端 CI 全绿已取证） | 与 M6 并行 |
-| 2 | **M6 external SUT** | ✅ **本轮完成**（G2 闭合） | 主线 |
-| 3 | **M5 契约与档位补全** | ⏭ 下一轮主线（P1） | 可与 M6 部分并行（不同契约互不干扰） |
-| 4 | **M5 的 DSL 断链修复 + 金标准场景集** | ⏭ 下一轮（P1；`ready.timeout` 与 ready 文案已随 M6 修复） | 可与 M5 主线并行 |
-| 5 | **M7 的 LICENSE/发布配置** | ⏭ 下一轮（交付合规） | 随时 |
-| 6 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
+| 1 | **M7 的 CI + Wrapper（最小子集）** | ✅ 已完成（远端 CI 连续 4 次全绿已取证） | 与 M6 并行 |
+| 2 | **M6 external SUT** | ✅ 已完成（G2 闭合） | 主线 |
+| 3 | **M5 的 DSL 断链修复（G7）+ custom-hook 闭环** | ✅ **第 3 轮完成**（G7 闭合、G5 钩子部分闭合；17 条新用例） | 与 M5 主线并行 |
+| 4 | **M5 契约与档位补全**（`engine`/`scheduler`/`filestore`/`message` + `store`/`resource` 档位 + 三个故障动作） | ⏭ 下一轮主线（P1） | 可与 M7 收尾并行 |
+| 5 | **M5 金标准场景集（G4）** | ⏭ 待契约位补齐后（每个契约正例+故障例） | 依赖顺序 4 |
+| 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
+| 7 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
-当前进度：**M6 ✅ + M7 最小子集 ✅ ⇒ T2 的两种宿主形态齐备、T8 主体就位；剩余 M5（广度）+ M7 收尾 + M8**。
+当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 4/5 ✅ ⇒ T4 基本达成、T5 动作面待补；剩余 M5 契约广度 + M7 收尾 + M8**。
 
 ---
 
@@ -295,3 +298,16 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 
 > **下一轮的入口建议**：按 §5 顺序启动 **M5（契约与档位补全 + DSL 断链修复 + 金标准场景集）**，
 > 并行补 **M7 的发布配置**；M8 待契约面稳定后再定指标口径。
+
+### 2026-09-18（第 3 轮）：M5 启动——DSL 断链 G7 闭合 + custom-hook 闭环
+
+| 项 | 结果 |
+| --- | --- |
+| 拍板 | 本轮按 §5 顺序取 M5 的**低风险高收益子集**先落地（交付物 4/5），契约补全与档位补全（交付物 1/2/3）留下一轮——理由：前者是「写了不生效/照抄即报错」的**静默缺陷**，后者是新增契约位（工作量大且需要新决策口径） |
+| M5-5 DSL 断链（G7 ✅ 闭合） | `jitter` 接受 `20%`（≡0.2）、`failAt` 接受 `60%`（≡60），越界**报错并点出配置键**；`logLines` 接入 config（YAML 列表由 loader 归一为逗号串），执行期逐行落 `sim.worker-log`（`{task}`/`{taskId}` 占位符），**virtual 与 real 两档 worker 同构**；节点级 `ready:` 成为 `launch.ready` 的等价别名，两处冲突**解析期报错**（不静默择一） |
+| M5-4 custom-hook 闭环（G5 部分 ✅） | `ScenarioEngine.withHooks(...)`/`hooks()` + `ScenarioHost.hooks()`；YAML 端到端用例（`m5-custom-hook-acceptance.yaml`：时间线在 300ms 调 `scale-out`，hook 发 `sut.hook-scale-out`，YAML `eventSequence` 断言顺序）+ 未注册名的**显式 injectionFailure** 用例 |
+| 缺陷发现（本轮） | **`VirtualWorkerTest` 全量回归下确定性失败**（模块内 4/4 复现，单跑 3/3 通过）→ 逐层取证（`pumpLog=[sent-register-response, pump-exit:EOFException]`、`offline=[{error=no register response (got TaskDispatch)}]`）→ 根因是**测试夹具竞态**：假 master 先 `received.add(注册请求)` 再写注册响应，测试据此提前在同一连接上派发，worker 握手读先拿到 `TaskDispatch` 而判「无注册响应」→ 实例离线。修复：假 master **先应答再发布** + 按**实例名寻址活动连接**（不再按 accept 顺序取，重连后亦正确） |
+| 协议层加固（非缺陷，诚实标注） | 夹具竞态暴露出 `FrameConnection` 的**单线程写**契约被生产代码违反（同一连接上有心跳主循环/下行读/任务三个写者）。已把「写入 + flush」串行化（读侧保持单线程），并加 3 条并发写守卫用例；**加固前该用例亦通过**（3 次运行未复现帧损坏），故属**防御性加固**而非「已复现缺陷」——已在用例 javadoc 与本节如实标注 |
+| 诊断改进（§12） | 注册失败原因由 `no register response` 改为 `no register response (got <实际类型>)`——否则无法区分「对端回了别的报文」与「对端回了 null」（本轮正是靠它定位） |
+| 测试 | 全量回归 **280 测 / 0 失败 / 5 skip**（3.4 分钟）：protocol 12（+3 并发写守卫）、kernel 76、scenario 47（+6 loader）、components 49（+5：百分号/越界/logLines）、embedded 39、examples 57（+3 custom-hook 端到端）；`VirtualWorkerTest` 模块内连跑 **3/3 全绿**（修复前 4/4 红） |
+| 未做（下一轮） | M5 交付物 1/2/3（`engine`/`scheduler`/`filestore`/`message` 契约补全、`store`/`resource` 档位、`freeze`/`slow`/`resource-exhaust` 故障动作）+ 交付物 6（金标准场景集 G4）；M7 发布配置；M8 全部 |

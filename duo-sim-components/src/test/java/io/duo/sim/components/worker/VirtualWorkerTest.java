@@ -54,6 +54,11 @@ class VirtualWorkerTest {
         final ServerSocket server = new ServerSocket();
         final BlockingQueue<FrameConnection> conns = new LinkedBlockingQueue<>();
         final BlockingQueue<DuoMessage> received = new LinkedBlockingQueue<>();
+        /** 假 master 侧的动作日志（诊断用）。 */
+        final BlockingQueue<String> pumpLog = new LinkedBlockingQueue<>();
+        /** 已注册实例 → 其连接（重连后指向最新；派发必须发给**活动**连接）。 */
+        final java.util.Map<String, FrameConnection> byInstance =
+                new java.util.concurrent.ConcurrentHashMap<>();
         volatile boolean rejectRegister;
 
         FakeScheduler() throws IOException {
@@ -76,21 +81,32 @@ class VirtualWorkerTest {
             try {
                 while (true) {
                     DuoMessage m = c.read();
-                    received.add(m);
-                    if (m instanceof RegisterRequest) {
+                    if (m instanceof RegisterRequest rr) {
+                        // **先应答，再发布「已收到」**：测试以 received 里的注册请求作为「注册完成」信号，
+                        // 若先 add 后 write，测试可能在响应写出前就在同一连接上派发（两线程并发写同一连接）
+                        // ——worker 的握手读会先读到 TaskDispatch，误判为「no register response」而离线。
                         c.write(new RegisterResponse(!rejectRegister,
                                 rejectRegister ? "rejecting" : null));
+                        pumpLog.add("sent-register-response");
+                        if (!rejectRegister) {
+                            byInstance.put(rr.instanceName(), c);
+                        }
                     }
+                    received.add(m);
                 }
             } catch (Exception e) {
                 // 连接结束
+                pumpLog.add("pump-exit:" + e.getClass().getSimpleName() + ":" + e.getMessage());
             }
         }
 
         void dispatch(String taskId, String taskName, int instanceOrder) throws Exception {
-            FrameConnection c = conns.stream()
-                    .filter(x -> true)
-                    .toList().get(instanceOrder - 1);
+            // 按实例名寻址**活动**连接：避免重连后把帧写到已死连接（旧实现按 accept 顺序取，脆弱）
+            FrameConnection c = byInstance.get("workers-" + instanceOrder);
+            if (c == null) {
+                throw new IllegalStateException(
+                        "instance workers-" + instanceOrder + " is not registered");
+            }
             c.write(new TaskDispatch(taskId, taskName, 1, 1, 1));
         }
 
@@ -249,6 +265,34 @@ class VirtualWorkerTest {
     }
 
     @Test
+    void logLinesAreEmittedAsFactsBeforeTerminalStatus() throws Exception {
+        // G7：logLines 此前被 resolver 固定置空（DSL 写了不生效）——现应逐行落 sim.worker-log
+        // 注意：四级匹配是**整条命中**（不逐字段合并），故 logLines 要挂在命中的那条上
+        startWorker(1, "spark-etl", Map.of(
+                "behaviors.named.spark-etl.logLines", "run {task} ({taskId}), done"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+        scheduler.dispatch("t-log", "spark-etl", 1);
+
+        // 等线协议终态回报（FAILED：named successRate=0）
+        TaskStatus terminal = null;
+        for (int i = 0; i < 200 && terminal == null; i++) {
+            DuoMessage m = scheduler.received.poll(100, TimeUnit.MILLISECONDS);
+            if (m instanceof TaskStatus ts && TaskStatus.FAILED.equals(ts.state())) {
+                terminal = ts;
+            }
+        }
+        assertNotNull(terminal, "未收到终态回报");
+        // 占位符展开 + 逐行有序
+        var lines = events.stream()
+                .filter(e -> "sim.worker-log".equals(e.type()))
+                .map(e -> String.valueOf(e.payload().get("line")))
+                .toList();
+        assertEquals(List.of("run spark-etl (t-log)", "done"), lines);
+        // 顺序确定：收到终态回报时假日志**已经**落流（断言窗口可依赖）
+        assertTrue(events.stream().anyMatch(e -> "sim.worker-log".equals(e.type())));
+    }
+
+    @Test
     void instanceStopAndRestartKeepsIdentity() throws Exception {
         startWorker(2, null, Map.of());
         assertTrue(worker.isInstanceAlive(2));
@@ -401,23 +445,62 @@ class VirtualWorkerTest {
         assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
 
         scheduler.dispatch("t-first", "task-a", 1);
-        for (int i = 0; i < 50 && worker.instanceFreeSlots(1) > 0; i++) {
-            Thread.sleep(50);
-        }
+        // 等**权威受理事实**（RUNNING 事件在槽位递减之后落流），而非固定时长轮询槽位：
+        // 满载机器上 dispatch→accept 的延迟可以超过任何拍脑袋的等待预算（全量回归曾因此假失败）。
+        assertTrue(waitForRunning("t-first", 20_000),
+                () -> "首个任务应被受理；诊断 " + diagnostics());
         assertEquals(0, worker.instanceFreeSlots(1), "首个任务应占用槽位");
 
         scheduler.dispatch("t-second", "task-b", 1);
-        assertNotNull(waitForStatus("t-second", TaskStatus.REJECTED, 5_000), "满载应被拒");
+        assertNotNull(waitForStatus("t-second", TaskStatus.REJECTED, 10_000), "满载应被拒");
 
-        assertNotNull(waitForStatus("t-first", TaskStatus.SUCCESS, 5_000), "首个任务应跑到终态");
+        assertNotNull(waitForStatus("t-first", TaskStatus.SUCCESS, 10_000), "首个任务应跑到终态");
         for (int i = 0; i < 60 && worker.instanceFreeSlots(1) == 0; i++) {
             Thread.sleep(50);
         }
         assertEquals(1, worker.instanceFreeSlots(1), "槽位必须释放（不得因拒绝/完成竞争泄漏）");
 
         scheduler.dispatch("t-second", "task-b", 1);
-        assertNotNull(waitForStatus("t-second", TaskStatus.SUCCESS, 5_000),
+        assertNotNull(waitForStatus("t-second", TaskStatus.SUCCESS, 10_000),
                 "重派的任务必须能跑到终态（旧实现会永久丢失）");
+    }
+
+    /** 等「该任务已在本实例开始执行」的本地事实（`sim.worker-task-status` RUNNING）。 */
+    private boolean waitForRunning(String taskId, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            boolean running = events.stream().anyMatch(e ->
+                    "sim.worker-task-status".equals(e.type())
+                            && taskId.equals(e.payload().get("taskId"))
+                            && TaskStatus.RUNNING.equals(e.payload().get("state")));
+            if (running) {
+                return true;
+            }
+            Thread.sleep(20);
+        }
+        return false;
+    }
+
+    /** 失败时的现场快照（连接数/收到的帧/本地事件/槽位）——诊断用，不在成功路径执行。 */
+    private String diagnostics() {
+        var frames = new ArrayList<String>();
+        DuoMessage m;
+        while ((m = scheduler.received.poll()) != null) {
+            frames.add(m.getClass().getSimpleName()
+                    + (m instanceof TaskStatus ts ? ":" + ts.state() : "")
+                    + (m instanceof RegisterRequest ? "" : ""));
+        }
+        var types = events.stream().map(Event::type).distinct().toList();
+        var offline = events.stream()
+                .filter(e -> e.type().equals("sim.worker-instance-offline"))
+                .map(e -> String.valueOf(e.payload())).toList();
+        return "conns=" + scheduler.conns.size()
+                + " frames=" + frames
+                + " pumpLog=" + new ArrayList<>(scheduler.pumpLog)
+                + " eventTypes=" + types
+                + " offline=" + offline
+                + " freeSlots=" + worker.instanceFreeSlots(1)
+                + " alive=" + worker.isInstanceAlive(1);
     }
 
     @Test

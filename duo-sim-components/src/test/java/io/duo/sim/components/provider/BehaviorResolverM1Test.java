@@ -9,6 +9,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** T17 四级匹配单测：精确任务名 > 标签 > 通配 > default。 */
@@ -95,5 +96,57 @@ class BehaviorResolverM1Test {
         var d = r.resolve("other");
         assertEquals(null, d.failAtPercent());
         assertFalse(d.neverReport());
+    }
+
+    // ---- G7：设计 §8 示例的百分号形态 ----
+
+    @Test
+    void jitterAcceptsPercentForm() {
+        var r = BehaviorResolver.fromConfig(Map.of(
+                "behaviors.default.jitter", "20%",
+                "behaviors.named.half.jitter", "0.5",
+                "behaviors.named.full.jitter", "100%"));
+        assertEquals(0.2, r.resolve("plain").jitterRatio(), 1e-9);
+        assertEquals(0.5, r.resolve("half").jitterRatio(), 1e-9);
+        assertEquals(1.0, r.resolve("full").jitterRatio(), 1e-9);
+    }
+
+    @Test
+    void failAtAcceptsPercentForm() {
+        var r = BehaviorResolver.fromConfig(Map.of(
+                "behaviors.default.failAt", "60%",
+                "behaviors.named.zero.failAt", "0",
+                "behaviors.named.all.failAt", "100%"));
+        assertEquals(60, r.resolve("plain").failAtPercent());
+        assertEquals(0, r.resolve("zero").failAtPercent());
+        assertEquals(100, r.resolve("all").failAtPercent());
+    }
+
+    @Test
+    void outOfRangeJitterAndFailAtAreRejectedWithKeyName() {
+        // 不静默取默认值：越界必须报错，且错误信息点出配置键
+        var jitter = assertThrows(IllegalArgumentException.class,
+                () -> BehaviorResolver.fromConfig(Map.of("behaviors.default.jitter", "1.5")));
+        assertTrue(jitter.getMessage().contains("behaviors.default.jitter"), jitter.getMessage());
+
+        var pct = assertThrows(IllegalArgumentException.class,
+                () -> BehaviorResolver.fromConfig(Map.of("behaviors.default.failAt", "120%")));
+        assertTrue(pct.getMessage().contains("behaviors.default.failAt"), pct.getMessage());
+
+        var nan = assertThrows(IllegalArgumentException.class,
+                () -> BehaviorResolver.fromConfig(Map.of("behaviors.default.jitter", "abc")));
+        assertTrue(nan.getMessage().contains("not a number"), nan.getMessage());
+    }
+
+    @Test
+    void logLinesParsedFromCommaSeparatedConfig() {
+        var r = BehaviorResolver.fromConfig(Map.of(
+                "behaviors.default.logLines", "load start, load done ,",
+                "behaviors.named.quiet.logLines", ""));
+        assertEquals(List.of("load start", "load done"), r.resolve("plain").logLines());
+        // 显式置空 = 该任务不打假日志
+        assertTrue(r.resolve("quiet").logLines().isEmpty());
+        // 未声明 logLines 的任务继承 default（不是空）
+        assertEquals(List.of("load start", "load done"), r.resolve("absent").logLines());
     }
 }

@@ -11,13 +11,17 @@ import java.net.Socket;
 
 /**
  * 双向长连接上的帧读写（计划 §2 连接模型：worker 拨号、单条双向长连接）。
- * 单线程读、单线程写互不共享状态；{@link #readFrame()} 阻塞直至一帧完整到达。
+ * 读侧单线程、写侧**多线程安全**：{@link #readFrame()} 阻塞直至一帧完整到达；
+ * {@link #write} 把「编码 + 写缓冲 + flush」作为临界区串行化——**帧边界即协议边界**，
+ * 两个线程同时写同一连接时不得交错或截断（读侧单线程是硬约束：并发读会互相偷帧）。
  */
 public final class FrameConnection implements Closeable {
 
     private final Socket socket;
     private final InputStream in;
     private final OutputStream out;
+    /** 写侧串行化锁（与读侧分离：持锁读会阻塞写，且读本就要求单线程）。 */
+    private final Object writeLock = new Object();
 
     public FrameConnection(Socket socket) throws IOException {
         this.socket = socket;
@@ -53,10 +57,19 @@ public final class FrameConnection implements Closeable {
         return DuoCodec.decode(readFrame());
     }
 
-    /** 发送一个报文（写完整帧并 flush）。 */
+    /**
+     * 发送一个报文（写完整帧并 flush）。
+     *
+     * <p>**多线程安全**：生产侧同一条连接上有多个写者（{@code VirtualWorker} 的心跳主循环线程、
+     * 下行读线程的拒绝回报、任务线程的终态回报/槽位上报），故「编码 + 写入 + flush」整体串行化。
+     * 编码是纯函数，放在锁外以免拉长临界区。
+     */
     public void write(DuoMessage message) throws IOException {
-        out.write(DuoCodec.encode(message));
-        out.flush();
+        byte[] frame = DuoCodec.encode(message);
+        synchronized (writeLock) {
+            out.write(frame);
+            out.flush();
+        }
     }
 
     private byte[] readFully(int n) throws IOException {

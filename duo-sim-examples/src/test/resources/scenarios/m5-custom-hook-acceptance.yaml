@@ -1,0 +1,38 @@
+name: m5-custom-hook-acceptance
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "job-a,job-b"
+      dag.deps.job-b: "job-a"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 1
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 1s, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline:
+  # custom-hook（M5/G5）：**唯一允许指向 SUT 的动作**（§7.2 豁免）——协作式外部干预
+  - at: 300ms
+    action: custom-hook
+    target: master
+    params: { hook: scale-out, instances: 2, reason: hot-spot }
+assertions:
+  # 顺序：hook 自身发布的事实在前，框架的 sim.hook-executed 在其后
+  - eventSequence: [sut.hook-scale-out, sim.hook-executed]

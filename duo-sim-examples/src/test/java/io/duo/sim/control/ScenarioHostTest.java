@@ -125,6 +125,37 @@ class ScenarioHostTest {
     }
 
     @Test
+    void registeredHookIsInvokedByYamlTimeline(@TempDir Path tmp) throws Exception {
+        // M5/G5：宿主暴露 HookRegistry，YAML 时间线的 custom-hook 才能按名调到用户代码
+        String withHook = FAST_SCENARIO
+                .replace("duration: 200ms", "duration: 3s")
+                .replace("timeline: []", """
+                        timeline:
+                          - at: 200ms
+                            action: custom-hook
+                            target: master
+                            params: { hook: quiesce, mode: drain }""");
+        Path f = writeScenario(tmp, withHook);
+        try (var host = new ScenarioHost()) {
+            var called = new java.util.concurrent.atomic.AtomicReference<String>();
+            host.hooks().register("quiesce", ctx -> {
+                called.set(ctx.target() + ":" + ctx.params().get("mode"));
+                ctx.emit("sut.hook-quiesced", java.util.Map.of("target", ctx.target()));
+            });
+            host.start(f);
+            host.awaitFinish(30_000);
+            assertEquals("master:drain", called.get(),
+                    "hook must be invoked with target + params");
+            assertTrue(host.eventsSince(0).stream()
+                            .anyMatch(e -> e.get("type").equals("sim.hook-executed")),
+                    "sim.hook-executed must be recorded");
+            assertTrue(host.eventsSince(0).stream()
+                            .anyMatch(e -> e.get("type").equals("sut.hook-quiesced")),
+                    "hook-emitted fact must be recorded");
+        }
+    }
+
+    @Test
     void injectWhenNotRunningFailsNotSilent() {
         try (var host = new ScenarioHost()) {
             var r = host.inject(new FaultAction(FaultAction.CRASH,

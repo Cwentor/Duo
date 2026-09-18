@@ -192,6 +192,7 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
                         ctx.eventBus().publish(Event.sim("sim.worker-task-progress",
                                 id.instanceSourceId(inst.index),
                                 Map.of("taskId", d.taskId(), "progress", pct))));
+                emitLogs(inst, d, entry.logLines()); // G7：与 virtual 档同构的假日志落流
                 if (entry.neverReport()) {
                     ctx.eventBus().publish(Event.sim("sim.worker-task-unreported",
                             id.instanceSourceId(inst.index), Map.of("taskId", d.taskId())));
@@ -206,6 +207,16 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
                 inst.freeSlots.incrementAndGet();
             }
         });
+    }
+
+    /** 假日志落流（G7）：与 {@code VirtualWorker} 同构，支持 {@code {task}}/{@code {taskId}} 占位符。 */
+    private void emitLogs(Inst inst, TaskDispatch d, java.util.List<String> lines) {
+        for (String line : lines) {
+            ctx.eventBus().publish(Event.sim("sim.worker-log", id.instanceSourceId(inst.index),
+                    Map.of("taskId", d.taskId(),
+                            "line", line.replace("{task}", d.taskName())
+                                    .replace("{taskId}", d.taskId()))));
+        }
     }
 
     /**
