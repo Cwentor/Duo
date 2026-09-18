@@ -24,7 +24,7 @@
 
 ```bash
 ./mvnw -o -B test "-Dduo.docker.enabled=false"     # → BUILD SUCCESS，03:22 min
-bash .github/scripts/skip-summary.sh               # → TOTAL 258 run / 0 fail / 0 error / 5 skip
+bash .github/scripts/skip-summary.sh               # → TOTAL 263 run / 0 fail / 0 error / 5 skip
 ```
 
 | 模块 | 测试数 | skip |
@@ -37,7 +37,7 @@ bash .github/scripts/skip-summary.sh               # → TOTAL 258 run / 0 fail 
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
 | `duo-sim-examples` | 51 | 1（未开 `-Dduo.scale`） |
-| **合计** | **258** | **5** |
+| **合计** | **263** | **5** |
 
 skip 逐条可解释（脚本输出）：
 
@@ -106,23 +106,50 @@ T7 预算（常规回归 < 5 分钟）保持：实测 3.4 分钟。
 | 3 | 内核 jar 陈旧导致 `-pl <module>` 报「找不到符号」（构建纪律） | MEDIUM | 文档固化：单模块一律带 `-am`（DEVELOPMENT §2、排查手册） |
 | 4 | PowerShell 传 `-Dx.y=z` 会被按 `.` 拆参（`-Dmaven=3.9.11` 生成过错误的 `distributionUrl`） | MEDIUM | 文档固化：PowerShell 下 `-D` 属性加引号（DEVELOPMENT §1.2） |
 | 5 | `mvnw` / `skip-summary.sh` 提交为 `100644`（Windows 侧 `core.fileMode=false` 把 `git add --chmod=+x` 覆盖回 644）→ Linux runner 上 `./mvnw` 报 `Permission denied`（exit 126），CI 三 job 全红 | **HIGH**（交付门槛失效） | 用 `git update-index --chmod=+x` 显式钉索引位；`.gitattributes` 钉 LF/CRLF；复跑 CI 三 job 全绿 |
-| 6 | **CI 首跑暴露的间歇性挂起**：`ControlPlaneAcceptanceTest`（M3 热注入自愈）在 GitHub 2 vCPU runner 上出现一次「注入后 90s 场景仍 RUNNING」；本地 16 核（含 14 进程满载干扰、连跑 8 次）**未复现**；同提交复跑 CI 即全绿 | **HIGH**（CI 门禁间歇性红） | 已加**失败自诊断**（事件流聚合：每任务派发/重试/终态、每实例派发数、实例失联记录）+ regression job 归档 `build/scenarios/**/events.jsonl`，使下次出现一次定位；**根因待定**，见 §5 限制 7 |
+| 6 | **CI 首跑暴露的间歇性挂起**：`ControlPlaneAcceptanceTest`（M3 热注入自愈）在 GitHub 2 vCPU runner 上出现「注入后 90s 场景仍 RUNNING」；本地 16 核（含 14 进程满载干扰、连跑 8 次）**未复现** | **HIGH**（CI 门禁间歇性红） | **本轮已修复**：先交付失败自诊断，第二次 CI 失败（run 35326005487）即当场定位——`dispatch-per-task={job-c=2}`、`last-status={job-c=RETRYING@workers-2}`、`dispatch-per-instance={workers-3=2}`：调度侧把重派任务发给**实际已满**的 `workers-3`，而 worker 在 `freeSlots<=0` 时**静默 return**，调度侧仍视其为 RUNNING → 永久挂起。修复与验证见 §4.1 |
 
-无未处置的高级别缺陷（第 6 项已可诊断、待下次复现收口）。
+无未处置的高级别缺陷。
 
-### 4.1 第 6 项的候选根因（待证据收口）
+### 4.1 G9：派发静默丢弃 → 间歇性挂起（本轮已修复）
 
-调度侧 `DispatchSelector` 的槽位视图来自 worker 周期性 `SlotReport`（权威刷新），而
-`pumpDispatches()` 每 50ms 触发一次。存在一个**窄竞争窗口**：worker 的读线程尚未处理完派发、
-但心跳循环已按旧值写出 `SlotReport(freeSlots=1)`，该陈旧报告到达调度侧后会把它「已占用」的
-槽位重新标为空闲 → 调度侧可能把（重派发的）任务派给一个实际已满的实例；而
-`VirtualWorker.handleDispatch` 在 `freeSlots <= 0` 时**静默 return**（不回报、不拒绝）——
-调度侧仍认为该任务 RUNNING，于是 DAG 永不终态、场景永久挂起（§12「不静默」被违反）。
+**现象与证据**：CI run [35324375056](https://github.com/Cwentor/Duo/actions/runs/35324375056)（首跑）与
+[35326005487](https://github.com/Cwentor/Duo/actions/runs/35326005487) 两次失败，断言同一处：
+`SUT state after awaitFinish: {state=RUNNING, ... events=2741}`。本轮先交付**失败自诊断**（事件流聚合 +
+事件录制归档），第二次失败即给出决定性事实：
 
-该假设与现象吻合（永久挂起而非慢、只在慢机器出现、复跑即过），但**尚无失败现场证据**；
-下次复现时新增的自诊断会直接给出「哪个任务停在哪个实例、派发次数是否为 5（4 任务 + 1 重派发）」。
-修法方向（下一轮拍板）：worker 对不可受理的派发**显式拒绝**（协议层回报），调度侧据此重排，
-而不是静默丢弃。
+```
+dispatch-per-task={job-a=1, job-b=1, job-c=2, job-d=1}
+retry-per-task={job-c=1}
+last-status={job-a=SUCCESS@workers-1, job-b=SUCCESS@workers-4, job-c=RETRYING@workers-2, job-d=SUCCESS@workers-3}
+terminal={job-a=SUCCESS@workers-1, job-b=SUCCESS@workers-4, job-d=SUCCESS@workers-3}
+dispatch-per-instance={workers-1=1, workers-2=1, workers-3=2, workers-4=1}
+instance-lost=[workers-2(requeued=job-c)]
+```
+
+即：`job-c` 在 `workers-2` 崩溃后被重派到 `workers-3`（该实例此刻已在跑 `job-d`），**worker 侧没有任何回报**
+（既无 RUNNING 也无终态），调度侧却把它记为 RUNNING → 任务永久在途、DAG 永不终态。
+
+**根因（代码级）**：
+
+1. `VirtualWorker.onDispatch`（旧）在 `freeSlots <= 0` 时**静默 `return`**，注释写着「scheduler 侧排队由拓扑
+   规模保证不发生」——该假设**被崩溃转移重派发打破**（4 个任务产生了第 5 次派发）；
+2. 调度侧槽位视图来自 worker 的周期 `SlotReport`（`DispatchSelector.onSlotReport` 直接覆盖），与
+   `pumpDispatches()`（每 50ms）之间无时序耦合，视图可滞后于实例真实状态；
+3. 旧实现另有两处会**永久泄漏槽位**的隐患：`freeSlots--` 在 `TaskAck` 写成功**之前**执行（写失败即泄漏）；
+   `volatile int freeSlots` 由读线程自减、任务线程自增（并发丢更新）。任一泄漏都会让实例被误判为长期
+   满载，从而放大 (1)。
+
+**修复（§12「不静默」原则落地）**：
+
+| 层 | 改动 |
+| --- | --- |
+| 协议 | `TaskStatus.REJECTED`：worker **未受理**（满载/连接不可写）时显式回报，语义＝「从未执行」 |
+| worker | `onDispatch` 不可受理即 `reject()`（回报 REJECTED + 发 `sim.worker-task-rejected` 事件 + 刷新槽位）；受理路径改为「确认可写后再占用槽位」；`freeSlots` 改 `AtomicInteger`；受理/拒绝后**立即上报槽位**（不等心跳，把视图滞后窗口压到一个 RTT） |
+| 调度 | `SchedulerStateMachine.onRejected`：任务回 PENDING、**回滚尝试计数**（准入失败不占 `MAX_ATTEMPTS`，否则一次瞬时满载即判死）、发 `sut.task-rejected` 事实；`MAX_REJECTIONS=12` 兜底——超限即判 FAILED 并跳过下游，**DAG 必然终态**（宁可显式失败，绝不静默挂起） |
+
+**验证**：新增 5 条回归用例——worker 侧 2 条（满载显式拒绝且不占槽位/不发执行状态；被拒任务在槽位释放后
+**重派可跑到终态**）、状态机侧 3 条（拒绝后回 PENDING + 回滚 attempts + 不发重试事实；迟到拒绝幂等忽略；
+连续拒绝超限 → FAILED + 下游 SKIPPED）。全量回归 **263 测 / 0 失败 / 5 skip**。
 
 ---
 
@@ -132,14 +159,16 @@ T7 预算（常规回归 < 5 分钟）保持：实测 3.4 分钟。
    翻译层 + 契约映射 + 版本基线）仍是触发式专项。
 2. **attach 形态的退出不可观测**：省略 `launch.command` 时内核没有进程句柄，故无 `sut.exited`/`sut.crashed`
    （已在 DSL §1.5 明确写出，不静默）。
-3. **CI 首次远端取证已完成**（run 35325284561 全绿），但 `ControlPlaneAcceptanceTest` 在同一提交的**前一次**
-   run 中出现过一次间歇性挂起（§4 第 6 项），根因待下次复现收口——CI 门禁当前存在**低概率假红**风险。
-4. **无 LICENSE/发布配置**（M7 余项）：法务状态仍不明确，已留在 ROADMAP G8。
+3. **CI 远端取证已完成**（run 35325284561 全绿），首跑的间歇性挂起（§4 第 6 项）已在第二次 CI 失败中
+   **定位并修复**（G9），修复后以本地全量回归 + 远端复跑取证。
+4. **发布配置未做**（M7 余项）：`LICENSE` 已补 Apache-2.0 全文；source/javadoc、版本策略、`CHANGELOG.md`
+   仍未做，留在 ROADMAP G8。
 5. **`ready` 声明位置未做别名兼容**（M5 交付物 5）：本轮只修正文案与启动前校验，节点级 `ready` 兼容别名未做。
 6. **stdout 端点兜底依赖 SUT 主动打印**：内核不解析日志行中的其他格式（不做模糊匹配，避免误判）。
-7. **`ControlPlaneAcceptanceTest` 的挂起根因未定**（§4.1 候选：调度侧陈旧槽位视图 + worker 静默丢弃派发）；
-   本轮只交付**可诊断性**（自诊断消息 + 事件录制 artifact），修复方向待下一轮拍板。
-   本地复现尝试：16 核 + 14 进程满载干扰下**连跑 8 次全部通过**（19.4–22.5s），故非本地可复现缺陷。
+7. **G9 的修复是「显式化 + 有界兜底」，不是消除视图滞后本身**：调度侧槽位视图仍可能与实例真实状态短暂
+   不一致（双向异步的固有权衡），但现在**不一致不再导致静默丢失或挂起**——要么被拒绝后重排，要么在
+   拒绝超限时显式失败。若后续要把「不必要的一次重派」也消掉，需要引入派发租约/确认超时（记为 M8 候选）。
+   本地复现尝试：16 核 + 14 进程满载干扰下连跑 8 次全部通过（19.4–22.5s），该缺陷只在 2 vCPU runner 出现。
 
 ---
 

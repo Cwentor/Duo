@@ -18,6 +18,13 @@ public final class SchedulerStateMachine {
     /** M0 固定重试上限（计划 §2）。 */
     public static final int MAX_ATTEMPTS = 3;
 
+    /**
+     * 单任务「派发被拒」上限（G9 安全网）：拒绝属**准入失败**（任务从未执行），故回滚尝试计数、
+     * 不占 {@link #MAX_ATTEMPTS} 额度；但若持续被拒（调度侧视图长期滞后/实例持续满载），
+     * 超过此上限即判 FAILED **显式失败**——DAG 必须能终态，任何情况下都不允许永久挂起。
+     */
+    public static final int MAX_REJECTIONS = 12;
+
     public interface Listener {
         void onDispatch(String taskId, String taskName, int attempt, String instanceName);
 
@@ -28,6 +35,9 @@ public final class SchedulerStateMachine {
 
         /** 失败转移事实（T19）：任务从失联实例转移重派。 */
         void onFailover(String taskId, String fromInstance);
+
+        /** 派发被 worker 显式拒绝（G9）：任务未受理、已回到待派发，等待重派。 */
+        void onRejected(String taskId, String instanceName, String reason, int rejections);
 
         void onAllTerminal();
     }
@@ -46,6 +56,9 @@ public final class SchedulerStateMachine {
         final String name;
         volatile Phase phase = Phase.PENDING;
         volatile int attempts = 0;
+        /** 被拒绝次数（G9：准入失败计数，独立于 attempts）。 */
+        final java.util.concurrent.atomic.AtomicInteger rejections =
+                new java.util.concurrent.atomic.AtomicInteger();
 
         TaskState(String name) {
             this.name = name;
@@ -153,6 +166,10 @@ public final class SchedulerStateMachine {
     public boolean onStatus(String taskId, String state, String detail, String instance) {
         var t = tasks.computeIfAbsent(taskId, TaskState::new);
         switch (state) {
+            case "REJECTED" -> {
+                // G9：worker 显式拒绝（未受理、从未执行）→ 回滚尝试、回待派发；超出上限则显式失败
+                return onRejected(taskId, instance, detail);
+            }
             case "SUCCESS" -> {
                 t.phase = Phase.SUCCESS;
                 listener.onStatus(taskId, "SUCCESS", detail, t.attempts, instance);
@@ -176,6 +193,40 @@ public final class SchedulerStateMachine {
             listener.onAllTerminal();
         }
         return false;
+    }
+
+    /**
+     * 派发被拒（G9）：任务**从未执行**，故回滚本次尝试计数（不占 {@link #MAX_ATTEMPTS} 额度——
+     * 否则一次瞬时满载就把任务判死），回到 PENDING 等待重派；拒绝次数超过
+     * {@link #MAX_REJECTIONS} 时判 FAILED 并跳过下游，**保证 DAG 必然终态**（不允许挂起）。
+     *
+     * <p>幂等：仅对 RUNNING（本次派发确实在途）的任务生效，迟到/重复的拒绝回报被忽略。
+     */
+    public boolean onRejected(String taskId, String instanceName, String reason) {
+        var t = tasks.computeIfAbsent(taskId, TaskState::new);
+        if (t.phase != Phase.RUNNING) {
+            return false; // 已终态或已被其他路径重排：忽略迟到回报
+        }
+        int seen = t.rejections.incrementAndGet();
+        if (seen > MAX_REJECTIONS) {
+            t.phase = Phase.FAILED;
+            instanceByTask.remove(taskId);
+            listener.onStatus(taskId, "FAILED",
+                    "dispatch rejected " + seen + " times (last: " + reason + ")", t.attempts,
+                    instanceName);
+            markSkippedDownstream(taskId);
+            if (allTerminal()) {
+                listener.onAllTerminal();
+            }
+            return false;
+        }
+        if (t.attempts > 0) {
+            t.attempts--; // 回滚：本次派发未执行
+        }
+        t.phase = Phase.PENDING;
+        instanceByTask.remove(taskId);
+        listener.onRejected(taskId, instanceName, reason, seen);
+        return true;
     }
 
     private void markSkippedDownstream(String failedTask) {

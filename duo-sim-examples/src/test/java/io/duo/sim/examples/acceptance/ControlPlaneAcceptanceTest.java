@@ -149,6 +149,7 @@ class ControlPlaneAcceptanceTest {
         var lastStatus = new java.util.TreeMap<String, String>();
         var terminal = new java.util.TreeMap<String, String>();
         var perInstance = new java.util.TreeMap<String, Integer>();
+        var rejected = new java.util.TreeMap<String, Integer>();
         var lost = new java.util.ArrayList<String>();
         for (Map<String, Object> e : host.eventsSince(0)) {
             String type = String.valueOf(e.get("type"));
@@ -169,6 +170,7 @@ class ControlPlaneAcceptanceTest {
                     perInstance.merge(instance, 1, Integer::sum);
                 }
                 case "sut.task-retry" -> retried.merge(task, 1, Integer::sum);
+                case "sut.task-rejected" -> rejected.merge(task + "@" + instance, 1, Integer::sum);
                 case "sut.task-status" -> lastStatus.put(task,
                         String.valueOf(p.get("state")) + "@" + instance);
                 case "sut.task-terminal" -> terminal.put(task,
@@ -178,11 +180,12 @@ class ControlPlaneAcceptanceTest {
         }
         return "dispatch-per-task=" + dispatched
                 + "\n  retry-per-task=" + retried
+                + "\n  rejected-per-task=" + rejected
                 + "\n  last-status=" + lastStatus
                 + "\n  terminal=" + terminal
                 + "\n  dispatch-per-instance=" + perInstance
                 + "\n  instance-lost=" + lost
-                + "\n  （完整事件流见 CI artifact build/scenarios/**/events.jsonl）";
+                + "\n  （完整事件流见 CI artifact **/build/scenarios/**/events.jsonl）";
     }
 
     /**

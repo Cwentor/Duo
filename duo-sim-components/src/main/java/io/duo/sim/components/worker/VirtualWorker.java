@@ -37,6 +37,7 @@ import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -80,7 +81,12 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         final AtomicBoolean alive = new AtomicBoolean(false);
         /** 生命周期代次：stop/restart 递增，readDownstream 据此退出旧连接。 */
         final AtomicLong generation = new AtomicLong();
-        volatile int freeSlots;
+        /**
+         * 空闲槽位（G9 加固）：读线程受理派发时递减、任务线程结束时递增——**两条线程**，
+         * 故必须是原子计数。旧的 {@code volatile int} 自减/自增会丢更新（完成与受理同时发生），
+         * 槽位永久泄漏 → 实例被误判为长期满载，派发被静默丢弃（M7 CI 首跑挂起的候选根因之一）。
+         */
+        final AtomicInteger freeSlots = new AtomicInteger();
         volatile Thread thread;
         volatile FrameConnection connection;
         volatile Thread readerThread;
@@ -89,7 +95,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         InstanceState(int index, String name, int slots) {
             this.index = index;
             this.name = name;
-            this.freeSlots = slots;
+            this.freeSlots.set(slots);
         }
     }
 
@@ -205,7 +211,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                         failure = reason; // 明确拒绝：重试无意义，快速失败
                         break;
                     }
-                    conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
+                    conn.write(new SlotReport(inst.name, inst.freeSlots.get(), totalSlots));
                     socket.setSoTimeout(0); // 稳态：下行读可无限期等待（读线程独立）
                     // 读下行线程（派发/取消）
                     inst.readerThread = Thread.ofVirtual().name(inst.name + "-reader")
@@ -217,7 +223,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                             continue;
                         }
                         conn.write(new HeartbeatReport(inst.name, heartbeatSeq.incrementAndGet()));
-                        conn.write(new SlotReport(inst.name, inst.freeSlots, totalSlots));
+                        conn.write(new SlotReport(inst.name, inst.freeSlots.get(), totalSlots));
                         Thread.sleep(heartbeatIntervalMs);
                     }
                     return; // 正常退出循环（停止/代次更替）
@@ -290,15 +296,24 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     }
 
     private void onDispatch(InstanceState inst, FrameConnection conn, TaskDispatch d) {
-        if (inst.freeSlots <= 0) {
-            return; // M0：满载即忽略（scheduler 侧排队由拓扑规模保证不发生）
+        if (inst.freeSlots.get() <= 0) {
+            // G9 修复（§12 不静默）：满载时**显式拒绝**，不得静默丢弃。
+            // 旧实现直接 return——调度侧仍视任务为 RUNNING，任务永久丢失、DAG 永不终态。
+            // 触发场景（M7 CI 首跑暴露）：崩溃转移重派发时，调度侧的槽位视图可能滞后于本实例
+            // 真实状态（SlotReport 与 TaskDispatch 双向异步），于是把任务派给已满实例。
+            reject(conn, inst, d, "no free slot");
+            return;
         }
-        inst.freeSlots--;
         try {
             conn.write(new TaskAck(d.taskId(), inst.name));
         } catch (IOException e) {
-            return; // 连接断开：无法受理
+            // 无法受理（连接不可写）：显式拒绝（尽力而为），且**不占用槽位**（旧实现先递减再写，
+            // 写失败即泄漏槽位）。
+            reject(conn, inst, d, "connection lost: " + e.getMessage());
+            return;
         }
+        inst.freeSlots.decrementAndGet(); // 受理成功后才占用槽位
+        reportSlots(inst, conn); // G9 加固：状态变更即上报，缩小调度侧视图滞后窗口（原本要等心跳）
         fire(Event.sim("sim.worker-task-status", id.instanceSourceId(inst.index),
                 Map.of("taskId", d.taskId(), "state", TaskStatus.RUNNING)));
         TaskExecution exec = new TaskExecution(d.taskId());
@@ -341,12 +356,41 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             } catch (IOException e) {
                 // 连接断开：状态回报丢失（master 失联检测兜底）
             } finally {
-                inst.freeSlots++;
+                inst.freeSlots.incrementAndGet();
                 inst.running.remove(exec);
             }
         });
         exec.worker = taskThread;
         taskThread.start();
+    }
+
+    /**
+     * 立即上报当前槽位（G9 加固）：槽位变化（受理/拒绝）后立刻发 {@link SlotReport}，不等下一次心跳。
+     * 调度侧的槽位视图因此在一个 RTT 内收敛到真实状态，而不是最多滞后一个心跳周期——这正是
+     * 「陈旧视图 → 把任务派给已满实例」的窗口。写失败忽略：心跳周期上报仍会兜底。
+     */
+    private void reportSlots(InstanceState inst, FrameConnection conn) {
+        try {
+            conn.write(new SlotReport(inst.name, inst.freeSlots.get(), totalSlots));
+        } catch (IOException ignored) {
+            // 连接不可写：心跳周期上报兜底
+        }
+    }
+
+    /**
+     * 显式拒绝一次不可受理的派发（G9）：回报 {@link TaskStatus#REJECTED} + 发
+     * {@code sim.worker-task-rejected} 事实（诊断面），**不占用槽位、不启动执行线程**。
+     * 回报写失败时由调度侧的失联检测（feed 读失败 → onFeedLost）兜底重排。
+     */
+    private void reject(FrameConnection conn, InstanceState inst, TaskDispatch d, String reason) {
+        try {
+            conn.write(new TaskStatus(d.taskId(), inst.name, TaskStatus.REJECTED, reason));
+        } catch (IOException ignored) {
+            // 连接已断：拒绝回报丢失，调度侧失联检测兜底
+        }
+        reportSlots(inst, conn); // 拒绝同时刷新槽位视图，避免调度侧继续把任务派到本实例
+        fire(Event.sim("sim.worker-task-rejected", id.instanceSourceId(inst.index),
+                Map.of("taskId", d.taskId(), "reason", reason)));
     }
 
     @Override
@@ -403,7 +447,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     @Override
     public int instanceFreeSlots(int index) {
         InstanceState s = instances.get(index);
-        return s == null ? 0 : s.freeSlots;
+        return s == null ? 0 : s.freeSlots.get();
     }
 
     @Override
@@ -430,7 +474,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     @Override
     public void restartInstance(int index) {
         InstanceState s = requireInstance(index);
-        s.freeSlots = totalSlots;
+        s.freeSlots.set(totalSlots);
         s.running.clear();
         String masterAddr = discoverMaster();
         Thread t = Thread.ofVirtual().name(s.name).start(() -> runInstance(s, masterAddr));

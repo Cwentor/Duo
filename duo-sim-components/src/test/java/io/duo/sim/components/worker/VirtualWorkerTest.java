@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -339,6 +340,84 @@ class VirtualWorkerTest {
             }
         }
         return null;
+    }
+
+    /**
+     * G9 修复（M7 CI 首跑暴露的间歇挂起）：满载实例收到派发必须**显式拒绝**
+     * （{@code TaskStatus.REJECTED} + {@code sim.worker-task-rejected}），不得静默丢弃——
+     * 旧实现直接 return，调度侧仍视任务为 RUNNING，任务永久丢失、DAG 永不终态。
+     */
+    @Test
+    void dispatchToFullInstanceIsExplicitlyRejectedNotSilentlyDropped() throws Exception {
+        // 单槽位 + 长任务（5s）：占满后第二次派发必然不可受理
+        startWorker(1, null, Map.of("capacity.slots", "1",
+                "behaviors.default.duration", "5000"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+
+        scheduler.dispatch("t-busy", "task-busy", 1);
+        // 受理 = TaskAck（wire）+ sim.worker-task-status RUNNING（事件）；终态前不写 RUNNING 帧
+        var acked = new ArrayList<DuoMessage>();
+        for (int i = 0; i < 50; i++) {
+            DuoMessage m = scheduler.received.poll(100, TimeUnit.MILLISECONDS);
+            if (m != null) {
+                acked.add(m);
+            }
+            if (acked.stream().anyMatch(x -> x instanceof TaskAck a
+                    && a.taskId().equals("t-busy"))) {
+                break;
+            }
+        }
+        assertTrue(acked.stream().anyMatch(x -> x instanceof TaskAck a
+                && a.taskId().equals("t-busy")), "首个任务应被受理（TaskAck）");
+        assertTrue(events.stream().anyMatch(e -> e.type().equals("sim.worker-task-status")
+                && "t-busy".equals(e.payload().get("taskId"))
+                && TaskStatus.RUNNING.equals(e.payload().get("state"))), "首个任务应进入执行");
+        assertEquals(0, worker.instanceFreeSlots(1), "槽位应已占用");
+
+        scheduler.dispatch("t-overflow", "task-overflow", 1);
+        var rejected = waitForStatus("t-overflow", TaskStatus.REJECTED, 5_000);
+        assertNotNull(rejected, "满载派发必须显式拒绝（不得静默丢弃）");
+        assertTrue(rejected.detail().contains("no free slot"),
+                "拒绝原因须可诊断，实际：" + rejected.detail());
+        assertTrue(events.stream().anyMatch(e -> e.type().equals("sim.worker-task-rejected")
+                        && e.sourceId().equals("workers-1")),
+                "拒绝必须发事实事件（诊断面）");
+        assertEquals(0, worker.instanceFreeSlots(1), "拒绝不得占用槽位");
+        assertFalse(events.stream().anyMatch(e -> e.type().equals("sim.worker-task-status")
+                        && "t-overflow".equals(e.payload().get("taskId"))),
+                "被拒任务不得进入执行（不得发 RUNNING 状态）");
+    }
+
+    /**
+     * G9 修复的完整闭环：被拒任务在槽位释放后**可重新派发并跑到终态**——即「显式拒绝 → 调度侧重排」
+     * 能把原本会永久挂起的任务救回来（旧实现静默丢弃后，任务永远不会有任何回报）。
+     */
+    @Test
+    void rejectedTaskCanBeRedispatchedAfterSlotFrees() throws Exception {
+        // 单槽位 + 1.5s 任务：占满期间派发必被拒；槽位释放后重派必能到终态
+        startWorker(1, null, Map.of("capacity.slots", "1",
+                "behaviors.default.duration", "1500",
+                "behaviors.default.successRate", "1.0"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+
+        scheduler.dispatch("t-first", "task-a", 1);
+        for (int i = 0; i < 50 && worker.instanceFreeSlots(1) > 0; i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(0, worker.instanceFreeSlots(1), "首个任务应占用槽位");
+
+        scheduler.dispatch("t-second", "task-b", 1);
+        assertNotNull(waitForStatus("t-second", TaskStatus.REJECTED, 5_000), "满载应被拒");
+
+        assertNotNull(waitForStatus("t-first", TaskStatus.SUCCESS, 5_000), "首个任务应跑到终态");
+        for (int i = 0; i < 60 && worker.instanceFreeSlots(1) == 0; i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(1, worker.instanceFreeSlots(1), "槽位必须释放（不得因拒绝/完成竞争泄漏）");
+
+        scheduler.dispatch("t-second", "task-b", 1);
+        assertNotNull(waitForStatus("t-second", TaskStatus.SUCCESS, 5_000),
+                "重派的任务必须能跑到终态（旧实现会永久丢失）");
     }
 
     @Test

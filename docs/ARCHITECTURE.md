@@ -302,15 +302,20 @@ sim.external-sut-ready        sim.external-process-left-running
 SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，内核只转发与录制）：
 `sut.scheduler-started`、`sut.worker-registered`、`sut.register-failed`、`sut.heartbeat`、
 `sut.heartbeat-meter`、`sut.instance-lost`、`sut.leader-elected`、`sut.leader-election-failed`、
-`sut.task-dispatched`、`sut.task-status`、`sut.task-terminal`、`sut.task-retry`、`sut.failover`、
-`sut.dag-terminal`。
+`sut.task-dispatched`、`sut.task-status`、`sut.task-terminal`、`sut.task-retry`、`sut.task-rejected`、
+`sut.failover`、`sut.dag-terminal`。
+
+> **派发准入事实（G9 修复）**：worker 无法受理派发时**必须显式回报** `TaskStatus.REJECTED`
+> （语义＝「未受理、从未执行」），调度侧据此把任务重新排队并发 `sut.task-rejected`；它**不占**重试额度
+> （准入失败≠执行失败），但连续被拒超过上限即判 FAILED 并跳过下游——**DAG 必须能终态**。
+> 此前 worker 静默丢弃、调度侧仍视任务在途，导致场景永久挂起（§12「不静默」）。
 
 组件自发的 `sim.*` 生命周期/状态事件（不在 `SIM_EVENT_TYPES` 白名单内，属组件实现细节）：
 
 | 组件 | 事件 |
 | --- | --- |
 | `VirtualRegistry` | `sim.registry-started`、`sim.registry-crashed`、`sim.registry-stopped`、`sim.registry-restarted`、`sim.registry-session-opened`、`sim.registry-session-closed`、`sim.registry-watch-error` |
-| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported` |
+| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected` |
 | `HookRegistry` | `sim.hook-executed` |
 
 **单一订阅路径**：SUT 侧事件与注入事件都经 `bus.publish` 汇流，内存流与录制共用同一订阅点，

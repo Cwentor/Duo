@@ -512,6 +512,15 @@ public final class DemoScheduler implements SutMain {
         }
 
         @Override
+        public void onRejected(String taskId, String instanceName, String reason, int rejections) {
+            // G9 事实：worker 未受理该派发（任务从未执行）→ 已回到待派发，等待重派。
+            // 与 sut.task-retry（执行失败后重试）区分：这是**准入失败**，不消耗重试额度。
+            ctx.events().publish("sut.task-rejected",
+                    Map.of("taskId", taskId, "instance", instanceName,
+                            "reason", reason, "rejections", rejections));
+        }
+
+        @Override
         public void onAllTerminal() {
             ctx.events().publish("sut.dag-terminal", Map.of());
         }

@@ -40,6 +40,11 @@ class SchedulerStateMachineTest {
         }
 
         @Override
+        public void onRejected(String taskId, String instanceName, String reason, int rejections) {
+            log.add("rejected:" + taskId + ":" + instanceName + ":" + rejections);
+        }
+
+        @Override
         public void onRetry(String taskId, int nextAttempt) {
             retries.incrementAndGet();
             log.add("retry:" + taskId + ":" + nextAttempt);
@@ -163,6 +168,51 @@ class SchedulerStateMachineTest {
         sm.onStatus("load", "SUCCESS", null, "workers-2");
         assertTrue(rec.instances.contains("workers-2"),
                 "status event must carry instance: " + rec.instances);
+    }
+
+    // ---- G9：派发被 worker 显式拒绝（准入失败）----
+
+    @Test
+    void rejectedDispatchRollsBackAttemptAndRequeues() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        sm.dispatch("load", "workers-3");
+        assertEquals("RUNNING", sm.phaseOf("load"));
+        assertEquals(1, sm.attemptsOf("load"));
+
+        assertTrue(sm.onRejected("load", "workers-3", "no free slot"));
+        assertEquals("PENDING", sm.phaseOf("load"), "拒绝后必须回到待派发（不得停在 RUNNING）");
+        assertEquals(0, sm.attemptsOf("load"), "准入失败不占 MAX_ATTEMPTS 额度");
+        assertTrue(sm.dispatchable().contains("load"), "必须可被重派");
+        assertTrue(rec.log.contains("rejected:load:workers-3:1"), rec.log.toString());
+        assertEquals(0, rec.retries.get(), "拒绝不是执行失败，不得发重试事实");
+    }
+
+    @Test
+    void rejectionOnNonRunningTaskIsIgnored() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        sm.dispatch("load", "workers-3");
+        sm.onStatus("load", "SUCCESS", null, "workers-3");
+        assertFalse(sm.onRejected("load", "workers-3", "no free slot"), "迟到拒绝须被忽略");
+        assertEquals("SUCCESS", sm.phaseOf("load"));
+    }
+
+    @Test
+    void repeatedRejectionsFailTaskLoudlyInsteadOfHanging() {
+        var rec = new Recorder();
+        var sm = new SchedulerStateMachine(dag(), rec);
+        for (int i = 0; i < SchedulerStateMachine.MAX_REJECTIONS; i++) {
+            sm.dispatch("load", "workers-3");
+            sm.onRejected("load", "workers-3", "no free slot");
+            assertEquals("PENDING", sm.phaseOf("load"), "第 " + (i + 1) + " 次拒绝仍应可重派");
+        }
+        // 超过上限 → 显式失败 + 下游跳过（DAG 必然终态：任何情况下都不允许永久挂起）
+        sm.dispatch("load", "workers-3");
+        sm.onRejected("load", "workers-3", "no free slot");
+        assertEquals("FAILED", sm.phaseOf("load"));
+        assertEquals("SKIPPED", sm.phaseOf("clean"));
+        assertTrue(rec.log.stream().anyMatch(l -> l.startsWith("status:load:FAILED")), rec.log.toString());
     }
 
     @Test
