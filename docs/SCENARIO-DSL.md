@@ -70,19 +70,52 @@ wiring:
 # in-process SUT（内核在同一 JVM 内以独立线程调 run(SutContext)）
 launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
 
-# external SUT（设计已定，⚠️ 引擎尚未实现，见 §8）
+# external SUT（M6 已实现）：内核代起子进程 + 端点告知 + ready 探针
 launch:
   mode: external
-  configOut: build/sut.properties     # 内核生成端点配置文件
-  ready: { type: tcp, port: 8123, timeout: 30s }   # ⚠️ 只认 launch.ready 下的键
+  command: '${java} -jar third-party-sut.jar --duo.config'   # 内核代起（可省＝attach 形态）
+  configOut: build/sut.properties     # 内核生成端点配置文件（主途径）
+  ready: { type: tcp, port: 8123, timeout: 30s }   # 探针声明（只认 launch.ready 下的键）
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `mode` | `in-process`（缺省）或 `external` |
 | `main` | `in-process` 必填：`SutMain` 实现类的全限定名（反射实例化，需无参构造器） |
-| `configOut` | `external` 用：端点配置文件输出路径 |
-| `ready` | 探针声明；`ScenarioLoader` 把 `launch.ready.*` 展平为 `config["ready.<k>"]` |
+| `command` | `external` 可选：内核代起的外部进程命令行（M6 决策 D7）。按空白切分、支持引号包裹；`${java}` / `${java.home}` 展开为**当前 JVM** 的 java 可执行文件/JDK 家目录，使场景文件不写死本机路径。**省略 `command` ＝ attach 形态**：进程由用户自行启动，内核只写端点配置 + 探针就绪（此时进程退出不可观测） |
+| `configOut` | `external` 必填：端点配置文件输出路径（§7.3 主途径；校验规则 4） |
+| `ready` | `external` 必填的探针声明；`ScenarioLoader` 把 `launch.ready.*` 展平为 `config["ready.<k>"]`，见 §1.4 |
+
+### 1.4 `launch.ready`（就绪探针，M6）
+
+| 键 | 取值 | 说明 |
+| --- | --- | --- |
+| `type` | `tcp` / `http` | `external` 必填；其他值**启动前**拒绝（规则 4） |
+| `port` | int | 探针端口；省略时取该节点 `exposes` 的首个非 0 端口 |
+| `host` | string | 缺省 `127.0.0.1` |
+| `path` | string | `http` 用，缺省 `/` |
+| `timeout` | 带单位时长（`ms`/`s`/`m`） | 缺省 `60s`；到期仍不可达归**启动失败路径**（§12，不静默） |
+
+- 探针只做**可达性**判定：`tcp` 能建立连接即就绪；`http` 收到状态码 < 500 的应答即就绪。
+- 轮询间隔 200ms；**进程在 ready 前退出优先报退出根因**（`exited before ready`），不把根因拖成超时。
+- `ready.*` 属内核侧声明，**不写入端点配置文件**（SUT 拿到的配置里不会出现 `ready.*` 键）。
+- in-process SUT 亦可用 `ready: { timeout: 90s }` 覆盖 `ctx.ready()` 回调超时（M6 起全链路消费，见 §8）。
+
+### 1.5 external SUT 的端点告知与生命周期（M6）
+
+| 方向 | 途径 | 落点 |
+| --- | --- | --- |
+| 内核 → SUT | **主途径**：端点配置文件 | `launch.configOut`；写入 `duo.endpoint.<contract>=<endpoint>` 与节点 `config` 键值；路径另经环境变量 `duo.config` 告知子进程 |
+| SUT → 内核 | **兜底途径**：stdout | 行首为 `duo.endpoint.<contract>=<endpoint>` 的行（容忍首尾空白）→ `sim.external-endpoint` 事件（`source=stdout`） |
+
+- **行格式是严格契约**：前缀必须在**行首**。SUT 若把内核写入的配置行原样回显到 stdout，会被当作
+  自身端点宣告——宣告行须由 SUT 显式打印。
+- **生命周期归用户**（§7.3）：场景结束**只拆接线、不杀进程**，发 `sim.external-process-left-running`
+  事件 + 终态警告提示用户自行终止；句柄经 `ScenarioEngine.externalSut()` 暴露（`process()` 可自行终止）。
+- **启动失败即销毁**（决策 D9）：ready 超时或 ready 前退出时内核销毁子进程（未就绪的进程从未成为 SUT，
+  留着必然泄漏）——与「场景结束不杀」不冲突。
+- **attach 形态**（省略 `command`）：进程由用户自行启动，内核只写端点配置 + 探针就绪；此时**进程退出
+  不可观测**（无 `sut.exited`/`sut.crashed`），需要退出事实请用 `command` 代起形态。
 
 ---
 
@@ -287,11 +320,19 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | 1 | `jitter` 只接受 `[0,1]` 比率，不接受设计示例的 `20%` | 照抄设计 §8 示例会抛异常 | G7 |
 | 2 | `failAt` 只接受 `0–100` 整数，不接受 `60%` | 同上 | G7 |
 | 3 | `logLines` 在 `BehaviorProfile` 中声明，但 `BehaviorResolver` 固定传空列表 | DSL 写了也不生效 | G7 |
-| 4 | `launch.mode=external` 能通过校验，但 `ScenarioEngine.startSut()` 抛 `M0 engine only supports in-process SUT launch` | **不可改码的第三方 SUT 目前接不进来**（最大缺口） | G2 / M6 |
-| 5 | `launch.ready.timeout` 被解析进 config，但引擎创建 `SutLauncher` 时未传该值 → 恒用 60s 默认 | in-process ready 超时不可覆盖 | G2 |
-| 6 | ready 探针只认 `launch.ready.*`；`ScenarioValidator` 的报错文案写的是 `config: {ready.type: ...}` | 文案误导（写 `config.ready.type` 也能过校验，属后门） | G7 |
+| 4 | ~~`launch.mode=external` 能通过校验，但引擎抛 `M0 engine only supports in-process SUT launch`~~ | **已闭合（M6）**：external 代起/attach 两形态、端点告知双途径、ready 探针、退出/崩溃事实事件全部落地并有端到端验收 | G2 / M6 ✅ |
+| 5 | ~~`launch.ready.timeout` 被解析进 config 但引擎未消费~~ | **已闭合（M6）**：in-process 与 external 同口径消费 `ready.timeout`（缺省 60s） | G2 ✅ |
+| 6 | ~~`ScenarioValidator` 的 ready 报错文案写 `config: {ready.type: ...}`~~ | **已闭合（M6）**：文案改为 `launch.ready`，且探针 type/端口/时长在**启动前**校验（`ReadyProbe.spec`），写 `config.ready.type` 的后门随之关闭 | G7 部分 ✅ |
 | 7 | `custom-hook` 的 `HookRegistry` 无法从 `ScenarioEngine` 注入（引擎内部 `new HookRegistry()`） | YAML 时间线里的 `custom-hook` 必然「no hook registered」失败 | G5 |
 | 8 | `freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults` | 写了会被校验期拒绝（当前行为正确，属功能未实现） | G5 |
+| 9 | `launch.command` / `${java}` 占位符是 **M6 新增的 DSL 字段**（设计文档未定义） | 设计 §7.3 只说「用户自行启动」；实现补了「内核代起并观测退出」的形态，否则验收要求的 `sut.exited`/`sut.crashed` 无法产出（决策 D7） | DECISIONS D7 |
+
+> **M6 修正的另一处实现缺陷（不在 DSL 面，但影响断言写法）**：`sim.fault-injected` 原先在
+> `dispatch` **之后**才落流，导致组件在同一注入调用内发布的反应事件（如 embedded
+> `sim.registry-flap-started/cleared`）排在「因」之前，使
+> `eventSequence: [sim.fault-injected, <反应事件>]` 恒不可满足、以 `sim.fault-injected`
+> 为窗口起点的断言变脆。现已改为**先因后果**（`ScenarioRuntime.inject/clear` 先落流再派发），
+> 派发失败另记 `sim.fault-inject-failed`。
 
 ---
 
@@ -305,7 +346,12 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | `targets endpoint-less 'zk'; upgrade target tier or use direct path` | 对无端点目标显式写了 `path: wire` | 改 `direct` 或升档到 embedded |
 | `targets 'zk' which does not support interface-direct` | 目标无同进程适配（如 `H2Store`） | 改 `wire` |
 | `is external: slot 'x' cannot use interface-direct` | external 消费方不能走 direct | 目标需有真实端点 |
+| `external node 'm' must declare launch.configOut` | external 缺端点配置文件路径（§7.3 主途径） | 补 `launch.configOut` |
+| `unsupported ready.type 'udp' (expected tcp\|http)` | 探针类型非法 | 改 `tcp` 或 `http` |
+| `ready probe needs a port` | 既无 `ready.port` 也无非 0 `exposes` | 补其一 |
 | `timeline action 'freeze' unsupported by 'workers'` | 动作未实现 | 换 `crash`/`restart`/`registry-flap`/`task-kill` |
 | `timeline target 'workers' is SUT` | 对 SUT 注入 | 改用 `custom-hook`，或改注入替身节点 |
 | `requires instanceControl capability` | 目标不支持实例级操作 | 去掉下标（整组）或换实现 |
-| `SUT ready timeout (60000ms)` | SUT 未在超时内调 `ctx.ready()` | 检查 SUT 启动路径（超时暂不可配，见 §8-5） |
+| `SUT ready timeout (60000ms)` | SUT 未在超时内调 `ctx.ready()` | 检查 SUT 启动路径；超时可用 `ready: { timeout: 90s }` 覆盖 |
+| `external SUT ready timeout (30000ms)` | external 探针到期仍不可达 | 检查进程是否监听声明的端口；或调大 `ready.timeout` |
+| `external SUT exited before ready (exit code N)` | 子进程在就绪前退出 | 看子进程自身日志（stdout 已并入内核流）；内核会销毁该进程（D9） |

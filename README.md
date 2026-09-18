@@ -6,7 +6,7 @@
 - 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
 - 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
 - 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 均已实施完成并验收**
-- 最近一次全量回归（2026-09-18，HEAD `5b72753`）：`mvn -o -B clean test` → **BUILD SUCCESS，226 测 0 失败 / 5 skip（均为设计明文门控）**
+- 最近一次全量回归（2026-09-18，M6/M7 落地后）：`./mvnw -o -B test "-Dduo.docker.enabled=false"` → **BUILD SUCCESS，258 测 0 失败 / 5 skip（均为设计明文门控）**
 - 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
 
 ---
@@ -81,37 +81,39 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 - **Maven 3.9+**
 - 可选：**Docker**（仅 `container` 档需要；无 Docker 时相关测试按设计自动 skip）
 
-仓库自带 `mvnw.sh`，它把工具链钉到本机安装路径（Git Bash 下的 POSIX 路径）：
+仓库自带**标准 Maven Wrapper**（`mvnw` / `mvnw.cmd` + `.mvn/wrapper/`，script-only 形态），
+只需 `JAVA_HOME` 指向 JDK 21，无需预装 Maven、无需改任何文件：
 
 ```bash
-./mvnw.sh -o clean test        # 全量回归
+./mvnw -o clean test           # 全量回归（Git Bash / Linux / macOS）
+.\mvnw.cmd -o clean test       # PowerShell / cmd
 ```
-
-PowerShell 等价写法（无需 Git Bash）：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Users\cwt15\devtools\jdk-21.0.12.1+1'
-$env:PATH = "$env:JAVA_HOME\bin;C:\Users\cwt15\devtools\apache-maven-3.9.11\bin;$env:PATH"
-mvn -o -B clean test
+$env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wrapper 自备
+.\mvnw.cmd -o -B clean test
 ```
 
-> ⚠️ `mvnw.sh` 目前硬编码了作者本机的 JDK/Maven 路径，不是标准 Maven Wrapper。
-> 换机器需改脚本或直接用上面第二段。工程化整改已列入 [路线图 M7](docs/ROADMAP.md#m7--工程化与-ci)。
+> 首次运行会按 `.mvn/wrapper/maven-wrapper.properties` 下载 Maven 3.9.11 到 `~/.m2/wrapper/dists/`。
+> 旧的手写壳 `mvnw.sh`（硬编码作者本机路径）已删除，见 [决策 D6](docs/DECISIONS.md)。
 
 ### 5.2 构建与测试
 
 ```bash
-./mvnw.sh -o clean test                              # 226 测（含 5 条设计门控 skip）
-./mvnw.sh -o -pl duo-sim-examples test -Dtest=ScaleAcceptanceTest -Dduo.scale=true
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 258 测（含 5 条设计门控 skip）
+./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
-./mvnw.sh -o install -DskipTests                     # 安装到本地仓库（跑 CLI 演练前需要）
+./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
 ```
+
+CI（`.github/workflows/ci.yml`）：`regression`（无 Docker）/ `container`（有 Docker，断言 skip=0）/
+`scale`（nightly，产物留档）三个 job。
 
 ### 5.3 跑一个场景（CLI 控制面）
 
 ```bash
 # 单命令：启动 → 3s 后热注入 crash workers[2] → 等 SUT 退出 → 打印结果，退出码即结论
-./mvnw.sh -o install -DskipTests
+./mvnw -o install -DskipTests
 bash scripts/duo-inject-demo.sh
 ```
 
@@ -214,13 +216,13 @@ assertions:
 | 原始目标（设计 §2） | 现状 | 证据 / 缺口 |
 | --- | --- | --- |
 | 1 可组装（YAML 描述拓扑） | ✅ 已达成 | `ScenarioLoader` + `WiringResolver` 拓扑排序启动 |
-| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process SUT 已闭环；**`launch.mode=external` 已能校验但引擎未实现** |
+| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process 与 **external（M6：零依赖第三方进程端到端验收）** 均已闭环；替身缺 `scheduler`/`engine` 的 virtual 档 |
 | 3 可替换（换档零改动） | 🟡 部分 | M0 `TierSwapAcceptanceTest` 通过；目前仅 `registry`/`worker` 有两档 |
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | 🟡 部分 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；`freeze`/`slow`/`resource-exhaust` 仅有常量声明 |
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议 |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 2.5 分钟、226 测全绿 |
-| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展与断言库已交付；**仓库尚无 CI 配置、无 LICENSE 文件** |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 3.4 分钟、258 测全绿（`-Dduo.docker.enabled=false` 确定性无 Docker） |
+| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7）**已交付；**无 LICENSE 文件**；CI 待远端首跑取证 |
 
 完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
@@ -232,7 +234,8 @@ assertions:
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构详解：模块、SPI、契约与档位、接线规则、事件总线、SUT 适配面、控制面、线协议 |
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 开发指南：环境、构建、测试分层、扩展点、约定、已知工程债 |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单、M5–M8 阶段计划与验收口径 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单、M5–M8 阶段计划与验收口径 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：D1–D9 拍板（决定/理由/触发条件/落点）与修订记录 |
 | [`docs/superpowers/specs/`](docs/superpowers/specs) | 设计文档 v1.0（冻结，唯一依据） |
 | [`docs/superpowers/plans/`](docs/superpowers/plans) | M0–M4 实施计划 |
 | [`docs/superpowers/acceptance/`](docs/superpowers/acceptance) | M3/M4 验收记录、万级压测报告、独立复验记录 |

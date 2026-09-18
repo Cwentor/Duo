@@ -14,27 +14,31 @@
 | Docker | 可选 | **仅** `container` 档需要；无 Docker 时相关测试按设计自动 skip |
 | OS | Windows 11 已验证 | Curator/H2/Fabric8 均纯 Java；Testcontainers 需 Docker |
 
-### 1.1 仓库自带 `mvnw.sh`
+### 1.1 标准 Maven Wrapper（M7 起）
+
+仓库自带标准 Maven Wrapper：`mvnw`、`mvnw.cmd`、`.mvn/wrapper/maven-wrapper.properties`。
 
 ```bash
-#!/usr/bin/env bash
-export JAVA_HOME="/c/Users/cwt15/devtools/jdk-21.0.12.1+1"
-export PATH="$JAVA_HOME/bin:/c/Users/cwt15/devtools/apache-maven-3.9.11/bin:$PATH"
-exec mvn "$@"
+./mvnw -o clean test        # Git Bash / Linux / macOS
+.\mvnw.cmd -o clean test    # PowerShell / cmd
 ```
 
-- 它是**薄包装**，把工具链钉到本机安装路径（Git Bash 下 `JAVA_HOME` 必须是 POSIX 路径，`mvn.cmd` 才能解析）。
-- ⚠️ **不是标准 Maven Wrapper**（没有 `.mvn/wrapper/`、`mvnw`、`mvnw.cmd`），换机器必须改脚本。
-  工程化整改见 [路线图 M7](ROADMAP.md#m7--工程化与-ci)。
+- 形态为 **script-only**（不提交 `maven-wrapper.jar`）：首次运行按 `maven-wrapper.properties`
+  里的 `distributionUrl` 下载 **Maven 3.9.11** 到 `~/.m2/wrapper/dists/`，之后离线可用。
+- **只依赖 `JAVA_HOME`**（JDK 21），不再硬编码任何本机路径——`git clone && ./mvnw test` 即可构建。
+- 旧的手写壳 `mvnw.sh`（硬编码作者本机 JDK/Maven 路径）已按决策 D6 删除，见
+  [`DECISIONS.md`](DECISIONS.md)。
 
 ### 1.2 PowerShell（无需 Git Bash）
 
 ```powershell
-$env:JAVA_HOME = 'C:\Users\cwt15\devtools\jdk-21.0.12.1+1'
-$env:PATH = "$env:JAVA_HOME\bin;C:\Users\cwt15\devtools\apache-maven-3.9.11\bin;$env:PATH"
+$env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 由 wrapper 自备
 cd D:\Program\Duo
-mvn -o -B clean test
+.\mvnw.cmd -o -B clean test
 ```
+
+> PowerShell 传 `-D` 属性时要**加引号**（否则 `.` 会被当作参数分隔）：
+> `.\mvnw.cmd -o test "-Dduo.docker.enabled=false"`。
 
 ---
 
@@ -42,16 +46,30 @@ mvn -o -B clean test
 
 | 目的 | 命令 |
 | --- | --- |
-| 全量回归 | `./mvnw.sh -o clean test` |
-| 单模块 | `./mvnw.sh -o -pl duo-sim-kernel test` |
-| 单测试类 | `./mvnw.sh -o -pl duo-sim-examples test -Dtest=FailoverAcceptanceTest` |
-| 安装到本地仓库（跑 CLI 前必须） | `./mvnw.sh -o install -DskipTests` |
-| 压测（千/万档） | `./mvnw.sh -o -pl duo-sim-examples test -Dtest=ScaleAcceptanceTest -Dduo.scale=true` |
+| 全量回归 | `./mvnw -o clean test` |
+| 无 Docker 档（CI 回归 job 同款） | `./mvnw -o clean test "-Dduo.docker.enabled=false"` |
+| 单模块 | `./mvnw -o -pl duo-sim-kernel -am test` |
+| 单测试类 | `./mvnw -o -pl duo-sim-examples -am test -Dtest=FailoverAcceptanceTest` |
+| 安装到本地仓库（跑 CLI 前必须） | `./mvnw -o install -DskipTests` |
+| 压测（千/万档） | `./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"` |
 | CLI 演练（同进程 + 跨进程热注入） | `bash scripts/duo-inject-demo.sh` |
-| 依赖树 | `./mvnw.sh -o -pl duo-sim-embedded dependency:tree` |
-| 构建类路径（脚本用） | `./mvnw.sh -o -q -pl duo-sim-examples dependency:build-classpath -Dmdep.outputFile=target/demo-classpath.txt -DincludeScope=runtime` |
+| 依赖树 | `./mvnw -o -pl duo-sim-embedded dependency:tree` |
+| 构建类路径（脚本用） | `./mvnw -o -q -pl duo-sim-examples dependency:build-classpath -Dmdep.outputFile=target/demo-classpath.txt -DincludeScope=runtime` |
 
 `-o` ＝离线（本机依赖已就绪，避免网络抖动）；首次构建可去掉。
+
+> **`-pl <module>` 记得带 `-am`**：不带时该模块会解析 `~/.m2` 里**已安装的旧内核 jar**，
+> 改了内核源码却报「找不到符号」——这是本仓最容易踩的坑。
+
+### 2.0 CI（`.github/workflows/ci.yml`，M7）
+
+| job | 触发 | 内容 |
+| --- | --- | --- |
+| `regression` | push / PR | `./mvnw -B -Dduo.docker.enabled=false test`（确定性无 Docker 档）+ skip 汇总 |
+| `container` | push / PR | `-pl duo-sim-embedded -am test -Dtest='ZookeeperContainer*'`，并**断言 skip=0**（有 Docker 时不许静默跳过） |
+| `scale` | nightly / 手动 | `-Dduo.scale=true`，把 `build/scale/*.json` 与事件录制上传为 artifact（G8「规模数据可追溯」） |
+
+skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用于容器档门禁）。
 
 ### 2.1 `surefire` 的 Windows 特殊配置
 
@@ -73,33 +91,41 @@ mvn -o -B clean test
 | 层 | 位置 | 内容 |
 | --- | --- | --- |
 | 单元测试 | 各模块 `src/test/java` | 内核生命周期/拓扑排序/事件总线/restart 语义/实例寻址/接线推断与校验/注册期一致性；组件行为模型；断言语义；DSL 校验 |
-| 集成/验收测试 | `duo-sim-examples/src/test/java/.../acceptance/` | 端到端场景：档位切换（M0）、故障转移（M1）、重选主（M2）、控制面热注入（M3）、规模压测（M4） |
+| 集成/验收测试 | `duo-sim-examples/src/test/java/.../acceptance/` | 端到端场景：档位切换（M0）、故障转移（M1）、重选主（M2）、控制面热注入（M3）、规模压测（M4）、**external 第三方 SUT（M6）** |
 | JUnit 扩展测试 | `examples`（用 `@VirtualCluster`） | 注解生命周期、引擎参数注入、断言评估、录制路径 |
 
 > `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
 > 否则会形成 `junit ↔ examples` 循环依赖。
 
-### 3.2 当前分布（2026-09-18 实测，HEAD `5b72753`）
+### 3.2 当前分布（2026-09-18 实测，M6/M7 落地后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
 | `duo-sim-protocol` | 9 | 0 |
-| `duo-sim-kernel` | 57 | 0 |
-| `duo-sim-scenario` | 31 | 0 |
+| `duo-sim-kernel` | 76 | 0 |
+| `duo-sim-scenario` | 41 | 0 |
 | `duo-sim-components` | 42 | 0 |
-| `duo-sim-embedded` | 39 | **4**（无 Docker） |
+| `duo-sim-embedded` | 39 | **4**（无 Docker，`-Dduo.docker.enabled=false` 强制） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 48 | **1**（未开压测开关） |
-| **合计** | **226** | **5** |
+| `duo-sim-examples` | 51 | **1**（未开压测开关） |
+| **合计** | **258** | **5** |
 
-`./mvnw.sh -o clean test` → BUILD SUCCESS，约 2.5 分钟。
+```bash
+./mvnw -o -B test "-Dduo.docker.enabled=false"   # → BUILD SUCCESS，约 3.4 分钟
+bash .github/scripts/skip-summary.sh             # → 258 run / 0 fail / 5 skip（逐条可解释）
+```
+
+> M6 新增 21 条（内核 18：`ExternalSutLauncherTest` 10 + `ReadyProbeTest` 8；examples 3：
+> `ExternalSutAcceptanceTest`），M6 修正的注入顺序缺陷另加 1 条（`ScenarioRuntimeTest`），
+> scenario 新增 10 条（校验规则 4 的 5 条 + 命令行切分 5 条）。
 
 ### 3.3 两条明文门控
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
 | 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 5 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest`）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
+| 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
 
 **新增测试的纪律**：skip 必须可解释、可复算，且**安全属性不能只被门控覆盖**（容器档守卫用例的教训）。
@@ -208,12 +234,12 @@ components/embedded/control/junit ← examples（唯一聚合点）
 
 1. **设计先行**：语义变更先改/新增计划文档（`docs/superpowers/plans/`），设计冻结稿不动（§[文档维护约定](README.md#4-文档维护约定)）。
 2. **实现 + 单测**：按 §4 的扩展点步骤落地。
-3. **全量回归**：`./mvnw.sh -o clean test` 必须 BUILD SUCCESS，并记录**实测测试分布**（不要写估算值）。
+3. **全量回归**：`./mvnw -o -B test "-Dduo.docker.enabled=false"` 必须 BUILD SUCCESS，并记录**实测测试分布**（不要写估算值）。
 4. **场景级验收**：金标准场景 + 断言通过；必要时跑 `scripts/duo-inject-demo.sh`。
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 226 测全绿」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 258 测全绿」）。
 
 ---
 
@@ -221,15 +247,15 @@ components/embedded/control/junit ← examples（唯一聚合点）
 
 | # | 债 | 影响 | 计划 |
 | --- | --- | --- | --- |
-| 1 | `mvnw.sh` 硬编码本机工具链路径，非标准 Wrapper | 换机器/CI 无法直接构建 | M7 |
-| 2 | 无 CI 配置（无 `.github/workflows`） | 回归靠人肉执行，无门禁 | M7 |
+| 1 | ~~`mvnw.sh` 硬编码本机工具链路径，非标准 Wrapper~~ **已闭合（M7：标准 Wrapper，D6）** | — | ✅ |
+| 2 | ~~无 CI 配置~~ **已闭合（M7：三 job + skip 可见性脚本）；待远端首跑取证** | — | ✅/待取证 |
 | 3 | 无 `LICENSE` 文件（设计 §15 已选 Apache-2.0） | 法务状态不明确 | M7 |
 | 4 | 无 logback 配置 | 「结构化日志」通道名存实亡 | M8 |
 | 5 | 无 Prometheus 指标导出 | 观测三通道只落地两条 | M8 |
-| 6 | `external` SUT 引擎未实现 | 不可改码第三方接不进来 | M6 |
-| 7 | `ready.timeout` / `logLines` / `jitter: 20%` 等 DSL 断链 | 写了不生效或直接抛异常 | M5/M6 |
+| 6 | ~~`external` SUT 引擎未实现~~ **已闭合（M6，D7/D9）** | — | ✅ |
+| 7 | `ready.timeout` 已消费（M6 ✅）；`logLines` / `jitter: 20%` / `failAt: 60%` 仍断链 | 写了不生效或直接抛异常 | M5 |
 | 8 | `custom-hook` 无法从引擎注入 `HookRegistry` | YAML 时间线用不了自定义钩子 | M5 |
-| 9 | 压测产物在 `.gitignore` 覆盖的 `build/` 下 | 规模数据无法随提交留存，只能就地核对 | M7 |
+| 9 | 压测产物在 `build/`（gitignore 覆盖）；**CI scale job 已上传为 artifact** | 本地仍不随提交留存 | M7 部分 ✅ |
 | 10 | `build/verify-016914f/` 等一次性复验脚手架留在工作区（被 `.gitignore` 覆盖） | 历史遗留，可按需清理 | 随时 |
 
 ---
@@ -242,6 +268,6 @@ components/embedded/control/junit ← examples（唯一聚合点）
 | 测试发现失败 / `NoClassDefFoundError: JsonKey` | 传递依赖版本冲突（JUnit / jackson-annotations） | 见 §5 的排除与钉版本 |
 | 场景报 `no implementation registered for X/Y` | 该档位实现不在 classpath | 给 `examples`（或你的模块）加模块依赖 + SPI 文件 |
 | 场景校验失败但看不懂 | 按 [DSL 常见报错速查](SCENARIO-DSL.md#9-常见报错速查) 对照 | — |
-| 心跳/行为剧本「配置不生效」 | **构建产物陈旧**（改的是源码，跑的是旧 jar） | `./mvnw.sh -o install -DskipTests` 或直接跑 `target/classes` |
+| 心跳/行为剧本「配置不生效」 | **构建产物陈旧**（改的是源码，跑的是旧 jar） | `./mvnw -o install -DskipTests`，或单模块用 `-pl X -am`（不带 `-am` 会解析旧 jar） |
 | CLI 报 `ConnectException` / 端口占用 | `serve` 未就绪或遗留进程占端口 | `--port 0` 让内核分配；清理遗留 JVM |
 | 录制文件被覆盖 | 两个运行共用场景名 | 并发运行同一场景需改名 |

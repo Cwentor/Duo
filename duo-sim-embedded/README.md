@@ -3,7 +3,7 @@
 **embedded / container 档适配**：JVM 内真实第三方协议实现，与按需拉起的真容器。
 
 - 依赖：`duo-sim-kernel`、`curator-framework`/`curator-test`、`h2`、`kubernetes-server-mock`（Fabric8）、`testcontainers`
-- 测试：39 条，其中 **4 条容器档用例在无 Docker 时按设计 skip**（`mvn -o -pl duo-sim-embedded test`）
+- 测试：39 条，其中 **4 条容器档用例在无 Docker 时按设计 skip**（`.\mvnw -o -pl duo-sim-embedded -am test`）；`-Dduo.docker.enabled=false` 可**确定性**关闭容器档（CI regression job 用）
 - SPI 注册：`CuratorRegistryProvider`、`H2StoreProvider`、`Fabric8K8sMockProvider`、`ZookeeperContainerProvider`
 
 ## 实现

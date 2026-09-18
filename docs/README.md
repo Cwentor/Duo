@@ -14,7 +14,7 @@
 | --- | --- |
 | **第一次接触项目** | [`../README.md`](../README.md) → [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§3 → [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §7 示例 |
 | **想写一个场景** | [`SCENARIO-DSL.md`](SCENARIO-DSL.md)（字段全集 + 校验规则）→ [`../README.md`](../README.md) §7 最小示例 |
-| **想接一个自己的 SUT** | [`ARCHITECTURE.md`](ARCHITECTURE.md) §7（SUT 适配面）→ [`ROADMAP.md`](ROADMAP.md) G2（external SUT 缺口） |
+| **想接一个自己的 SUT** | [`ARCHITECTURE.md`](ARCHITECTURE.md) §10（SUT 适配面：in-process 与 external）→ [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §1.3–§1.5（`launch.command` / 端点告知 / 生命周期） |
 | **想加一个契约/档位实现** | [`DEVELOPMENT.md`](DEVELOPMENT.md) §5（扩展点）→ [`ARCHITECTURE.md`](ARCHITECTURE.md) §4（注册表与能力元数据） |
 | **想评审设计一致性** | [`superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md`](superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)（冻结稿）→ [`ROADMAP.md`](ROADMAP.md) §2 目标达成度对照 |
 | **想知道下一步做什么** | [`ROADMAP.md`](ROADMAP.md) |
@@ -28,7 +28,8 @@
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块依赖、内核 SPI、契约与档位、能力元数据与注册期校验、wiring 连接路径规则、启动/停止时序、事件总线与命名空间、SUT 适配面、断言与录制、控制面、Duo 线协议 | 改动内核 SPI、新增契约/档位、改变接线或生命周期语义 |
 | [`SCENARIO-DSL.md`](SCENARIO-DSL.md) | 场景 YAML 字段全集、校验规则 1–8、行为剧本字段、时间线动作、断言清单与语义、内置组件 config 键、完整示例、常见报错 | 新增/修改 DSL 字段、校验规则、断言或内置组件配置键 |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | 环境与工具链、构建/测试命令、测试分层与门控、扩展点操作步骤、模块依赖纪律、编码与提交约定、已知工程债 | 构建方式、测试门控、开发流程变化 |
-| [`ROADMAP.md`](ROADMAP.md) | 原始目标达成度盘点、差距清单（G1–G8）、M5–M8 阶段计划与验收口径、优先级与决策点 | 阶段立项/关闭、差距状态变化 |
+| [ROADMAP.md](ROADMAP.md) | 原始目标达成度盘点、差距清单（G1–G8）、M5–M8 阶段计划与验收口径、优先级与决策点、进展记录 | 阶段立项/关闭、差距状态变化 |
+| [DECISIONS.md](DECISIONS.md) | 决策台账 D1–D9（决定/理由/触发条件/落点）、决策→交付物映射、修订记录 | 任何需要「拍板」的设计取舍被确定或被推翻时 |
 
 ### 2.2 模块级
 
@@ -69,8 +70,9 @@
 | [`acceptance/2026-09-15-duo-m4-acceptance-record.md`](superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md) | M4 验收：压测、Testcontainers 桥、加速时钟与第三方适配器两项决策收口 |
 | [`acceptance/2026-09-15-duo-m4-scale-report.md`](superpowers/acceptance/2026-09-15-duo-m4-scale-report.md) | 千~万 Worker 心跳压测报告（993/s、9,928/s；注册 100%；线性扩展） |
 | [`acceptance/2026-09-18-duo-m4-independent-verification-record.md`](superpowers/acceptance/2026-09-18-duo-m4-independent-verification-record.md) | M4 独立复验：压测数据链核对 + 容器档 HIGH 整改取证 |
+| [`acceptance/2026-09-18-duo-m6-external-sut-record.md`](superpowers/acceptance/2026-09-18-duo-m6-external-sut-record.md) | M6 验收：external 第三方 SUT 端到端（端点告知双途径 / ready 探针 / 退出与崩溃事实 / 不杀进程）+ M7 最小子集（标准 Wrapper + CI 三 job）+ 注入事件顺序缺陷处置 |
 
-> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226）都是**对应提交那一代**的实测数，
+> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258**）都是**对应提交那一代**的实测数，
 > 不是可复算到任意 HEAD 的不变量。当前 HEAD 的实测值见 [`../README.md`](../README.md) 顶部。
 
 ## 4. 文档维护约定

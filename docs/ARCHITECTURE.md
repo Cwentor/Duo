@@ -291,7 +291,13 @@ sim.fault-injected        sim.fault-cleared         sim.fault-inject-failed
 sim.registry-flap-started sim.registry-flap-cleared
 sim.registry-node-changed
 sim.sut-exited            sim.sut-crashed
+sim.external-process-started  sim.external-endpoint
+sim.external-sut-ready        sim.external-process-left-running
 ```
+
+> **因果顺序**：`sim.fault-injected` 是注入的「因」，由 `ScenarioRuntime` 在**派发之前**落流，
+> 组件反应事件（如 `sim.registry-flap-started`）随后——§11 断言以它为观测窗口起点，
+> 顺序倒置会让窗口起点失效（M6 修正的缺陷，见 `SCENARIO-DSL.md` §8 注）。`sim.fault-cleared` 同理。
 
 SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，内核只转发与录制）：
 `sut.scheduler-started`、`sut.worker-registered`、`sut.register-failed`、`sut.heartbeat`、
@@ -333,16 +339,38 @@ public interface SutMain { void run(SutContext ctx); }   // run() 阻塞直至 S
 **显式边界**：in-process 要求 SUT 可改码（埋点发布事实、实现 `SutMain`/`onStop`）。
 不可改码的第三方 SUT 只能走 external + 旁路观测。
 
-### 10.2 external SUT（设计已定，**引擎尚未实现**）
+### 10.2 external SUT（M6 已实现）
 
-设计（§7.3）要求：内核生成端点配置文件（`launch.configOut`）+ stdout 兜底（`duo.endpoint.<contract>=<endpoint>`）；
-external 节点必须在 `exposes` 显式声明端口、必须声明 `ready` 探针（`tcp`/`http`）；生命周期归用户。
+适用：**不可改码**的第三方 SUT——不需要埋点、不需要依赖 Duo 任何工件（验收用的假第三方进程是
+零依赖独立 JVM）。内核承担「端点告知 + 就绪判定 + 退出观测」，观测能力按 §7.3 三途径界定。
 
-**现状**：`ScenarioValidator` 已实现规则 4（external 的端点声明与 ready 探针校验），但
-`ScenarioEngine.startSut()` 对 `launch.mode=external` 直接抛
-`IllegalStateException("M0 engine only supports in-process SUT launch")`。
-即：**external 能通过校验但跑不起来**——这是当前最大的功能缺口，已登记为
-[路线图 G2 / M6](ROADMAP.md#m6--external-sut-与第三方接入)。
+```java
+new ExternalSutLauncher(sutId, command, config, endpoints, eventSink, configOut, fallbackPort)
+  ├─ writeConfigFile()    // duo.endpoint.<contract>=<endpoint> + 节点 config（剔除 ready.*）
+  ├─ spawn()              // 代起形态：ProcessBuilder(command) + 环境变量 duo.config=<configOut>
+  ├─ pumpStdout()         // 兜底途径：行首 duo.endpoint.<c>=<ep> → sim.external-endpoint
+  ├─ watchExit()          // 退出码 0 → sut.exited；非 0 → sut.crashed（仅 ready 之后）
+  └─ awaitReady()         // 轮询 ReadyProbe（tcp/http）至 ready.timeout
+```
+
+| 维度 | 行为 |
+| --- | --- |
+| 端点告知（内核 → SUT） | 主途径＝`launch.configOut` 配置文件（另经环境变量 `duo.config` 告知路径）；写入 `duo.endpoint.<contract>=<endpoint>` 与节点 `config`，**不写**内核探针声明 `ready.*` |
+| 端点发现（SUT → 内核） | 兜底途径＝stdout 行首 `duo.endpoint.<contract>=<endpoint>`；SUT 自身端口仍须在 `exposes` 显式声明（规则 4） |
+| 就绪 | `ReadyProbe`：`tcp` 建连成功 / `http` 收到 < 500 应答；轮询 200ms 至 `ready.timeout`（缺省 60s） |
+| 启动失败 | 探针超时、ready 前退出 → `ComponentException`（报真实根因）+ **销毁子进程**（D9）+ 逆序拆除已启动组件 |
+| 运行期退出 | exit 0 → `sut.exited`；非 0 → `sut.crashed`（载荷含 `exitCode`）→ 触发场景结束信号 |
+| 场景结束 | **不杀进程**（§7.3 生命周期归用户）：发 `sim.external-process-left-running` + 终态警告；句柄 `ScenarioEngine.externalSut().process()` 供用户自行终止 |
+| attach 形态 | 省略 `launch.command`：内核只写配置 + 探针就绪；**退出不可观测**（无 `sut.exited`/`sut.crashed`） |
+
+**为什么需要 `launch.command`**（设计文档未定义、M6 新增，见 `DECISIONS.md` D7）：验收要求区分
+「中途崩溃」与「正常退出」并终止场景——只有内核持有进程句柄才可观测。设计原文「用户自行启动」
+保留为 attach 形态。
+
+**验收**：`duo-sim-examples` 的 `ExternalSutAcceptanceTest`（3 例）跑通
+「启动 → 端点告知（配置文件到达 SUT）→ stdout 兜底 → ready → 时间线故障注入 → 替身侧旁路断言
+→ 场景结束不杀进程」；内核侧 `ExternalSutLauncherTest`（10 例）+ `ReadyProbeTest`（8 例）
+覆盖超时/提前退出/崩溃/attach/端点行解析。
 
 ## 11. 观测面与断言（§11）
 
