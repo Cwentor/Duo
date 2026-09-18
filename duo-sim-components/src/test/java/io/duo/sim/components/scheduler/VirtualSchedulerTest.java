@@ -130,6 +130,9 @@ class VirtualSchedulerTest {
                     if (msg instanceof TaskDispatch d) {
                         dispatches.add(d);
                         String state = policy.apply(d);
+                        if (state == null) {
+                            continue; // 策略返回 null＝**不回报**（任务保持在途，用于失联/挂起用例）
+                        }
                         TaskStatus status = new TaskStatus(d.taskId(), name, state,
                                 TaskStatus.REJECTED.equals(state) ? "no free slot" : null);
                         reported.add(status);
@@ -232,10 +235,15 @@ class VirtualSchedulerTest {
         startScheduler("job-a");
         FakeWorker w1 = new FakeWorker(schedulerAddress(), "workers-1", 1);
         workers.add(w1);
+        // **不回报**（策略返回 null）：任务必须一直在途，否则「失联时已无在途任务」——CI 首跑
+        // 暴露的夹具竞态（假 worker 立即回终态，失联时任务已 SUCCESS，重排自然不发生）
+        w1.policy = d -> null;
         TaskDispatch d = w1.awaitDispatch(3_000);
         assertNotNull(d, "应先派发给 workers-1");
+        assertTrue(events.stream().noneMatch(e -> "sut.task-terminal".equals(e.type())),
+                "此时不应有终态事实（任务在途）");
 
-        w1.close(); // 实例失联（不回状态）
+        w1.close(); // 实例失联（任务仍在途）
         Event lost = awaitEvent("sut.instance-lost", 3_000);
         assertNotNull(lost, "失联必须产生 sut.instance-lost 事实");
         assertEquals("workers-1", lost.payload().get("instance"));

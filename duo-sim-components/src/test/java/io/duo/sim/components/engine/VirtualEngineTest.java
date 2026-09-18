@@ -207,8 +207,12 @@ class VirtualEngineTest {
         long slowStart = System.currentTimeMillis();
         engine.submit(TASK, 1, 1);
         long slowElapsed = waitTerminalSince(slowStart);
-        assertTrue(slowElapsed >= normalElapsed * 2,
-                () -> "slow 应显著拉长执行：normal=" + normalElapsed + "ms slow="
+        // 判据与 VirtualWorkerTest 同口径：绝对下限（120ms×3 必 >300ms，未变慢跑不到）+ 相对比较。
+        // 不用 `slow >= normal*2`——CI 上调度噪声会同时抬高两侧，比值判据会假红（引擎侧已有先例）
+        assertTrue(slowElapsed >= 300,
+                () -> "slow(3.0)×120ms 应显著变慢：实测 " + slowElapsed + "ms");
+        assertTrue(slowElapsed > normalElapsed,
+                () -> "变慢后应慢于正常：normal=" + normalElapsed + "ms slow="
                         + slowElapsed + "ms");
         engine.clear(fault(FaultAction.SLOW));
         assertNotNull(awaitEvent("sim.engine-speed-restored", 1_000));

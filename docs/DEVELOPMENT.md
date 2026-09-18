@@ -150,6 +150,11 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > 实测修复前 **5 个被受理**（超发 3），修复后恒为 2 受理 / 14 显式拒绝。此即 G9「计数必须原子化」
 > 纪律在 engine 侧的镜像落地。
 >
+> **CI 首跑又暴露一处「测试夹具」竞态（已修）**：`VirtualSchedulerTest` 的失联用例依赖「失联时任务仍在途」，
+> 而假 worker 默认立刻回 SUCCESS —— 快机器恒成立、慢机器不成立（CI run 35341908188 红）。
+> 修复＝该用例改为**不回报**（`policy = d -> null`）+ 钉住「此时无终态事实」；
+> 连跑 6/6 全绿。同批把 engine 的 slow 判据从比值改为「绝对下限 + 相对比较」，避免 CI 噪声假红。
+>
 > **尚未闭环（诚实记录）**：M5 交付物 6（金标准场景集，G4：每个契约一正例 + 一故障例）仍开放；
 > virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
 > 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**已在 CI 上取证为绿**

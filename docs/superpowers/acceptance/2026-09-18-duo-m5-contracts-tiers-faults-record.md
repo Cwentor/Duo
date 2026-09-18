@@ -90,6 +90,22 @@ real worker 的 `SutMain`；仓库当前没有，故 virtual scheduler 的覆盖
 
 ---
 
+## 3.2 远端 CI 首跑暴露的**测试夹具**竞态（已修）
+
+run 35341908188（纯文档提交）的 `regression` job 红：`VirtualSchedulerTest.instanceLostRequeuesInFlightTaskToNewConnection`
+在 3s 内未等到 `sut.task-retry`。**不是产品缺陷**，是用例自身的竞态：
+
+- 假 worker 的默认策略是「收到派发立刻回 SUCCESS」，于是「失联时任务是否仍在途」取决于
+  「调度侧处理完 SUCCESS」与「测试关连接」谁先——本机（快）恒为后者，CI（慢/负载高）可为前者，
+  一旦任务已终态，`onInstanceLost` 自然无在途任务可重排（无 `sut.task-retry`/`sut.failover`）。
+- 修复＝该用例把策略设为「**不回报**」（`policy = d -> null`），任务必然停在 RUNNING，
+  并加一条 `此时不应有终态事实` 的断言把该前提钉住。
+- 复验：`-Dtest=VirtualSchedulerTest` 连跑 **6/6 全绿**（修复前本机亦绿，故这是**消除时序依赖**而非「跑过了就算」）。
+- 同时把 `VirtualEngineTest.slowMultipliesExecutionDuration` 的判据从 `slow >= normal*2`
+  改为「绝对下限 300ms + `slow > normal`」：比值判据在 CI 调度噪声下会两侧同时抬高而假红。
+
+---
+
 ## 4. 一处刻意的架构改动（值得单列）
 
 `SchedulerStateMachine`（263 行 DAG/有界重试/失败转移）与 `DispatchSelector` 及其 18 条用例，
