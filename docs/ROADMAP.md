@@ -310,4 +310,5 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 协议层加固（非缺陷，诚实标注） | 夹具竞态暴露出 `FrameConnection` 的**单线程写**契约被生产代码违反（同一连接上有心跳主循环/下行读/任务三个写者）。已把「写入 + flush」串行化（读侧保持单线程），并加 3 条并发写守卫用例；**加固前该用例亦通过**（3 次运行未复现帧损坏），故属**防御性加固**而非「已复现缺陷」——已在用例 javadoc 与本节如实标注 |
 | 诊断改进（§12） | 注册失败原因由 `no register response` 改为 `no register response (got <实际类型>)`——否则无法区分「对端回了别的报文」与「对端回了 null」（本轮正是靠它定位） |
 | 测试 | 全量回归 **280 测 / 0 失败 / 5 skip**（3.4 分钟）：protocol 12（+3 并发写守卫）、kernel 76、scenario 47（+6 loader）、components 49（+5：百分号/越界/logLines）、embedded 39、examples 57（+3 custom-hook 端到端）；`VirtualWorkerTest` 模块内连跑 **3/3 全绿**（修复前 4/4 红） |
+| 远端取证 | 本轮提交 CI run [35335848180](https://github.com/Cwentor/Duo/actions/runs/35335848180)：`regression` ✓ / `container` ✓ / `scale` 按设计 skip——**累计连续 6 次 CI 全绿** |
 | 未做（下一轮） | M5 交付物 1/2/3（`engine`/`scheduler`/`filestore`/`message` 契约补全、`store`/`resource` 档位、`freeze`/`slow`/`resource-exhaust` 故障动作）+ 交付物 6（金标准场景集 G4）；M7 发布配置；M8 全部 |
