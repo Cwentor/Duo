@@ -42,7 +42,7 @@
 | T5 | 故障可注入 | 🟡 **部分** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地 | **`freeze`/`slow`/`resource-exhaust` 未落地；`custom-hook` 引擎无注册入口**（G5） |
 | T6 | 真实反馈 | 🟡 **部分** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档 Testcontainers 桥 | 第三方 SUT 接入需 external（G2）；适配器未做（§17 决策：按需立专项） |
 | T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 2.5 分钟 / 226 测；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
-| T8 | CI 友好 | 🟡 **部分** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；**标准 Wrapper + CI 三 job（M7 最小子集，本轮）** | **无 LICENSE**；CI 待远端首跑取证（G8） |
+| T8 | CI 友好 | 🟡 **部分** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；**标准 Wrapper + CI 三 job 远端全绿（M7 最小子集，本轮）** | **无 LICENSE**；CI 门禁存在低概率假红（G9） |
 
 **一句话结论**：框架的**内核与机制层已经完整**（T1/T7 达成，T3/T4/T5/T6 的机制已具备），
 **external SUT 宿主已于 M6 打通**（T2 的两种宿主形态齐备），
@@ -61,7 +61,8 @@
 | **G5** | **故障动作与钩子未闭环**：`freeze`/`slow`/`resource-exhaust` 仅常量声明（无实现声明 `supportedFaults`，写入即校验期拒绝）；`HookRegistry` 无 `ScenarioEngine` 注入入口，YAML 时间线里的 `custom-hook` 必然「no hook registered」 | `FaultAction` 常量 vs Provider `Set.of(...)`；`ScenarioEngine` 内部 `new HookRegistry()` | T5「故障可注入」的动作面窄；用户扩展点不可用 | P1 |
 | **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
 | **G7** | **DSL 断链与设计偏差**：`jitter`/`failAt` 不接受 `%` 形态；`logLines` 未接入；~~`ready` 校验文案写 `config.ready.*`~~（M6 已修正为 `launch.ready` 并改为启动前校验）；~~`ready.timeout` 未消费~~（M6 已消费） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读) | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | P1（剩余项） |
-| **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地，待远端首跑取证）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；**无 `LICENSE`**；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 法务状态不明确；本地压测数据仍不随提交留存 | P1（剩余：LICENSE/发布） |
+| **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；**无 `LICENSE`**；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 法务状态不明确；本地压测数据仍不随提交留存 | P1（剩余：LICENSE/发布） |
+| **G9** | **派发通路可静默丢弃 → 间歇性挂起**（M7 CI 首跑暴露）：调度侧槽位视图来自 worker 周期 `SlotReport`，与 `pumpDispatches()` 之间存在窄竞争窗口（陈旧报告把已占用槽位重标为空闲）；`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态、场景永久挂起。表现为 `ControlPlaneAcceptanceTest` 在 2 vCPU runner 上偶发「90s 仍 RUNNING」（本地 16 核连跑未复现） | CI run 35324375056 失败现场（`events=2744`、状态 RUNNING）+ 代码 `VirtualWorker.java:293`、`DispatchSelector` | CI 门禁低概率假红；违反 §12「不静默」 | **P1** |
 
 ---
 
@@ -162,10 +163,17 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **验收标准**
 
-- 🟡 新机器上 `git clone && ./mvnw test` 一条命令成功（无需改任何文件）——**本地已按「仅需 JAVA_HOME」
-  验证**（`mvnw.cmd -v` → Maven 3.9.11 / JDK 21.0.12.1），**待一台干净机器/远端 CI 首跑取证**；
-- 🟡 CI 三个 job 全绿且 skip 数可解释——**配置与脚本已就绪，待远端首跑**；
-- ✅ 压测产物作为 artifact 可从 CI 下载并与报告逐项比对——配置已就位（`scale` job 的 upload-artifact）。
+- ✅ 新机器上 `git clone && ./mvnw test` 一条命令成功（无需改任何文件）——**已取证**：远端干净 runner 上
+  `regression` job 直接跑 `./mvnw` 全绿；本地 `mvnw.cmd -v` → Maven 3.9.11 / JDK 21.0.12.1（只需 `JAVA_HOME`）；
+- ✅ CI 三个 job 全绿且 skip 数可解释——**已取证**：run
+  [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561) `regression` ✓ 2m57s、
+  `container` ✓ 32s（`--fail-on-skip` 门禁通过＝容器档无 skip）、`scale` 按设计仅 nightly/手动触发；
+- ✅ 压测产物作为 artifact 可从 CI 下载并与报告逐项比对——`scale` job 的 upload-artifact
+  （`build/scale/*.json` + `build/scenarios/**/events.jsonl`）；regression job 亦归档事件录制便于失败回放。
+
+> ⚠️ 遗留风险（**G9**）：`ControlPlaneAcceptanceTest` 在同一提交的前一次 CI run 中出现过一次间歇性挂起
+> （2 vCPU runner 独有，本地 16 核连跑 7 次 + 满载干扰未复现）。已交付失败自诊断与事件录制归档，
+> 根因收口列为下一轮 P1。
 
 ---
 
@@ -190,7 +198,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 | 顺序 | 内容 | 状态 | 并行性 |
 | --- | --- | --- | --- |
-| 1 | **M7 的 CI + Wrapper（最小子集）** | ✅ **本轮完成**（待远端首跑取证） | 与 M6 并行 |
+| 1 | **M7 的 CI + Wrapper（最小子集）** | ✅ **本轮完成**（远端 CI 全绿已取证） | 与 M6 并行 |
 | 2 | **M6 external SUT** | ✅ **本轮完成**（G2 闭合） | 主线 |
 | 3 | **M5 契约与档位补全** | ⏭ 下一轮主线（P1） | 可与 M6 部分并行（不同契约互不干扰） |
 | 4 | **M5 的 DSL 断链修复 + 金标准场景集** | ⏭ 下一轮（P1；`ready.timeout` 与 ready 文案已随 M6 修复） | 可与 M5 主线并行 |
@@ -249,8 +257,8 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 - [ ] **T5** 故障可注入：7 类动作全部有实现与场景级验收；实例级寻址无降级；`custom-hook` 可从 YAML 使用
 - [x] **T6** 真实反馈：embedded/container 档暴露真实第三方端口；**external SUT 无感知直连（M6）**
 - [x] **T7** 秒级反馈回路：常规回归 < 5 分钟（实测 3.4 分钟）、零 Docker 依赖（`-Dduo.docker.enabled=false` 确定性）
-- [ ] **T8** CI 友好：⏳ CI 配置与 skip 可见性已就绪、新机器一条命令构建已成立（标准 Wrapper）；
-      ⏳ 剩余：远端首跑取证、LICENSE/发布产物
+- [x] **T8 的主体**：标准 Wrapper（新机器一条命令构建）+ CI 三 job 远端全绿 + skip 可解释（`skip-summary.sh`）；
+      ⏳ 剩余：LICENSE/发布产物（source/javadoc）；⏳ 已知风险：CI 门禁低概率假红（G9）
 - [ ] **工程化**：标准 Wrapper、LICENSE、发布产物（source/javadoc）、压测产物可追溯
 
 ---
@@ -277,12 +285,14 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 项 | 结果 |
 | --- | --- |
 | 拍板 | D1–D6 全部拍板（`DECISIONS.md`），实施中新增 D7–D9 |
-| M7-1 Wrapper | `mvnw` / `mvnw.cmd` / `.mvn/wrapper/maven-wrapper.properties`（Maven 3.9.11，script-only）；删除 `mvnw.sh` |
-| M7-2 CI | `.github/workflows/ci.yml` 三 job（regression/container/scale）+ `.github/scripts/skip-summary.sh`（skip 逐条可见，`--fail-on-skip` 门禁）；`-Dduo.docker.enabled=false` 确定性无 Docker 门控 |
+| M7-1 Wrapper | `mvnw` / `mvnw.cmd` / `.mvn/wrapper/maven-wrapper.properties`（Maven 3.9.11，script-only）；删除 `mvnw.sh`；`.gitattributes` 钉 LF/CRLF 与可执行位 |
+| M7-2 CI | `.github/workflows/ci.yml` 三 job（regression/container/scale）+ `.github/scripts/skip-summary.sh`（skip 逐条可见，`--fail-on-skip` 门禁）；`-Dduo.docker.enabled=false` 确定性无 Docker 门控；**远端取证：run [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561) `regression` ✓ 2m57s / `container` ✓ 32s（skip=0 门禁通过）** |
 | M6 | `ReadyProbe`（探针规格与单次探测）、`ExternalSutLauncher`（配置文件/stdout 兜底/退出观测/失败销毁）、`ScenarioEngine` external 通路（代起与 attach、`${java}` 展开、结束不杀进程 + 警告）、校验规则 4 加固（`configOut` 必填、探针启动前校验） |
-| 缺陷修正 | `sim.fault-injected`/`sim.fault-cleared` 改为**先因后果**落流（原顺序使「以注入事件为窗口起点」的断言失效） |
+| 缺陷修正 | ① `sim.fault-injected`/`sim.fault-cleared` 改为**先因后果**落流；② `mvnw` 可执行位（Windows `core.fileMode=false` 覆盖 `--chmod=+x` 导致 CI 全红）；③ 新增失败自诊断 + CI 归档事件录制 |
+| 新发现（下一轮收口） | **G9**：派发通路可静默丢弃 → 间歇性挂起（CI 首跑暴露，本地未复现；已交付可诊断性，根因待证据收口） |
 | 测试 | 全量回归 **258 测 / 0 失败 / 5 skip**（3.4 分钟）：kernel 76、scenario 41、examples 51（含 M6 端到端 3 例）、embedded 39、components 42、protocol 9 |
-| 未做（下一轮） | M7 的 LICENSE/发布配置/质量门禁；M5 全部；M8 全部；CI 远端首跑取证 |
+| 未做（下一轮） | M7 的 LICENSE/发布配置/质量门禁；M5 全部；M8 全部；G9 根因与修复 |
 
 > **下一轮的入口建议**：按 §5 顺序启动 **M5（契约与档位补全 + DSL 断链修复 + 金标准场景集）**，
-> 并行补 **M7 的 LICENSE/发布配置**；M8 待契约面稳定后再定指标口径。
+> 并行补 **M7 的 LICENSE/发布配置**；**G9**（派发静默丢弃 → 间歇挂起）作为 P1 缺陷优先于 M8，
+> 因为它会让 CI 门禁低概率假红；M8 待契约面稳定后再定指标口径。

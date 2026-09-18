@@ -15,8 +15,8 @@
 | 2 | external SUT 中途崩溃/退出分别产生 `sut.crashed`/`sut.exited` 并终止场景 | ✅ | 同测试类 `externalSutNormalExitPublishesExitedAndEndsScenario`、`externalSutCrashPublishesCrashedAndEndsScenario` |
 | 3 | 端点配置文件与 stdout 兜底两条途径都有测试覆盖 | ✅ | 内核 `ExternalSutLauncherTest`（10 例，含两条途径各一例）+ examples 端到端（两条途径同时生效） |
 | 4 | `ready.timeout` 全链路消费（in-process 与 external 一致） | ✅ | `ScenarioEngine.readyTimeoutMs`；内核 `ReadyProbeTest`（超时单位/缺省/非法值）+ `ExternalSutLauncherTest` 超时用例 |
-| 5 | M7-1 新机器 `git clone && ./mvnw test` 一条命令成功 | 🟡 本地成立，待干净机器/远端取证 | `mvnw.cmd -v` → Maven 3.9.11 / JDK 21.0.12.1（仅依赖 `JAVA_HOME`） |
-| 6 | M7-2 CI 三 job 全绿且 skip 可解释 | 🟡 配置与脚本就绪，待远端首跑 | `.github/workflows/ci.yml`、`.github/scripts/skip-summary.sh`（本地实跑输出 258/0/5） |
+| 5 | M7-1 新机器 `git clone && ./mvnw test` 一条命令成功 | ✅ 已取证 | 远端 CI `regression` job 用 `./mvnw` 在干净 runner 上全绿（2m57s）；本地 `mvnw.cmd -v` → Maven 3.9.11 / JDK 21.0.12.1 |
+| 6 | M7-2 CI 三 job 全绿且 skip 可解释 | ✅ 已取证（scale 按设计仅 nightly/手动） | run [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561)：`regression` ✓ 2m57s、`container` ✓ 32s（skip=0 门禁通过）、`scale` 未触发 |
 
 ---
 
@@ -105,8 +105,24 @@ T7 预算（常规回归 < 5 分钟）保持：实测 3.4 分钟。
 | 2 | stdout 端点行若用 `indexOf("duo.endpoint.")` 容错匹配，会把 SUT 回显的内核配置行误判为自身端点宣告 | MEDIUM | 改为**行首严格前缀**解析，并加用例（`ExternalSutLauncherTest`） |
 | 3 | 内核 jar 陈旧导致 `-pl <module>` 报「找不到符号」（构建纪律） | MEDIUM | 文档固化：单模块一律带 `-am`（DEVELOPMENT §2、排查手册） |
 | 4 | PowerShell 传 `-Dx.y=z` 会被按 `.` 拆参（`-Dmaven=3.9.11` 生成过错误的 `distributionUrl`） | MEDIUM | 文档固化：PowerShell 下 `-D` 属性加引号（DEVELOPMENT §1.2） |
+| 5 | `mvnw` / `skip-summary.sh` 提交为 `100644`（Windows 侧 `core.fileMode=false` 把 `git add --chmod=+x` 覆盖回 644）→ Linux runner 上 `./mvnw` 报 `Permission denied`（exit 126），CI 三 job 全红 | **HIGH**（交付门槛失效） | 用 `git update-index --chmod=+x` 显式钉索引位；`.gitattributes` 钉 LF/CRLF；复跑 CI 三 job 全绿 |
+| 6 | **CI 首跑暴露的间歇性挂起**：`ControlPlaneAcceptanceTest`（M3 热注入自愈）在 GitHub 2 vCPU runner 上出现一次「注入后 90s 场景仍 RUNNING」；本地 16 核（含 14 进程满载干扰、连跑 8 次）**未复现**；同提交复跑 CI 即全绿 | **HIGH**（CI 门禁间歇性红） | 已加**失败自诊断**（事件流聚合：每任务派发/重试/终态、每实例派发数、实例失联记录）+ regression job 归档 `build/scenarios/**/events.jsonl`，使下次出现一次定位；**根因待定**，见 §5 限制 7 |
 
-无未处置的高级别缺陷。
+无未处置的高级别缺陷（第 6 项已可诊断、待下次复现收口）。
+
+### 4.1 第 6 项的候选根因（待证据收口）
+
+调度侧 `DispatchSelector` 的槽位视图来自 worker 周期性 `SlotReport`（权威刷新），而
+`pumpDispatches()` 每 50ms 触发一次。存在一个**窄竞争窗口**：worker 的读线程尚未处理完派发、
+但心跳循环已按旧值写出 `SlotReport(freeSlots=1)`，该陈旧报告到达调度侧后会把它「已占用」的
+槽位重新标为空闲 → 调度侧可能把（重派发的）任务派给一个实际已满的实例；而
+`VirtualWorker.handleDispatch` 在 `freeSlots <= 0` 时**静默 return**（不回报、不拒绝）——
+调度侧仍认为该任务 RUNNING，于是 DAG 永不终态、场景永久挂起（§12「不静默」被违反）。
+
+该假设与现象吻合（永久挂起而非慢、只在慢机器出现、复跑即过），但**尚无失败现场证据**；
+下次复现时新增的自诊断会直接给出「哪个任务停在哪个实例、派发次数是否为 5（4 任务 + 1 重派发）」。
+修法方向（下一轮拍板）：worker 对不可受理的派发**显式拒绝**（协议层回报），调度侧据此重排，
+而不是静默丢弃。
 
 ---
 
@@ -116,10 +132,14 @@ T7 预算（常规回归 < 5 分钟）保持：实测 3.4 分钟。
    翻译层 + 契约映射 + 版本基线）仍是触发式专项。
 2. **attach 形态的退出不可观测**：省略 `launch.command` 时内核没有进程句柄，故无 `sut.exited`/`sut.crashed`
    （已在 DSL §1.5 明确写出，不静默）。
-3. **CI 未在远端跑过**：本轮只交付配置与脚本，本地以同一脚本实跑验证输出；远端首跑后需回填结论。
+3. **CI 首次远端取证已完成**（run 35325284561 全绿），但 `ControlPlaneAcceptanceTest` 在同一提交的**前一次**
+   run 中出现过一次间歇性挂起（§4 第 6 项），根因待下次复现收口——CI 门禁当前存在**低概率假红**风险。
 4. **无 LICENSE/发布配置**（M7 余项）：法务状态仍不明确，已留在 ROADMAP G8。
 5. **`ready` 声明位置未做别名兼容**（M5 交付物 5）：本轮只修正文案与启动前校验，节点级 `ready` 兼容别名未做。
 6. **stdout 端点兜底依赖 SUT 主动打印**：内核不解析日志行中的其他格式（不做模糊匹配，避免误判）。
+7. **`ControlPlaneAcceptanceTest` 的挂起根因未定**（§4.1 候选：调度侧陈旧槽位视图 + worker 静默丢弃派发）；
+   本轮只交付**可诊断性**（自诊断消息 + 事件录制 artifact），修复方向待下一轮拍板。
+   本地复现尝试：16 核 + 14 进程满载干扰下**连跑 8 次全部通过**（19.4–22.5s），故非本地可复现缺陷。
 
 ---
 
