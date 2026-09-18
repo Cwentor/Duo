@@ -153,6 +153,12 @@ instance-lost=[workers-2(requeued=job-c)]
 `TierSwapAcceptanceTest`（3 例）覆盖正常通路，其拒绝分支与 `VirtualWorker` 逐行同构、由上述用例守护。
 全量回归 **263 测 / 0 失败 / 5 skip**。
 
+**远端复验（回归 vs 修复）**：修复前 3 次 CI 中 **2 次**在 `ControlPlaneAcceptanceTest` 上挂起；
+修复后同一测试在 2 vCPU runner 上**连续 4 次全绿**（[35329022833](https://github.com/Cwentor/Duo/actions/runs/35329022833)、
+[35329733881](https://github.com/Cwentor/Duo/actions/runs/35329733881) 及对后者的两次 `gh run rerun`），
+`regression` / `container` 两 job 每次均通过。按修复前观测到的失败率（2/3）估算，连续 4 次全绿属于
+低概率偶然（≈1–6%），故作为「缺陷已消除」的证据（非数学证明：该缺陷依赖时序竞争，见 §5 限制 7）。
+
 ---
 
 ## 5. 限制与未覆盖（诚实声明）
@@ -161,8 +167,8 @@ instance-lost=[workers-2(requeued=job-c)]
    翻译层 + 契约映射 + 版本基线）仍是触发式专项。
 2. **attach 形态的退出不可观测**：省略 `launch.command` 时内核没有进程句柄，故无 `sut.exited`/`sut.crashed`
    （已在 DSL §1.5 明确写出，不静默）。
-3. **CI 远端取证已完成**（run 35325284561 全绿），首跑的间歇性挂起（§4 第 6 项）已在第二次 CI 失败中
-   **定位并修复**（G9），修复后以本地全量回归 + 远端复跑取证。
+3. **CI 远端取证与 G9 均已闭环**：run 35325284561 首次全绿；首跑的间歇性挂起（§4 第 6 项）在第二次 CI
+   失败中**定位并修复**，修复后连续 4 次 CI 全绿（含 2 次重跑）。
 4. **发布配置未做**（M7 余项）：`LICENSE` 已补 Apache-2.0 全文；source/javadoc、版本策略、`CHANGELOG.md`
    仍未做，留在 ROADMAP G8。
 5. **`ready` 声明位置未做别名兼容**（M5 交付物 5）：本轮只修正文案与启动前校验，节点级 `ready` 兼容别名未做。
