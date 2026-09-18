@@ -106,6 +106,29 @@ run 35341908188（纯文档提交）的 `regression` job 红：`VirtualScheduler
 
 ---
 
+## 3.3 远端 CI 第二次红暴露的**产品缺陷**：engine 旧代际线程污染新代际（已修）
+
+run 35342550716 的 `regression` 红：`VirtualEngineTest.restartResetsStateAndRebindsEndpoint`
+断言 `freeSlots() == 2` 实测 **3**。定位为**产品缺陷**（非夹具）：
+
+- `stop()` 中断在途任务线程后**立刻** `freeSlots.set(slots)`，但被中断的线程还没走完 `finally`；
+  它的 `incrementAndGet()` 于是落在**新一代**的计数上 → 2 → 3 漂移（本机时序恰好掩盖）。
+- 同一根因还会让旧代际任务在新代际里报出 `sim.engine-task-status(CANCELLED)`——**假终态事实**，
+  违反 §12「不静默/不伪造成功」。
+
+修复：引入生命周期**代际** `AtomicLong generation`（`stop`/`restart` 递增），`launch` 时快照 `gen`；
+任务线程只有在 `gen == generation.get()` 时才归还槽位、报进展/日志/终态。旧代际线程彻底沉默，
+其终结由 `sim.engine-stopped`/`-crashed` 记账。
+
+守卫用例（可证伪）：`VirtualEngineTest.restartDoesNotLetStaleTaskThreadsDriftSlotCount`
+——重启后等过旧任务原定 duration，断言计数不漂移且无 CANCELLED 假终态；
+把代际判定临时改回恒真后该用例**必红**（已实测），故不是「跑过就算」；连跑 4/4 全绿。
+
+> 两次 CI 红的价值正在于此：① 夹具竞态（§3.2）② 真实并发缺陷（本节）。
+> 前者只需消除时序依赖，后者是 `duo-sim-components` 里一处必须修的计数不变量。
+
+---
+
 ## 4. 一处刻意的架构改动（值得单列）
 
 `SchedulerStateMachine`（263 行 DAG/有界重试/失败转移）与 `DispatchSelector` 及其 18 条用例，
@@ -141,7 +164,7 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 
 ---
 
-## 5.1 远端 CI 取证（commit `4cb9d8a`，run 35341365256；数字为该 run 当时实测）
+## 5.1 首次远端 CI 取证（commit `4cb9d8a`，run 35341365256；数字为该 run 当时实测）
 
 | job | 结果 | 关键输出 |
 | --- | --- | --- |
@@ -153,3 +176,13 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
   `org.postgresql:postgresql:42.7.4` 由 CI 在线解析并跑通，验证了「与核心同版」的依赖选择正确
   （此前 1.20.4 模块 + 2.0.5 核心的混用方案已废弃）。
 - 结论：交付物 2 中「容器档真机路径」的取证缺口**闭合**。
+### 5.2 修复后最终取证（commit `9d41402`，run 35343279887）
+
+| job | 结果 | 关键输出 |
+| --- | --- | --- |
+| `regression (no Docker)` | ✅ 2m56s | skip 汇总 **TOTAL 342 / fail 0 / error 0 / skip 11**（11 条逐条列出且可解释） |
+| `container tier (Docker)` | ✅ | `PostgresContainerStoreTest` **6/6 skip 0**、`ZookeeperContainerRegistryTest` 4/4、守卫 5/5，合计 15/15；`skipped cases: none` |
+| `scale` | ⏸ 按设计 | — |
+
+- CI 上**两次红均已收敛为绿**：① 夹具竞态（§3.2）② engine 代际漂移这一真实并发缺陷（§3.3）。
+- 本机同 HEAD 全量回归：**342 测 / 0 失败 / 11 skip**（`.\mvnw.cmd -o -B test`），数字与远端一致。

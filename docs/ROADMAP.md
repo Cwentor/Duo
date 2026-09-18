@@ -152,9 +152,13 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 - **本轮自测发现并修复的一处并发缺陷（G9 同类）**：`VirtualEngine` 槽位占用为「先判定再 `decrementAndGet`」，
   wire 与同进程两条通路各写一份；16 路并发提交 / 2 槽位实测**修复前 5 个被受理**（超发 3），
   改为 CAS 原子占槽（`tryReserveSlot()`）后恒为 2 受理 / 14 显式拒绝
-- 远端 CI 取证（run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)）：
-  `regression` ✅ 342/0/0/11（skip 逐条可解释）、`container` ✅
-  **`PostgresContainerStoreTest` 6/6 且 skip=0**（真 PostgreSQL 往返，`--fail-on-skip` 门禁通过）
+- 远端 CI 取证：首次 run [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)
+  `regression` ✅ / `container` ✅ **真 PostgreSQL 6/6 且 skip=0**；此后两次 `regression` 红各暴露一个问题、
+  均已修复——① `VirtualSchedulerTest` 夹具竞态（消除时序依赖，非产品缺陷）
+  ② **engine 旧代际线程污染新代际计数**（产品缺陷：重启后 `freeSlots` 2→3 + 假 CANCELLED 终态，
+  以代际 `AtomicLong` 隔离 + 可证伪守卫用例）；
+  最终取证 run [35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887)
+  `regression` ✅ **342/0/0/11**、`container` ✅ 15/15 skip=0（本机同 HEAD 342/0/11 一致）
 - 剩余一处未闭合：「SUT 落在 worker 侧」需要 examples 提供 real worker 的 `SutMain`（当前不存在），
   故 virtual scheduler 的覆盖是**线协议级**（真实 DUO_PORT + 真实 registry + 假 worker）
 

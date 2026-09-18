@@ -150,10 +150,18 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > 实测修复前 **5 个被受理**（超发 3），修复后恒为 2 受理 / 14 显式拒绝。此即 G9「计数必须原子化」
 > 纪律在 engine 侧的镜像落地。
 >
-> **CI 首跑又暴露一处「测试夹具」竞态（已修）**：`VirtualSchedulerTest` 的失联用例依赖「失联时任务仍在途」，
+> **CI 红之一：夹具竞态（已修，非产品缺陷）**：`VirtualSchedulerTest` 的失联用例依赖「失联时任务仍在途」，
 > 而假 worker 默认立刻回 SUCCESS —— 快机器恒成立、慢机器不成立（CI run 35341908188 红）。
 > 修复＝该用例改为**不回报**（`policy = d -> null`）+ 钉住「此时无终态事实」；
 > 连跑 6/6 全绿。同批把 engine 的 slow 判据从比值改为「绝对下限 + 相对比较」，避免 CI 噪声假红。
+>
+> **CI 红之二：真实并发缺陷（已修）** —— `VirtualEngineTest.restartResetsStateAndRebindsEndpoint`
+> 断言 `freeSlots()==2` 实测 3：`stop()` 中断在途线程后立刻 `freeSlots.set(slots)`，被中断线程尚未走完
+> `finally`，其归还落到新一代计数上（并会报出假 CANCELLED 终态）。修复＝生命周期代际 `AtomicLong` +
+> 任务线程仅在 `gen == generation.get()` 时归还/上报；守卫用例 `restartDoesNotLetStaleTaskThreadsDriftSlotCount`
+> 在临时取消代际判定时**必红**（已实测），连跑 4/4 全绿。
+> 最终远端取证：run [35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887)
+> `regression` ✅ 342/0/0/11、`container` ✅ 15/15 skip=0。
 >
 > **尚未闭环（诚实记录）**：M5 交付物 6（金标准场景集，G4：每个契约一正例 + 一故障例）仍开放；
 > virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
