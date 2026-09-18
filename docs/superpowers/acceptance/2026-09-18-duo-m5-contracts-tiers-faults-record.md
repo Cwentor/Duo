@@ -1,0 +1,124 @@
+# M5 交付物 1/2/3 验收记录（契约补全 / 档位补全 / 三个故障动作）
+
+- 日期：2026-09-18（M5 第 4 轮）
+- 范围：`docs/ROADMAP.md` M5 交付物 1、2、3（交付物 6「金标准场景集」不在本轮）
+- 判定：**验收通过**（证据见下，含两处如实记录的未闭合项）
+
+---
+
+## 1. 交付物 1 — 契约补全（8/8 契约有可运行实现）
+
+| 契约 | 本轮新增实现 | 档位 | 端点形态 | 缺省 | 故障声明 |
+| --- | --- | --- | --- | --- | --- |
+| ENGINE | `VirtualEngine` / `virtual-engine` | virtual | DUO_PORT | ✅ | freeze, slow, resource-exhaust |
+| SCHEDULER | `VirtualScheduler` / `virtual-scheduler` | virtual | DUO_PORT | ✅ | freeze |
+| FILESTORE | `VirtualFilestore` / `virtual-filestore` | virtual | FS_PATH | ✅ | ∅ |
+| MESSAGE | `VirtualMessageBroker` / `virtual-message-broker` | virtual | NONE（interface-direct） | ✅ | ∅ |
+| RESOURCE | `VirtualResourceManager` / `virtual-resource` | virtual | NONE（interface-direct） | ✅ | resource-exhaust |
+| STORE | `PostgresContainerStore` / `pg-container-store`（交付物 2） | container | THIRD_PARTY | ✅ | ∅ |
+
+既有：REGISTRY（virtual/embedded/container）、WORKER（virtual/real）、STORE（embedded）、SCHEDULER（real）。
+
+**验收判据与证据**
+
+- SPI 注册：`duo-sim-components` 的 `META-INF/services/...ComponentProvider` 7 行、`duo-sim-embedded` 5 行；
+  `ContractRegistry.loadFromServiceLoader()` 能在校验期解析全部 8 个契约。
+- 端到端（线协议级）：
+  - `VirtualSchedulerTest`（8 例）：真实 `DUO_PORT` + 真实 `VirtualRegistry` + 假 worker（真实帧）——
+    端点发布可发现、DAG 派发到终态、G9 拒绝回滚重派、实例失联重排、freeze 停摆、停止撤端点/重启重发布、
+    缺 registry 接线**显式启动失败**。
+  - `VirtualEngineTest`（10 例）：线协议提交（`TaskDispatch` → RUNNING → 终态）+ 同进程 `submit`、
+    槽位耗尽显式拒绝、三个故障动作、restart 语义、日志事实、非法故障显式拒绝。
+  - `VirtualFilestoreTest`（8）/`VirtualMessageBrokerTest`（7）/`VirtualResourceManagerTest`（6）：
+    正常路径 + 边界（`../` 逃逸、读缺失、队列深度上限、配额不足）+ 停机/重启语义 + provider 元数据。
+
+**如实记录（未闭合）**：ROADMAP 中「SUT 落在 worker 侧」这一动机，需要 examples 侧提供一个
+real worker 的 `SutMain`；仓库当前没有，故 virtual scheduler 的覆盖是线协议级（假 worker 扮演 SUT 侧），
+而 YAML 级验收（`m5-new-contracts-acceptance.yaml`）的 SUT 仍是 real 档调度器。
+`engine` 只有 virtual 一档，因此**无法**做「同拓扑换档」验收（不是没做，是无可换之档）。
+
+---
+
+## 2. 交付物 2 — 档位补全
+
+| 契约 | 补的档位 | 实现 | 证据 |
+| --- | --- | --- | --- |
+| STORE | container | `PostgresContainerStore`（Testcontainers `postgres:16-alpine` + `org.postgresql:postgresql:42.7.4`） | `PostgresContainerStoreTest` 6 例（Docker 门控）+ `PostgresContainerStoreGuardTest` 10 例（无 Docker 可跑：守卫/元数据/构造期链接） |
+| RESOURCE | virtual | `VirtualResourceManager` | `VirtualResourceManagerTest` 6 例 |
+
+**依赖版本（本轮修正）**：`store` container 档的 Testcontainers 模块用
+`org.testcontainers:testcontainers-postgresql:2.0.5`，与模块既有核心 `org.testcontainers:testcontainers:2.0.5`
+**版本一致**；1.x 坐标 `org.testcontainers:postgresql` 只发布到 1.21.4，与 2.x 核心混用会踩到
+2.x 已删除的 shaded commons-io/lang3，**明令禁止**（pom 注释已写明）。
+
+**如实记录（未闭合）**：本机无 Docker，6 条真机用例全部 skip（surefire 计数可见），
+真实 PG 往返/事务回滚/停机 health 未在本机取证；须由 CI `container` job（Docker + `--fail-on-skip`）复验，
+**该 CI 取证尚未发生**。
+
+---
+
+## 3. 交付物 3 — 故障动作（freeze / slow / resource-exhaust）
+
+| 动作 | 支持矩阵 | 语义（全部幂等） |
+| --- | --- | --- |
+| `freeze` | worker, engine, scheduler | 心跳/槽位上报停发；新派发**显式拒绝**（`frozen` / `engine frozen`）；在途进展/日志/终态**挂起**，`clear` 后补报；engine 派发泵停摆 |
+| `slow` | worker, engine | 时长 × 倍数；`params.factor` > `config slow.factor` > 3.0；重复注入只更新倍数不叠加；`≤1.0` **显式拒绝** |
+| `resource-exhaust` | worker, engine, resource | 对外可观测容量归零 + 新请求**显式拒绝**（`resource exhausted`）；inject/clear 幂等 |
+
+**证据**：`VirtualWorkerTest` 新增 3 例（freeze 停心跳+挂终态、slow 倍数与幂等、resource-exhaust 槽位归零+显式拒绝）；
+`VirtualEngineTest` 各 1 例；`VirtualResourceManagerTest` 1 例；`m5-new-contracts-acceptance.yaml`
+（三个动作从 YAML 时间线注入，`eventSequence` 断言三个事实按序落流 + `noTaskLost` 断言不丢任务）。
+
+**不变式**：`task-kill` 仍是实例级（`injectOnInstance`）；整组 `inject(task-kill)` 与
+不支持的动作一律 `UnsupportedOperationException` / 校验期失败——**无静默降级**。
+
+---
+
+## 3.1 本轮自测发现并修复的一处并发缺陷（G9 同类）
+
+`VirtualEngine` 的槽位占用原为「先判定 `freeSlots > 0`、再 `decrementAndGet()`」，且
+**两条提交通路各写一遍**（wire 的 `onDispatch` 与同进程的 `EngineContract.submit`）。
+16 路并发提交、2 个槽位的守卫用例实测：
+
+| | 受理数 | 结果 |
+| --- | --- | --- |
+| 修复前 | **5**（超发 3） | `concurrentSubmissionsNeverOversubscribeSlots` **红** |
+| 修复后 | **2**（14 条显式拒绝） | 绿 |
+
+修复＝CAS 原子占槽（`tryReserveSlot()`），两条通路共用；判定失败与「判定通过但占槽失败」
+都走**显式拒绝**（`no free slot`）。这正是 G9「槽位计数必须原子化」在 engine 侧的镜像。
+
+---
+
+## 4. 一处刻意的架构改动（值得单列）
+
+`SchedulerStateMachine`（263 行 DAG/有界重试/失败转移）与 `DispatchSelector` 及其 18 条用例，
+从 `duo-sim-examples` **移入** `duo-sim-components`（`io.duo.sim.components.scheduler`）。
+
+- 理由：`duo-sim-components` 不能依赖 `duo-sim-examples`，而两档调度器共用同一份语义；
+  复制一份实现必然走偏（与 G9「worker 两档同构修复」同一纪律）。
+- 副作用（可核对）：examples 测试数 57 → 41，components 49 → 110。
+
+---
+
+## 5. 全量回归（本机实测）
+
+```
+$env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
+.\mvnw.cmd -o -B test
+```
+
+| 模块 | 测试数 | skip |
+| --- | --- | --- |
+| duo-sim-protocol | 12 | 0 |
+| duo-sim-kernel | 76 | 0 |
+| duo-sim-scenario | 47 | 0 |
+| duo-sim-components | 110 | 0 |
+| duo-sim-embedded | 55 | 10（4 ZookeeperContainer + 6 PostgresContainer，无 Docker） |
+| duo-sim-junit | 0 | 0 |
+| duo-sim-control | 0 | 0 |
+| duo-sim-examples | 41 | 1（ScaleAcceptanceTest，压测开关未开） |
+| **合计** | **341** | **11** |
+
+- 上一轮基线：280 测 / 5 skip。本轮净增 61 测（components +61 中含移入的 18）。
+- 每个 skip 都可解释（无 Docker / 压测开关），无静默跳过。

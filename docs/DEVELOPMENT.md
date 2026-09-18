@@ -97,24 +97,28 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
 > 否则会形成 `junit ↔ examples` 循环依赖。
 
-### 3.2 当前分布（2026-09-18 实测，M5 第 3 轮后）
+### 3.2 当前分布（2026-09-18 实测，M5 第 4 轮后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
 | `duo-sim-protocol` | 12 | 0 |
 | `duo-sim-kernel` | 76 | 0 |
 | `duo-sim-scenario` | 47 | 0 |
-| `duo-sim-components` | 49 | 0 |
-| `duo-sim-embedded` | 39 | **4**（无 Docker，`-Dduo.docker.enabled=false` 强制） |
+| `duo-sim-components` | 110 | 0 |
+| `duo-sim-embedded` | 55 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 57 | **1**（未开压测开关） |
-| **合计** | **280** | **5** |
+| `duo-sim-examples` | 41 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
+| **合计** | **341** | **11** |
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"   # → BUILD SUCCESS，约 3.4 分钟
-bash .github/scripts/skip-summary.sh             # → 280 run / 0 fail / 5 skip（逐条可解释）
+.\mvnw.cmd -o -B test                          # 本机实测：341 测 / 11 skip（本机无 Docker）
+./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上，未单独复测）
+bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
+
+> 上表是**实测值**（Windows，JAVA_HOME 指向 JDK 21）。容器档那 10 条 skip 的原因是**本机无 Docker**，
+> 不是设计上应当跳过——CI `container` job（Docker + `--fail-on-skip`）才是它们必须跑通的地方。
 
 > M6 新增 21 条（内核 18：`ExternalSutLauncherTest` 10 + `ReadyProbeTest` 8；examples 3：
 > `ExternalSutAcceptanceTest`），M6 修正的注入顺序缺陷另加 1 条（`ScenarioRuntimeTest`），
@@ -125,12 +129,37 @@ bash .github/scripts/skip-summary.sh             # → 280 run / 0 fail / 5 skip
 > 字段归一）、components 5（`BehaviorResolverM1Test` 4：百分号形态/越界报错/`logLines` 解析；
 > `VirtualWorkerTest` 1：`logLines` 逐行落流且顺序在终态之前）、examples 3
 > （`CustomHookAcceptanceTest` 2：YAML 端到端 + 未注册名显式失败；`ScenarioHostTest` 1：宿主注入）。
+>
+> **M5 第 4 轮净增 61 条（280 → 341）**，明细：
+>
+> - **components 49 → 110（+61）**：新增 43 条——`VirtualFilestoreTest` 8、`VirtualMessageBrokerTest` 7、
+>   `VirtualResourceManagerTest` 6、`VirtualEngineTest` 11、`VirtualSchedulerTest` 8（真实 DUO_PORT + 真实
+>   registry + 线上假 worker 的 wire 级用例）、`VirtualWorkerTest` 新增 3 条故障用例（该文件现 16 条）；
+>   另**接收从 `examples` 迁入的 18 条**（`SchedulerStateMachineTest` 11 + `DispatchSelectorTest` 7）——
+>   调度状态机与派发选择器移入 `io.duo.sim.components.scheduler`，两档 scheduler 同源，测试随实现走。
+> - **embedded 39 → 55（+16）**：`PostgresContainerStoreTest` 6（Docker 门控，本机 skip）+
+>   `PostgresContainerStoreGuardTest` 10（**不标门控**，无 Docker 也可离线验证「不支持＝显式拒绝」）。
+> - **examples 57 → 41（−16）**：迁出上述 18 条调度状态机测试，新增 `NewContractsAcceptanceTest` 2 条
+>   （场景 `duo-sim-examples/src/test/resources/scenarios/m5-new-contracts-acceptance.yaml`）。
+>
+> **本轮自测发现并修复的一处并发缺陷（G9 同类，值得记账）**：`VirtualEngine` 的槽位占用是
+> 「先判定 `freeSlots > 0`、再 `decrementAndGet()`」，两条提交通路（wire 的 `onDispatch` 与同进程的
+> `submit`）在多线程并发下都会**超发槽位**（计数可为负）。修复＝CAS 原子占槽（`tryReserveSlot()`），
+> 判定失败与占槽失败都走**显式拒绝**（`no free slot`）。守卫用例
+> `VirtualEngineTest.concurrentSubmissionsNeverOversubscribeSlots`：16 路并发提交、2 个槽位 →
+> 实测修复前 **5 个被受理**（超发 3），修复后恒为 2 受理 / 14 显式拒绝。此即 G9「计数必须原子化」
+> 纪律在 engine 侧的镜像落地。
+>
+> **尚未闭环（诚实记录）**：M5 交付物 6（金标准场景集，G4：每个契约一正例 + 一故障例）仍开放；
+> virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
+> 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**尚未在 CI 上观测到绿**
+> （本机无 Docker，只能 skip）。
 
 ### 3.3 两条明文门控
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
-| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 5 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest`）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
+| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 15 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 10）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
 | 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
 
@@ -245,7 +274,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 280 测全绿」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 341 测 / 11 skip（无 Docker）」）。
 
 ---
 

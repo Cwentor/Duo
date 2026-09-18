@@ -1,4 +1,4 @@
-package io.duo.sim.examples.scheduler;
+package io.duo.sim.components.scheduler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -7,12 +7,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * demo-scheduler 的调度状态机（计划 T13，钉死三件事）：DAG 依赖 + 有界重试 + 失败转移。
+ * 调度状态机（计划 T13，钉死三件事）：DAG 依赖 + 有界重试 + 失败转移。
  * 纯内存、不依赖 store 契约（§14 M0 产出）。
+ *
+ * <p><b>位置说明（M5）</b>：本类原在 {@code duo-sim-examples}（demo-scheduler 内部），M5 接入
+ * scheduler 的 virtual 档时下沉到 {@code duo-sim-components}——real 档参考实现
+ * （{@code DemoScheduler}）与 virtual 档桩（{@link VirtualScheduler}）**共用同一份实现**，
+ * 使 G9 加固（显式拒绝回滚 + 拒绝上限）与重试/转移语义在两档之间不可能分叉。
  *
  * <p>任务终态集合：SUCCESS / FAILED / SKIPPED（依赖失败未执行）。
  * 失败任务重试至多 {@code maxAttempts}（M0 固定 3），超限记 FAILED；其下游记 SKIPPED。
- * 所有事实经 {@link Listener} 回调（DemoScheduler 转成 sut.* 事件）。
+ * 所有事实经 {@link Listener} 回调（实现转成 sut.* 事件）。
  */
 public final class SchedulerStateMachine {
 

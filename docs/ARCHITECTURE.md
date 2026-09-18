@@ -108,8 +108,8 @@ public interface ComponentProvider {
 
 | 模块 | `META-INF/services/io.duo.sim.kernel.spi.ComponentProvider` |
 | --- | --- |
-| `duo-sim-components` | `VirtualRegistryProvider`、`VirtualWorkerProvider` |
-| `duo-sim-embedded` | `CuratorRegistryProvider`、`H2StoreProvider`、`Fabric8K8sMockProvider`、`ZookeeperContainerProvider` |
+| `duo-sim-components` | `VirtualRegistryProvider`、`VirtualWorkerProvider`、`VirtualSchedulerProvider`、`VirtualEngineProvider`、`VirtualFilestoreProvider`、`VirtualMessageBrokerProvider`、`VirtualResourceProvider` |
+| `duo-sim-embedded` | `CuratorRegistryProvider`、`H2StoreProvider`、`Fabric8K8sMockProvider`、`ZookeeperContainerProvider`、`PostgresContainerStoreProvider` |
 | `duo-sim-examples` | `DemoRealWorkerProvider`、`DemoSchedulerProvider` |
 
 ### 4.3 能力元数据与注册期校验（§7.5）
@@ -159,25 +159,30 @@ public interface InstanceControl {                 // count > 1 组件的可选�
 
 ### 5.1 契约分类（§5/§6）
 
-| 契约 | 类型 | 角色语义 | 已实现的档位 |
+| 契约 | 类型 | 角色语义 | 已实现的档位（`implName`） |
 | --- | --- | --- | --- |
-| `registry` | 标准协议 | 会话、临时节点、watch | virtual / embedded / container |
-| `store` | 标准协议 | JDBC、事务、方言 | embedded |
-| `resource` | 标准协议 | 队列、配额、容器分配 | embedded |
-| `message` | 标准协议 | 主题、生产/消费 | — |
-| `filestore` | 标准协议 | 路径、读写、容量 | — |
-| `worker` | 交互型 | 心跳、资源上报、任务收发 | virtual / real |
-| `scheduler` | 交互型 | 依赖编排、重试、失败转移 | real（参考 SUT） |
-| `engine` | 交互型 | 提交→状态流转→终态+日志 | —（仅接口骨架） |
+| `registry` | 标准协议 | 会话、临时节点、watch | virtual（`virtual-registry`）/ embedded（`curator-registry`）/ container（`zk-container-registry`） |
+| `store` | 标准协议 | JDBC、事务、方言 | embedded（`h2-store`）/ container（`pg-container-store`） |
+| `resource` | 标准协议 | 队列、配额、容器分配 | virtual（`virtual-resource`）/ embedded（`fabric8-k8s-mock`） |
+| `message` | 标准协议 | 主题、生产/消费 | virtual（`virtual-message-broker`） |
+| `filestore` | 标准协议 | 路径、读写、容量 | virtual（`virtual-filestore`） |
+| `worker` | 交互型 | 心跳、资源上报、任务收发 | virtual（`virtual-worker`）/ real（`demo-real-worker`） |
+| `scheduler` | 交互型 | 依赖编排、重试、失败转移 | virtual（`virtual-scheduler`）/ real（`demo-scheduler`，参考 SUT） |
+| `engine` | 交互型 | 提交→状态流转→终态+日志 | virtual（`virtual-engine`） |
 
 **交互型契约不设 embedded/container 档**：这两个档位的定义是「真实第三方协议实现」，交互型契约无此形态，
 `ScenarioValidator` 借 `InteractiveTierGuard` 直接拒绝（§6）。
+
+**两档 scheduler 同源**：DAG 编排、重试与失败转移只有一份实现——`SchedulerStateMachine` 与 `DispatchSelector`
+（M5 第 4 轮由 `duo-sim-examples` 迁入 `duo-sim-components` 的 `io.duo.sim.components.scheduler` 包，
+连同 `SchedulerStateMachineTest` 11 条 + `DispatchSelectorTest` 7 条测试一并迁移），
+real 档 `DemoScheduler` 与 virtual 档 `VirtualScheduler` 共用它，换档不改变调度语义。
 
 ### 5.2 档位语义（§6）
 
 | 档位 | 含义 | 端点形态 |
 | --- | --- | --- |
-| `virtual` | 纯虚拟实现：标准协议契约＝进程内状态机；交互型契约＝暴露 **Duo 线协议**真实端口 | NONE / DUO_PORT |
+| `virtual` | 纯虚拟实现：标准协议契约＝进程内状态机；交互型契约＝暴露 **Duo 线协议**真实端口 | NONE / DUO_PORT / FS_PATH |
 | `embedded` | JVM 内运行真实第三方协议实现 | THIRD_PARTY（可同时 `interfaceDirect=true`） |
 | `container` | 本地 Docker 按需拉起真容器（Testcontainers 桥） | THIRD_PARTY |
 | `real` | 真实实现（通常是 SUT，也可为任意真实组件）；宿主分 kernel-hosted / external | 视实现 |
@@ -191,6 +196,36 @@ public interface InstanceControl {                 // count > 1 组件的可选�
 
 两个字段互相独立，注册期一致性校验不冲突（§7.5；M2 计划 D1b）。门面持有**独立 Curator 会话**，
 与 SUT 会话互不影响——闪断时两者都断、各自重连，忠实于真实多客户端语义。
+
+### 5.4 实现清单（能力元数据口径）
+
+下表与各 Provider 的 `metadata()` 一一对应（M5 第 4 轮后）。每条都是其 `(contract, tier)` 的唯一实现，
+故 `isDefault() == true`——`validateDefaults()` 要求每个组合恰好一个缺省（§7.5）。
+
+| 实现（`implName`） | 契约 / 档位 | `endpointShape` | `interfaceDirect` | `instanceControl` | `supportedFaults` |
+| --- | --- | --- | --- | --- | --- |
+| `VirtualRegistry`（`virtual-registry`） | registry / virtual | NONE | ✅ | — | `registry-flap` |
+| `VirtualWorker`（`virtual-worker`） | worker / virtual | DUO_PORT | ✅ | ✅ | `task-kill`、`freeze`、`slow`、`resource-exhaust` |
+| `VirtualScheduler`（`virtual-scheduler`） | scheduler / virtual | DUO_PORT | — | — | `freeze` |
+| `VirtualEngine`（`virtual-engine`） | engine / virtual | DUO_PORT | — | — | `freeze`、`slow`、`resource-exhaust` |
+| `VirtualFilestore`（`virtual-filestore`） | filestore / virtual | FS_PATH | ✅ | — | ∅ |
+| `VirtualMessageBroker`（`virtual-message-broker`） | message / virtual | NONE | ✅ | — | ∅ |
+| `VirtualResourceManager`（`virtual-resource`） | resource / virtual | NONE | ✅ | — | `resource-exhaust` |
+| `CuratorRegistry`（`curator-registry`） | registry / embedded | THIRD_PARTY | ✅ | — | `registry-flap` |
+| `ZookeeperContainerRegistry`（`zk-container-registry`） | registry / container | THIRD_PARTY | ✅ | — | ∅ |
+| `H2Store`（`h2-store`） | store / embedded | THIRD_PARTY | — | — | ∅ |
+| `PostgresContainerStore`（`pg-container-store`） | store / container | THIRD_PARTY | — | — | ∅ |
+| `Fabric8K8sMock`（`fabric8-k8s-mock`） | resource / embedded | THIRD_PARTY | — | — | ∅ |
+| `DemoScheduler`（`demo-scheduler`） | scheduler / real | DUO_PORT | — | — | ∅ |
+| `DemoRealWorker`（`demo-real-worker`） | worker / real | DUO_PORT | ✅ | — | ∅ |
+
+> **故障动作支持矩阵**（M5-3 落地，见 §8）：`freeze` = worker + engine + scheduler；`slow` = worker + engine；
+> `resource-exhaust` = worker + engine + resource。`task-kill` 仍是**实例级**动作（`injectOnInstance`）；
+> 组件级 `inject` 传 `task-kill` 显式抛 `UnsupportedOperationException`。
+>
+> **`VirtualScheduler` 的额外约束**：它需要一条 **DIRECT registry 接线**（缺绑定＝启动期显式失败），
+> 并把自身端点注册为 registry 中的 `"scheduler"` 端点，worker 侧据此发现 master；
+> 优雅停止时它会删除 `/duo/endpoints/scheduler` 节点，避免发现路径返回死地址。
 
 ## 6. 接线（wiring）规则
 
@@ -309,6 +344,13 @@ SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，�
 `sut.task-dispatched`、`sut.task-status`、`sut.task-terminal`、`sut.task-retry`、`sut.task-rejected`、
 `sut.failover`、`sut.dag-terminal`。
 
+> **virtual 档 scheduler 也是事实源**（M5 第 4 轮）：`VirtualScheduler` 发布上表中的
+> `sut.scheduler-started`、`sut.worker-registered`、`sut.register-failed`、`sut.heartbeat`、`sut.instance-lost`、
+> `sut.task-dispatched`、`sut.task-status`、`sut.task-terminal`、`sut.task-retry`、`sut.task-rejected`、
+> `sut.failover`、`sut.dag-terminal`——**不含** `sut.heartbeat-meter` 与选主事件
+> （`sut.leader-elected`/`sut.leader-election-failed`，virtual 档无选主语义）。
+> 故同一套 `sut.*` 断言可跨 scheduler 两档复用。
+
 > **派发准入事实（G9 修复）**：worker 无法受理派发时**必须显式回报** `TaskStatus.REJECTED`
 > （语义＝「未受理、从未执行」），调度侧据此把任务重新排队并发 `sut.task-rejected`；它**不占**重试额度
 > （准入失败≠执行失败），但连续被拒超过上限即判 FAILED 并跳过下游——**DAG 必须能终态**。
@@ -319,7 +361,13 @@ SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，�
 | 组件 | 事件 |
 | --- | --- |
 | `VirtualRegistry` | `sim.registry-started`、`sim.registry-crashed`、`sim.registry-stopped`、`sim.registry-restarted`、`sim.registry-session-opened`、`sim.registry-session-closed`、`sim.registry-watch-error` |
-| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected`、`sim.worker-log`（`logLines`，M5） |
+| `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-stopped`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected`、`sim.worker-log`（`logLines`，M5）、`sim.worker-frozen`、`sim.worker-resumed`、`sim.worker-slowed`、`sim.worker-speed-restored`、`sim.worker-resource-exhausted`、`sim.worker-resource-restored`（后 6 条＝M5-3 故障动作） |
+| `VirtualScheduler` | `sim.scheduler-started`、`sim.scheduler-stopped`、`sim.scheduler-crashed`、`sim.scheduler-restarted`、`sim.scheduler-frozen`、`sim.scheduler-resumed`、`sim.scheduler-unregister-failed`；另发布 `sut.*` 调度事实（见上） |
+| `VirtualEngine` | `sim.engine-started`、`sim.engine-stopped`、`sim.engine-crashed`、`sim.engine-restarted`、`sim.engine-submitted`、`sim.engine-task-status`、`sim.engine-task-progress`、`sim.engine-task-log`、`sim.engine-task-rejected`、`sim.engine-task-unreported`、`sim.engine-slot`、`sim.engine-protocol-error`、`sim.engine-frozen`、`sim.engine-resumed`、`sim.engine-slowed`、`sim.engine-speed-restored`、`sim.engine-resource-exhausted`、`sim.engine-resource-restored` |
+| `VirtualFilestore` | `sim.filestore-started`、`sim.filestore-stopped`、`sim.filestore-crashed`、`sim.filestore-restarted`、`sim.filestore-written` |
+| `VirtualMessageBroker` | `sim.message-started`、`sim.message-stopped`、`sim.message-crashed`、`sim.message-restarted`、`sim.message-published` |
+| `VirtualResourceManager` | `sim.resource-started`、`sim.resource-stopped`、`sim.resource-crashed`、`sim.resource-restarted`、`sim.resource-allocated`、`sim.resource-released`、`sim.resource-exhausted`、`sim.resource-restored` |
+| `PostgresContainerStore` | `sim.store-started`（载荷带 `kind=container`）、`sim.store-stopped`、`sim.store-crashed`、`sim.store-connection-opened`、`sim.store-slow-query`；**不发** `sim.store-connection-closed`（与 `H2Store` 同因：SUT 持有裸连接，关闭不可观测） |
 | `HookRegistry` | `sim.hook-executed`（hook 自身 `ctx.emit(...)` 的事实排在其前） |
 
 **单一订阅路径**：SUT 侧事件与注入事件都经 `bus.publish` 汇流，内存流与录制共用同一订阅点，
@@ -455,6 +503,11 @@ HEADER_LENGTH = 9      MAX_PAYLOAD_LENGTH = 1 MiB      payload = UTF-8 JSON
 | worker → master | `register`、`heartbeat`、`slot`、`task-ack`、`task-status` |
 | master → worker | `register-response`、`task-dispatch`、`task-cancel` |
 
+**交互型契约的服务端**（M5 第 4 轮）：`VirtualEngine`（engine / virtual）是 DUO_PORT 的服务端——首帧必须是
+`task-dispatch`，其后是 `task-cancel`；它同时提供进程内 `EngineContract.submit(taskName, cpu, memGB)` 直连路径。
+`VirtualScheduler`（scheduler / virtual）同样监听 DUO_PORT，并把自身端点写入 registry 的
+`/duo/endpoints/scheduler` 供 worker 发现。
+
 连接模型：worker 拨号 master，每实例一条双向长连接。
 第三方产品接入交互型契约＝为该产品写 Duo 线协议适配器（只依赖 `duo-sim-protocol` 与内核公开 SPI，§16 风险 1）。
 
@@ -469,7 +522,8 @@ HEADER_LENGTH = 9      MAX_PAYLOAD_LENGTH = 1 MiB      payload = UTF-8 JSON
 7. 内存事件流与录制**同一订阅点**，两条流事件数一致（M1 T21）。
 8. `stop(CRASH)` 后必须经 `restart()` 恢复；`restart` 保端点与身份、内部状态全新（§7.1）。
 9. 容器档 `restart()` **显式不支持**（换宿主端口会导致 wire 永久挂起）——能力无法用元数据表达，
-   已下沉为实现层守卫（M4 独立验收 HIGH 整改）。
+   已下沉为实现层守卫（M4 独立验收 HIGH 整改）；`PostgresContainerStore` 同（M5 第 4 轮，
+   映射端口只能来自容器，重建即换端口）。
 10. 内核不得新增仅控制面需要的符号；控制面改动**零内核改动**（§10）。
 
 ---
@@ -483,7 +537,7 @@ HEADER_LENGTH = 9      MAX_PAYLOAD_LENGTH = 1 MiB      payload = UTF-8 JSON
 | SUT 启动器 | `duo-sim-kernel/src/main/java/io/duo/sim/kernel/sut/SutLauncher.java` |
 | 断言实现 | `duo-sim-kernel/src/main/java/io/duo/sim/kernel/assertion/Assertions.java` |
 | YAML 解析/校验/编排/时间线 | `duo-sim-scenario/src/main/java/io/duo/sim/scenario/` |
-| virtual 档组件与行为模型 | `duo-sim-components/src/main/java/io/duo/sim/components/` |
+| virtual 档组件、行为模型与共享调度状态机 | `duo-sim-components/src/main/java/io/duo/sim/components/`（含 `scheduler/SchedulerStateMachine.java`、`scheduler/DispatchSelector.java`，两档 scheduler 同源） |
 | embedded/container 档 | `duo-sim-embedded/src/main/java/io/duo/sim/embedded/` |
 | 控制面 | `duo-sim-control/src/main/java/io/duo/sim/control/` |
 | 参考 SUT 与场景 | `duo-sim-examples/src/main/java/io/duo/sim/examples/`、`duo-sim-examples/src/*/resources/scenarios/` |

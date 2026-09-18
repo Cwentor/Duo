@@ -2,3 +2,4 @@ io.duo.sim.embedded.provider.CuratorRegistryProvider
 io.duo.sim.embedded.provider.H2StoreProvider
 io.duo.sim.embedded.provider.Fabric8K8sMockProvider
 io.duo.sim.embedded.provider.ZookeeperContainerProvider
+io.duo.sim.embedded.provider.PostgresContainerStoreProvider

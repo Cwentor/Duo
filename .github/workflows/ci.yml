@@ -60,11 +60,11 @@ jobs:
           cache: maven
       - name: docker info
         run: docker info --format '{{.ServerVersion}}'
-      # 容器档真实往返（ZookeeperContainerRegistryTest 4 条）
+      # 容器档真实往返（ZookeeperContainerRegistryTest 4 条 + PostgresContainerStoreTest 6 条，M5 第 4 轮补）
       - name: container tests
         run: >-
           ./mvnw -B -pl duo-sim-embedded -am test
-          -Dtest='ZookeeperContainer*' -Dsurefire.failIfNoSpecifiedTests=false
+          -Dtest='ZookeeperContainer*,PostgresContainerStoreTest' -Dsurefire.failIfNoSpecifiedTests=false
       # 有 Docker 时容器档**不许 skip**：skip>0 即门禁失败（T8「skip 可解释」）
       - name: assert container tests really ran
         if: always()

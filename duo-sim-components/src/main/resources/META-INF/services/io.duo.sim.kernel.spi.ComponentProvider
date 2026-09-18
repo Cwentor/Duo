@@ -1,2 +1,7 @@
 io.duo.sim.components.provider.VirtualRegistryProvider
 io.duo.sim.components.provider.VirtualWorkerProvider
+io.duo.sim.components.provider.VirtualSchedulerProvider
+io.duo.sim.components.provider.VirtualEngineProvider
+io.duo.sim.components.provider.VirtualFilestoreProvider
+io.duo.sim.components.provider.VirtualMessageBrokerProvider
+io.duo.sim.components.provider.VirtualResourceProvider

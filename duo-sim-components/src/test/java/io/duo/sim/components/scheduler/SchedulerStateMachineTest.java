@@ -1,4 +1,4 @@
-package io.duo.sim.examples.scheduler;
+package io.duo.sim.components.scheduler;
 
 import io.duo.sim.kernel.api.Event;
 import org.junit.jupiter.api.Test;

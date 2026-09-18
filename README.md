@@ -5,8 +5,8 @@
 
 - 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
 - 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
-- 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M6 external SUT 均已实施完成并验收；M5 进行中（DSL 断链 G7 与 custom-hook 已闭合）、M7 最小子集已交付**
-- 最近一次全量回归（2026-09-18，M5 第 3 轮后）：`./mvnw -o -B test "-Dduo.docker.enabled=false"` → **BUILD SUCCESS，280 测 0 失败 / 5 skip（均为设计明文门控）**
+- 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M6 external SUT 均已实施完成并验收；M5 进行中（DSL 断链 G7 与 custom-hook 已闭合；第 4 轮补齐 `scheduler`/`engine`/`message`/`filestore` 的 virtual 档与 `store` 的 container 档，金标准场景集 G4 仍开放）、M7 最小子集已交付**
+- 最近一次全量回归（2026-09-18，M5 第 4 轮后）：`.\mvnw.cmd -o -B test` → **341 测 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
 - 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
 
 ---
@@ -46,8 +46,9 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
                      ▼                            ▼                            ▼
                虚拟组件库                    嵌入式/容器替身库                 real 档节点
       VirtualWorker / VirtualRegistry /  ZK(Curator) / H2 / K8s /   真实实现（其一是 SUT）：
-      TaskStub（virtual 档，Duo 协议      Testcontainers 桥              kernel-hosted 或 external
-      或进程内状态机）                                                   （demo-scheduler 为前者）
+      VirtualScheduler / VirtualEngine / PostgreSQL(容器) /         kernel-hosted 或 external
+      VirtualFilestore / VirtualMessageBroker / Testcontainers 桥   （demo-scheduler 为前者）
+      VirtualResourceManager / TaskStub
                      │                            │                            ▲
                      └──── 真实协议 / Duo 协议 / 状态事件 ──── 接线 ────────────┘
                                                   │
@@ -64,11 +65,11 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 | [`duo-sim-protocol`](duo-sim-protocol/README.md) | Duo 线协议帧格式、编解码、契约报文；第三方适配器只依赖此工件 | `FrameCodec` `DuoCodec` `DuoMessage` |
 | [`duo-sim-kernel`](duo-sim-kernel/README.md) | SPI、契约注册表与能力元数据、组件管理器、实例寻址、事件总线、wiring 解析、SUT 适配面、断言内核 | `VirtualComponent` `ComponentProvider` `ContractRegistry` `WiringResolver` `ScenarioRuntime` `SutLauncher` `Assertions` |
 | [`duo-sim-scenario`](duo-sim-scenario/README.md) | YAML 解析与校验（规则 1–8）、场景编排、时间线注入、事件录制、自定义钩子 | `ScenarioLoader` `ScenarioValidator` `ScenarioEngine` `TimelineScheduler` `EventRecorder` `HookRegistry` |
-| [`duo-sim-components`](duo-sim-components/README.md) | virtual 档组件：`VirtualWorker`（内嵌 TaskStub 行为模型）、`VirtualRegistry` | `VirtualWorker` `VirtualRegistry` `BehaviorProfile` `BehaviorResolver` |
-| [`duo-sim-embedded`](duo-sim-embedded/README.md) | embedded/container 档：Curator TestingServer、H2、Fabric8 K8s Mock、Testcontainers ZK | `CuratorRegistry` `H2Store` `Fabric8K8sMock` `ZookeeperContainerRegistry` |
+| [`duo-sim-components`](duo-sim-components/README.md) | virtual 档组件：`VirtualWorker`（内嵌 TaskStub 行为模型）、`VirtualRegistry`、`VirtualScheduler`、`VirtualEngine`、`VirtualFilestore`、`VirtualMessageBroker`、`VirtualResourceManager` | `VirtualWorker` `VirtualRegistry` `VirtualScheduler` `VirtualEngine` `BehaviorProfile` `BehaviorResolver` |
+| [`duo-sim-embedded`](duo-sim-embedded/README.md) | embedded/container 档：Curator TestingServer、H2、Fabric8 K8s Mock、Testcontainers ZK/PostgreSQL | `CuratorRegistry` `H2Store` `PostgresContainerStore` `Fabric8K8sMock` `ZookeeperContainerRegistry` |
 | [`duo-sim-junit`](duo-sim-junit/README.md) | JUnit5 扩展 `@VirtualCluster` + 编程式断言 `DuoAssertions` | `VirtualCluster` `VirtualClusterExtension` `DuoAssertions` |
 | [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI 控制面（热注入、状态、事件、断言、拓扑） | `ScenarioHost` `RestControlServer` `DuoCli` |
-| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、金标准场景与全部验收测试 | `DemoScheduler` `SchedulerStateMachine` `DemoRealWorker` |
+| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、金标准场景与全部验收测试 | `DemoScheduler` `DemoRealWorker` |
 
 模块依赖方向（**无环**）：`protocol` ← `components`/`examples`；`kernel` ← `scenario`/`junit`/`control`/`embedded`/`components`；
 `examples` 聚合全部（`junit`/`control` 的集成测试落在 `examples`，避免模块循环依赖）。
@@ -100,7 +101,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 280 测（含 5 条设计门控 skip）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 341 测（11 条设计门控 skip：容器档 10 + 压测 1）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
@@ -156,12 +157,18 @@ class MyScenarioTest {
 | 契约 | 类型 | virtual | embedded | container | real |
 | --- | --- | --- | --- | --- | --- |
 | `registry` | 标准协议 | `VirtualRegistry`（进程内状态机，端点 NONE，支持 `registry-flap`） | `CuratorRegistry`（真实 ZK 端口 + 同进程门面，支持 `registry-flap`） | `ZookeeperContainerRegistry`（Testcontainers ZK，**不支持 flap/restart**） | — |
-| `worker` | 交互型 | `VirtualWorker`（Duo 协议端口，实例级控制，支持 `task-kill`） | —（交互型无此形态） | — | `DemoRealWorker`（参考实现，kernel-hosted） |
-| `scheduler` | 交互型 | — | — | — | `DemoScheduler`（**参考 SUT**） |
-| `store` | 标准协议 | — | `H2Store`（真实 H2 内存库 + JDBC URL） | — | — |
-| `resource` | 标准协议 | — | `Fabric8K8sMock`（真实 K8s REST 协议） | — | — |
-| `engine` | 交互型 | 仅有契约接口骨架（无实现） | — | — | — |
-| `message` / `filestore` | 标准协议 | 仅有枚举占位（无实现） | — | — | — |
+| `worker` | 交互型 | `VirtualWorker`（Duo 协议端口，实例级控制，支持 `task-kill`/`freeze`/`slow`/`resource-exhaust`） | —（交互型无此形态） | — | `DemoRealWorker`（参考实现，kernel-hosted） |
+| `scheduler` | 交互型 | `VirtualScheduler`（Duo 协议端口 + 注册 `/duo/endpoints/scheduler`，支持 `freeze`；需 **DIRECT** registry 接线） | — | — | `DemoScheduler`（**参考 SUT**） |
+| `engine` | 交互型 | `VirtualEngine`（DUO_PORT 服务端：首帧 `task-dispatch` 后 `task-cancel`；另有进程内 `EngineContract.submit`，支持 `freeze`/`slow`/`resource-exhaust`） | — | — | — |
+| `store` | 标准协议 | — | `H2Store`（真实 H2 内存库 + JDBC URL） | `PostgresContainerStore`（Testcontainers `postgres:16-alpine`，**不支持 `restart()`**，显式拒绝 `store.jdbcUrl`） | — |
+| `resource` | 标准协议 | `VirtualResourceManager`（配额分配器，支持 `resource-exhaust`） | `Fabric8K8sMock`（真实 K8s REST 协议） | — | — |
+| `message` | 标准协议 | `VirtualMessageBroker`（每主题 FIFO；`message.maxDepthPerTopic` 缺省 10000） | — | — | — |
+| `filestore` | 标准协议 | `VirtualFilestore`（FS_PATH 临时根目录或 `filestore.root`；拒绝 `../` 逃逸） | — | — | — |
+
+> `scheduler` 两档共用同一套 DAG/重试/失败转移实现：`SchedulerStateMachine` 与 `DispatchSelector` 位于
+> `duo-sim-components`（M5 第 4 轮由 `duo-sim-examples` 迁入，18 条测试随实现迁移）。
+> 故障动作支持矩阵：`freeze` = worker + engine + scheduler；`slow` = worker + engine；
+> `resource-exhaust` = worker + engine + resource（见 [架构说明](docs/ARCHITECTURE.md) §5.4）。
 
 档位缺口与补全计划见 [路线图 M5](docs/ROADMAP.md#m5--契约与档位补全广度)。
 
@@ -216,12 +223,12 @@ assertions:
 | 原始目标（设计 §2） | 现状 | 证据 / 缺口 |
 | --- | --- | --- |
 | 1 可组装（YAML 描述拓扑） | ✅ 已达成 | `ScenarioLoader` + `WiringResolver` 拓扑排序启动 |
-| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process 与 **external（M6：零依赖第三方进程端到端验收）** 均已闭环；替身缺 `scheduler`/`engine` 的 virtual 档 |
-| 3 可替换（换档零改动） | 🟡 部分 | M0 `TierSwapAcceptanceTest` 通过；目前仅 `registry`/`worker` 有两档 |
+| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process 与 **external（M6：零依赖第三方进程端到端验收）** 均已闭环；8 个契约**都已有替身实现**（M5 第 4 轮补齐 `scheduler`/`engine`/`message`/`filestore` 的 virtual 档与 `store` 的 container 档）；缺口＝金标准场景集（G4：每契约一正例 + 一故障例）仍开放，且仓库仍无 worker 侧真实 `SutMain` 示例 |
+| 3 可替换（换档零改动） | 🟡 部分 | M0 `TierSwapAcceptanceTest` 通过；`registry`（三档）、`store`/`resource`/`worker`/`scheduler`（各两档）已有多档实现；`scheduler` 两档同源（`SchedulerStateMachine`） |
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
-| 5 故障可注入（时间线 + 热注入） | 🟡 部分 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；`freeze`/`slow`/`resource-exhaust` 仅有常量声明 |
-| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议 |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 3.4 分钟、280 测全绿（`-Dduo.docker.enabled=false` 确定性无 Docker） |
+| 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
+| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议；container 档另有真 PostgreSQL（本机无 Docker 时 6 条用例 skip，**该档在 CI `container` job 上尚未观测到绿**） |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 341 测 / 11 skip（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7，远端连续 4 次全绿）**已交付；发布产物（source/javadoc）未做 |
 
 完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。

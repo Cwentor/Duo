@@ -1,4 +1,4 @@
-package io.duo.sim.examples.scheduler;
+package io.duo.sim.components.scheduler;
 
 import java.util.Comparator;
 import java.util.List;

@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -384,6 +385,99 @@ class VirtualWorkerTest {
             }
         }
         return null;
+    }
+
+    private static FaultAction componentFault(String type) {
+        return new FaultAction(type,
+                FaultAction.ComponentAddress.of(new ComponentId("workers")), Map.of(), null);
+    }
+
+    /**
+     * M5-3 {@code freeze}：冻结期间心跳停发 + 在途任务的日志/终态回报挂起（进展对外停摆），
+     * clear 后补报。判据用**确定性事实**（无心跳、无终态），不用固定 sleep 猜测。
+     */
+    @Test
+    void freezeStopsHeartbeatsAndHoldsTerminalReportUntilCleared() throws Exception {
+        startWorker(1, null, Map.of("behaviors.default.duration", "300"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+        for (int i = 0; i < 40 && worker.instanceFreeSlots(1) != 2; i++) {
+            Thread.sleep(25);
+        }
+        scheduler.dispatch("t-freeze", "etl", 1);
+        // RUNNING 是**事实事件**（wire 上受理只回 TaskAck；终态才走 TaskStatus 帧）——用事件判定
+        assertTrue(waitForRunning("t-freeze", 3000), "受理后应出现 RUNNING 事实");
+
+        worker.inject(componentFault(FaultAction.FREEZE));
+        assertTrue(worker.isFrozen());
+        // 排空既有帧，再观察冻结窗口：心跳与终态都必须消失
+        Thread.sleep(50);
+        scheduler.received.clear();
+        assertNull(waitForStatus("t-freeze", TaskStatus.SUCCESS, 500),
+                "冻结期间终态回报必须挂起");
+        assertTrue(scheduler.received.stream().noneMatch(m -> m instanceof HeartbeatReport),
+                "冻结期间不得发心跳");
+
+        worker.clear(componentFault(FaultAction.FREEZE));
+        assertNotNull(waitForStatus("t-freeze", TaskStatus.SUCCESS, 3000),
+                "clear 后必须补报终态");
+        assertTrue(events.stream().anyMatch(e -> "sim.worker-frozen".equals(e.type())));
+        assertTrue(events.stream().anyMatch(e -> "sim.worker-resumed".equals(e.type())));
+    }
+
+    /** M5-3 {@code slow}：执行时长乘以 {@code slow.factor}；clear 后恢复。 */
+    @Test
+    void slowMultipliesExecutionDurationAndIsIdempotent() throws Exception {
+        startWorker(1, null, Map.of("behaviors.default.duration", "120",
+                "slow.factor", "3.0"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+        for (int i = 0; i < 40 && worker.instanceFreeSlots(1) != 2; i++) {
+            Thread.sleep(25);
+        }
+
+        worker.inject(componentFault(FaultAction.SLOW));
+        worker.inject(componentFault(FaultAction.SLOW)); // 幂等：不叠加倍数
+        assertTrue(worker.isSlow());
+        assertEquals(1, events.stream().filter(e -> "sim.worker-slowed".equals(e.type())).count());
+
+        long t0 = System.currentTimeMillis();
+        scheduler.dispatch("t-slow", "etl", 1);
+        assertNotNull(waitForStatus("t-slow", TaskStatus.SUCCESS, 5000));
+        long slowElapsed = System.currentTimeMillis() - t0;
+        assertTrue(slowElapsed >= 300, "slow(3.0)×120ms 应显著变慢，实测 " + slowElapsed + "ms");
+
+        worker.clear(componentFault(FaultAction.SLOW));
+        long t1 = System.currentTimeMillis();
+        scheduler.dispatch("t-normal", "etl", 1);
+        assertNotNull(waitForStatus("t-normal", TaskStatus.SUCCESS, 5000));
+        long normalElapsed = System.currentTimeMillis() - t1;
+        assertTrue(normalElapsed < slowElapsed,
+                "恢复后应更快：normal=" + normalElapsed + "ms slow=" + slowElapsed + "ms");
+    }
+
+    /** M5-3 {@code resource-exhaust}：对外槽位归零 + 全部派发显式拒绝；clear 后恢复受理。 */
+    @Test
+    void resourceExhaustRejectsDispatchesExplicitlyAndRestores() throws Exception {
+        startWorker(1, null, Map.of("behaviors.default.duration", "50"));
+        assertTrue(scheduler.received.poll(5, TimeUnit.SECONDS) instanceof RegisterRequest);
+        for (int i = 0; i < 40 && worker.instanceFreeSlots(1) != 2; i++) {
+            Thread.sleep(25);
+        }
+
+        worker.inject(componentFault(FaultAction.RESOURCE_EXHAUST));
+        assertTrue(worker.isResourceExhausted());
+        assertEquals(0, worker.instanceFreeSlots(1), "对外可观测槽位必须为 0");
+
+        scheduler.dispatch("t-exhaust", "etl", 1);
+        TaskStatus rejected = waitForStatus("t-exhaust", TaskStatus.REJECTED, 3000);
+        assertNotNull(rejected, "资源耗尽必须显式拒绝");
+        assertEquals("resource exhausted", rejected.detail());
+
+        worker.clear(componentFault(FaultAction.RESOURCE_EXHAUST));
+        assertEquals(2, worker.instanceFreeSlots(1));
+        scheduler.dispatch("t-after", "etl", 1);
+        assertNotNull(waitForStatus("t-after", TaskStatus.SUCCESS, 3000), "恢复后应正常受理");
+        assertThrows(UnsupportedOperationException.class,
+                () -> worker.inject(componentFault("crash")));
     }
 
     /**

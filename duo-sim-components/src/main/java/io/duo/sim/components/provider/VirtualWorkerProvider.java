@@ -37,8 +37,11 @@ public final class VirtualWorkerProvider implements ComponentProvider {
     @Override
     public CapabilityMetadata metadata() {
         // DUO_PORT + instanceControl=true（实现 InstanceControl）；
-        // T18 声明 task-kill（实例级；实现 FaultInjectable——§7.5 一致性校验要求二者对应）
-        return CapabilityMetadata.duoPort(true, Set.of(FaultAction.TASK_KILL));
+        // task-kill 为**实例级**（injectOnInstance），freeze/slow/resource-exhaust 为**组件级**
+        // （inject）——M5-3 三动作落地后一并声明（§7.5：supportedFaults 非空必须实现 FaultInjectable）
+        return CapabilityMetadata.duoPort(true, Set.of(
+                FaultAction.TASK_KILL, FaultAction.FREEZE, FaultAction.SLOW,
+                FaultAction.RESOURCE_EXHAUST));
     }
 
     @Override

@@ -217,9 +217,22 @@ timeline:
 | `registry-flap` | FaultInjectable | ✅ 已落地 | `VirtualRegistry`（持续窗口）、`CuratorRegistry`（瞬时整服重启） |
 | `task-kill` | FaultInjectable | ✅ 已落地 | `VirtualWorker`（实例级） |
 | `custom-hook` | 用户钩子 | ✅ 已落地（M5） | `HookRegistry`：`ScenarioEngine.withHooks(h)` / `engine.hooks()` / `ScenarioHost.hooks()` |
-| `freeze` | FaultInjectable | ❌ 仅有常量声明 | — |
-| `slow` | FaultInjectable | ❌ 仅有常量声明 | — |
-| `resource-exhaust` | FaultInjectable | ❌ 仅有常量声明 | — |
+| `freeze` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine`、`VirtualScheduler` |
+| `slow` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine` |
+| `resource-exhaust` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine`、`VirtualResourceManager` |
+
+**三个故障动作的语义**（M5 第 4 轮落地，三者都**幂等**：重复 inject 只更新参数、不叠加）：
+
+| 动作 | 可观测语义 | 参数 |
+| --- | --- | --- |
+| `freeze` | 心跳/槽位上报停发；新派发**显式拒绝**（worker 详情 `frozen`、engine 详情 `engine frozen`）；在途任务的进展/日志/终态回报**挂起**，`clear` 后补报；engine 的派发泵停摆 | — |
+| `slow` | 执行时长 × 倍数（`clear` 后恢复） | `params.factor`（>1.0）优先，其次节点 `config slow.factor`，缺省 3.0；`≤1.0` **显式拒绝**（不静默无效） |
+| `resource-exhaust` | 对外可观测容量归零（worker 槽位 / engine 槽位 / resource 配额）且新请求**显式拒绝**（详情 `resource exhausted`） | — |
+
+- 支持面是**按契约声明**的（provider 的 `supportedFaults`）：写在不支持的节点上 → **校验期失败**，不静默降级。
+- `task-kill` 仍是**实例级**动作（`injectOnInstance`）；整组 `inject(task-kill)` 显式抛
+  `UnsupportedOperationException`。
+- 例：`{at: 300ms, action: slow, target: workers, params: {factor: 2}}`
 
 **`custom-hook` 用法**（M5 闭环）：
 
@@ -340,6 +353,25 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | `H2Store` | `jdbcUrl`（可自定义） | 端点形态 THIRD_PARTY（JDBC URL），**无 interface-direct** |
 | `Fabric8K8sMock` | — | 真实 K8s REST 协议；端点 THIRD_PARTY |
 
+### 7.4 M5 第 4 轮新增实现（virtual 档与 container 档 store）
+
+| 实现 | 键 | 缺省 | 说明 |
+| --- | --- | --- | --- |
+| `VirtualScheduler`（scheduler / virtual） | `dag.tasks` | 内置示例 DAG | 逗号分隔任务名（与 real 档 `DemoScheduler` 同义） |
+| | `dag.deps.<task>` | — | 该任务的依赖（逗号分隔）；不写＝无依赖 |
+| | `heartbeat.eventSampleRate` | `1` | 每 N 条心跳发 1 条 `sut.heartbeat` |
+| `VirtualEngine`（engine / virtual） | `capacity.cpu` | `4` | 容量口径 CPU |
+| | `capacity.memGB` | `8` | 容量口径内存 |
+| | `capacity.slots` | ＝`capacity.cpu` | 任务槽位数 |
+| | `slow.factor` | `3.0` | `slow` 注入时的执行时长倍数；优先级 action `params.factor` > 本键 > 缺省；**≤ 1.0 显式拒绝** |
+| | `behaviors.*` | — | 行为剧本展平键（复用 `BehaviorResolver`，见 §2.2） |
+| `VirtualFilestore`（filestore / virtual） | `filestore.root` | 组件自建临时根目录 | 显式指定根目录；`resolve()` 拒绝 `../` 逃逸，读写不存在的文件显式失败 |
+| `VirtualMessageBroker`（message / virtual） | `message.maxDepthPerTopic` | `10000` | 每主题队列深度上限；超出即显式抛 `ComponentException` |
+| `VirtualResourceManager`（resource / virtual） | `capacity.cpu` / `capacity.memGB` | `16` / `64` | 配额总量；注入 `resource-exhaust` 后对外可见剩余配额为 0 并拒绝分配 |
+| `PostgresContainerStore`（store / container） | `store.jdbcUrl` | **被显式拒绝** | 容器 JDBC URL 只能来自映射端口，写该键即失败（与 embedded 档 `H2Store` 可自定义 `jdbcUrl` 相反）；该实现亦**不支持 `restart()`** |
+
+> 节点级 `capacity:` 会展开成 `capacity.<key>` 注入 config（§1），与上表同键名、同语义。
+
 ---
 
 ## 8. 现状与设计偏差（务必先读）
@@ -355,7 +387,7 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | 5 | ~~`launch.ready.timeout` 被解析进 config 但引擎未消费~~ | **已闭合（M6）**：in-process 与 external 同口径消费 `ready.timeout`（缺省 60s） | G2 ✅ |
 | 6 | ~~`ScenarioValidator` 的 ready 报错文案写 `config: {ready.type: ...}`~~ | **已闭合（M6）**：文案改为 `launch.ready`，且探针 type/端口/时长在**启动前**校验（`ReadyProbe.spec`），写 `config.ready.type` 的后门随之关闭。**M5 补**：节点级 `ready:` 成为等价别名，两处冲突在解析期报错 | G7 ✅ |
 | 7 | ~~`custom-hook` 的 `HookRegistry` 无法从 `ScenarioEngine` 注入（引擎内部 `new HookRegistry()`）~~ | **已闭合（M5）**：`ScenarioEngine.withHooks/hooks()` + `ScenarioHost.hooks()`；YAML 端到端用例（含未注册名的显式失败）进常规回归 | G5 ✅ |
-| 8 | `freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults` | 写了会被校验期拒绝（当前行为正确，属功能未实现） | G5（M5 余项） |
+| 8 | ~~`freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults`~~ | **已闭合（M5 第 4 轮）**：三个动作在 worker/engine（+ scheduler 的 `freeze`、resource 的 `resource-exhaust`）上实现并声明；幂等 + 显式拒绝语义 + YAML 端到端（`m5-new-contracts-acceptance.yaml`）进常规回归 | G5 ✅ |
 | 9 | `launch.command` / `${java}` 占位符是 **M6 新增的 DSL 字段**（设计文档未定义） | 设计 §7.3 只说「用户自行启动」；实现补了「内核代起并观测退出」的形态，否则验收要求的 `sut.exited`/`sut.crashed` 无法产出（决策 D7） | DECISIONS D7 |
 
 > **M6 修正的另一处实现缺陷（不在 DSL 面，但影响断言写法）**：`sim.fault-injected` 原先在
@@ -380,7 +412,8 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | `external node 'm' must declare launch.configOut` | external 缺端点配置文件路径（§7.3 主途径） | 补 `launch.configOut` |
 | `unsupported ready.type 'udp' (expected tcp\|http)` | 探针类型非法 | 改 `tcp` 或 `http` |
 | `ready probe needs a port` | 既无 `ready.port` 也无非 0 `exposes` | 补其一 |
-| `timeline action 'freeze' unsupported by 'workers'` | 动作未实现 | 换 `crash`/`restart`/`registry-flap`/`task-kill` |
+| `timeline action 'freeze' unsupported by 'files'` | 该节点**未声明**该故障（`supportedFaults`） | 换到声明了该动作的节点（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource），或换动作 |
+| `slow factor must be > 1.0 (params.factor or config slow.factor), got 0.5` | `slow` 倍数 ≤1.0（等于没变慢） | 写 `params: {factor: 2}` 或节点 `config slow.factor: 2.0` |
 | `timeline target 'workers' is SUT` | 对 SUT 注入 | 改用 `custom-hook`，或改注入替身节点 |
 | `config 'behaviors.X.jitter' must be a ratio in [0,1] or a percentage like 20%` | jitter 越界或写错形态 | 写 `0.1` 或 `10%` |
 | `config 'behaviors.X.failAt' must be in [0,100]` | failAt 越界 | 写 `60` 或 `60%` |

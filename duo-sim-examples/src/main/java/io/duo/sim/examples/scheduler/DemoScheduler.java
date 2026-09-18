@@ -1,5 +1,7 @@
 package io.duo.sim.examples.scheduler;
 
+import io.duo.sim.components.scheduler.DispatchSelector;
+import io.duo.sim.components.scheduler.SchedulerStateMachine;
 import io.duo.sim.kernel.api.SutContext;
 import io.duo.sim.kernel.api.SutMain;
 import io.duo.sim.kernel.contract.RegistryContract;
@@ -27,9 +29,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * demo-scheduler（计划 T13，SUT 参考实现）：in-process SUT（实现 SutMain）。
  *
  * <p>职责：向 registry 注册自身 Duo 端点（临时节点，计划 §2 发现路径）→ 接受 worker
- * 拨号注册 → 驱动 SchedulerStateMachine（DAG + 有界重试 + 失败转移，负载均衡取 freeSlots
+ * 拨号注册 → 驱动 {@link SchedulerStateMachine}（DAG + 有界重试 + 失败转移，负载均衡取 freeSlots
  * 最大的实例）→ 发布 sut.* 事实 → DAG 全部终态后 {@code run()} 返回（场景结束信号，
  * 计划 §2/§7.3）。onStop 注册协作停止。
+ *
+ * <p>M5 起状态机与选择器已下沉到 {@code duo-sim-components}（{@code io.duo.sim.components.scheduler}）：
+ * virtual 档 {@code VirtualScheduler} 与本 real 档参考实现**共用同一份 G9 加固过的调度语义**，
+ * 避免两档行为分叉（同构纪律）。
  *
  * <p>配置项（节点 config）：{@code dag.tasks}（逗号分隔）、
  * {@code dag.deps.<task>}（逗号分隔上游，可省略）。M0 固定 5 任务演示拓扑由默认值给出。

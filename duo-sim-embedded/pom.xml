@@ -47,6 +47,22 @@
             <artifactId>testcontainers</artifactId>
             <version>2.0.5</version>
         </dependency>
+        <!-- container 档（M5）：store 契约的真实 PostgreSQL 容器（Testcontainers postgresql 模块）。
+             版本必须与上面的核心 testcontainers 一致：2.0.x 起模块坐标由 org.testcontainers:postgresql
+             改为 org.testcontainers:testcontainers-postgresql（1.x 只发布到 1.21.4），类名由
+             org.testcontainers.containers.PostgreSQLContainer 改为 org.testcontainers.postgresql.PostgreSQLContainer。
+             **禁止混用 1.x 模块 + 2.x 核心**（1.x 模块依赖 2.x 已删除的 shaded commons-io/lang3）。 -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <version>2.0.5</version>
+        </dependency>
+        <!-- 真实 JDBC 驱动：主代码要用它连容器内 PostgreSQL（不只是测试期依赖） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.4</version>
+        </dependency>
         <!-- 显式钉住 jackson-annotations：testcontainers→docker-java 传递 2.10.3，
              会胜过 fabric8 mock 需要的 2.17+（JsonKey 在 2.17 才有，否则 NoClassDefFound） -->
         <dependency>

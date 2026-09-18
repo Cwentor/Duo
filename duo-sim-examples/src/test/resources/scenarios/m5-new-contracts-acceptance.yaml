@@ -1,0 +1,72 @@
+name: m5-new-contracts-acceptance
+# M5 交付物 1/2/3 的**契约/档位补全 + 故障动作**YAML 级验收：一条场景里同时起齐
+#   engine / filestore / message / resource 四个此前「无任何实现」的契约（virtual 档），
+# 并从时间线注入 M5-3 的三个故障动作，验证它们**可注入、可观测、不丢任务**。
+#
+# 关于 SUT 位置的说明（如实记录）：validator 要求恰好一个 sut:true 节点，且 virtual 档
+# 组件不能作为 SUT 启动（内核按 launch 起 SUT 进程）。因此本场景的 SUT 仍是 real 档调度器；
+# 「SUT 落在 worker 侧」需要 examples 侧提供一个 real worker 的 SutMain（当前不存在，
+# 属 M6 示例缺口，见 docs/ROADMAP.md）。virtual scheduler 的等价覆盖在
+# duo-sim-components 的 VirtualSchedulerTest 中（真实 DUO_PORT + 假 worker 端到端）。
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "job-a,job-b"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 1
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+  # engine/virtual（M5 新增）：提交→受理→状态流转→终态+日志，行为模型复用 TaskStub
+  - id: engines
+    contract: engine
+    tier: virtual
+    capacity: { slots: 2, cpu: 2, memGB: 4 }
+  # filestore/virtual（M5 新增）：端点形态 FS_PATH
+  - id: files
+    contract: filestore
+    tier: virtual
+  # message/virtual（M5 新增）：内存队列桩（interface-direct）
+  - id: mq
+    contract: message
+    tier: virtual
+  # resource/virtual（M5 新增）：配额分配/耗尽
+  - id: resources
+    contract: resource
+    tier: virtual
+    capacity: { cpu: 8, memGB: 16 }
+behaviors:
+  profiles:
+    default: { duration: 300ms, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline:
+  # M5-3 三个动作各自可注入且**可观测**（每步都发对应 sim.* 事实）
+  - at: 100ms
+    action: resource-exhaust
+    target: resources
+  - at: 200ms
+    action: freeze
+    target: engines
+  - at: 300ms
+    action: slow
+    target: workers
+    params: { factor: 2 }
+assertions:
+  # 顺序事实：三个故障按注入次序落流
+  - eventSequence: [sim.resource-exhausted, sim.engine-frozen, sim.worker-slowed]
+  # 派发/终态面不因故障而丢任务（slow 只拉长时长，DAG 必须收敛）
+  - noTaskLost: { requireAllSuccess: true }
