@@ -109,7 +109,8 @@ class ControlPlaneAcceptanceTest {
             // 4) 等 SUT 退出（DAG 终态）→ REST 断言通过
             var finalStatus = host.awaitFinish(90_000);
             assertEquals("FINISHED", finalStatus.get("state"),
-                    () -> "SUT state after awaitFinish: " + finalStatus);
+                    () -> "SUT state after awaitFinish: " + finalStatus
+                            + "\n" + describeStream(host));
             var assertResp = http.send(HttpRequest.newBuilder()
                             .uri(URI.create(base + "/assertions")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
@@ -135,6 +136,53 @@ class ControlPlaneAcceptanceTest {
             assertEquals(0, DuoCli.run("events", "--since", "0"));
             assertEquals(0, DuoCli.run("topology"));
         }
+    }
+
+    /**
+     * 失败自诊断（M7 CI 首跑暴露）：把事件流聚合成「每任务 派发/重试/终态 + 每实例派发数 +
+     * 实例失联记录」，让「DAG 卡住」这类环境相关失败一次就能定位到**哪个任务停在哪个阶段**，
+     * 而不是只报一个 RUNNING。事件录制（events.jsonl）同步作为 CI artifact 留档。
+     */
+    private static String describeStream(ScenarioHost host) {
+        var dispatched = new java.util.TreeMap<String, Integer>();
+        var retried = new java.util.TreeMap<String, Integer>();
+        var lastStatus = new java.util.TreeMap<String, String>();
+        var terminal = new java.util.TreeMap<String, String>();
+        var perInstance = new java.util.TreeMap<String, Integer>();
+        var lost = new java.util.ArrayList<String>();
+        for (Map<String, Object> e : host.eventsSince(0)) {
+            String type = String.valueOf(e.get("type"));
+            Map<?, ?> p = e.get("payload") instanceof Map<?, ?> m ? m : Map.of();
+            String instance = p.get("instance") == null ? "-" : String.valueOf(p.get("instance"));
+            if ("sut.instance-lost".equals(type)) {
+                lost.add(instance + "(requeued=" + p.get("requeued") + ")");
+                continue;
+            }
+            Object rawTask = p.get("taskId");
+            if (rawTask == null) {
+                continue;
+            }
+            String task = String.valueOf(rawTask);
+            switch (type) {
+                case "sut.task-dispatched" -> {
+                    dispatched.merge(task, 1, Integer::sum);
+                    perInstance.merge(instance, 1, Integer::sum);
+                }
+                case "sut.task-retry" -> retried.merge(task, 1, Integer::sum);
+                case "sut.task-status" -> lastStatus.put(task,
+                        String.valueOf(p.get("state")) + "@" + instance);
+                case "sut.task-terminal" -> terminal.put(task,
+                        String.valueOf(p.get("state")) + "@" + instance);
+                default -> { }
+            }
+        }
+        return "dispatch-per-task=" + dispatched
+                + "\n  retry-per-task=" + retried
+                + "\n  last-status=" + lastStatus
+                + "\n  terminal=" + terminal
+                + "\n  dispatch-per-instance=" + perInstance
+                + "\n  instance-lost=" + lost
+                + "\n  （完整事件流见 CI artifact build/scenarios/**/events.jsonl）";
     }
 
     /**
