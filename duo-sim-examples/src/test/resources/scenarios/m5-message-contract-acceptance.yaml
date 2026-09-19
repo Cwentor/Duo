@@ -1,0 +1,49 @@
+name: m5-message-contract-acceptance
+# M5 交付物 6（G4）：message 契约的**正例 + 故障例**成对验收。
+#
+# 为什么单开一条场景而不是塞进 m5-new-contracts-acceptance：
+#   message / filestore / resource 三个契约的端点形态是 NONE + interface-direct
+#   （§7.5 强制一致性：没有对外端口，消费方拿的是同进程门面）。同进程门面**只能**由
+#   框架侧（测试夹具）直接调用——SUT 进程只有 `endpointByContract()` 里的地址串可用，
+#   而 NONE 形态压根没有地址。因此这三个契约的「正例/故障例」必须写在 JUnit 夹具里
+#   （见 MessageContractAcceptanceTest），YAML 侧只负责提供一条**真实拓扑**
+#   （真端口 scheduler + 真 registry + 真 DAG 闭环），让夹具不是在空中做单元测试。
+#   SUT 位置如实记录：validator 要求恰好一个 sut:true，virtual 档组件不能作 SUT，
+#   故 SUT 仍是 real 档调度器 DemoScheduler。
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config:
+      dag.tasks: "job-a,job-b"
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 1
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+  # message/virtual：本场景的主角（界面门面 + 冻结故障）
+  - id: mq
+    contract: message
+    tier: virtual
+behaviors:
+  profiles:
+    default: { duration: 100ms, jitter: 0.0, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline: []
+# assertions 留空是有意的（如实记录）：本场景的 DAG 在夹具跑完「发布→订阅→拉取」的
+# 窗口内（<1s）还没收敛，若在此声明 noTaskLost 就会**假红**（实测：`no task was dispatched`）。
+# 断言只写「在本场景时间尺度内确定成立」的东西；DAG 收敛这一条已由
+# m5-new-contracts-acceptance / junit-extension-smoke 覆盖。
+assertions: []

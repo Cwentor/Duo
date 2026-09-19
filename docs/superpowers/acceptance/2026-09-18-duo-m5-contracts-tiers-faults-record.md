@@ -186,3 +186,65 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 
 - CI 上**两次红均已收敛为绿**：① 夹具竞态（§3.2）② engine 代际漂移这一真实并发缺陷（§3.3）。
 - 本机同 HEAD 全量回归：**342 测 / 0 失败 / 11 skip**（`.\mvnw.cmd -o -B test`），数字与远端一致。
+
+---
+
+## 6. 第 5 轮增补：契约语义确定化 + G4 金标准场景补对（commit 待定，本机取证）
+
+本轮没有新增契约或档位，只做两件与「可验收性」直接相关的事：把**曾经只能在 wire 层"试试看"的
+拒绝语义钉成确定性用例**，以及**把 G4 的正例/故障例补成对**。过程中暴露 2 个新缺口（G10/G11），
+如实记录在 `ROADMAP.md`。
+
+### 6.1 全量回归（`.\mvnw.cmd -o -B test`，无 Docker 档）
+
+| 模块 | 测试数 | skip |
+| --- | --- | --- |
+| duo-sim-protocol | 12 | 0 |
+| duo-sim-kernel | 76 | 0 |
+| duo-sim-scenario | 47 | 0 |
+| duo-sim-components | 118 | 0 |
+| duo-sim-embedded | 55 | 10（4 ZookeeperContainer + 6 PostgresContainer，无 Docker） |
+| duo-sim-examples | 62 | 1（ScaleAcceptanceTest，压测开关未开） |
+| **合计** | **370** | **11** |
+
+- 本轮连跑 **2 次全绿**（0 失败 / 0 错误 / 11 skip）；相对第 4 轮的 342 净增 28 测。
+- 每个 skip 仍可解释（无 Docker / 压测开关），无静默跳过。
+
+### 6.2 G9 拒绝链路：语义下沉到「唯一裁判」
+
+新增 `SchedulerStateMachineRejectionTest`（3 例，单线程、无 socket、无线程池），把此前只能在
+`VirtualSchedulerTest` 里"跑跑看"的行为钉成确定性断言：
+
+- 拒绝 N 次 ⇒ 任务回到 PENDING，**重试额度净消耗为 0**（`dispatch` 的 +1 与回滚 −1 相抵）；
+- 超 `MAX_REJECTIONS`（12）⇒ 显式 FAILED + 下游 SKIPPED + `onAllTerminal` 恰好一次，
+  且拒绝**不**回调 `onRetry`；
+- 迟到的/重复的拒绝幂等忽略。
+
+同时把 `VirtualSchedulerTest` 中依赖 pump 时序的断言**降级为与线程时序无关的事实断言**
+（拒绝事实三字段、`sut.task-retry` 不出现、`attempt==1`），因为实测该层面的顺序断言会假红 6 次。
+
+### 6.3 G4：message 契约正例/故障例成对
+
+- 新增 `m5-message-contract-acceptance.yaml` + `MessageContractAcceptanceTest`（3 例）：
+  正例＝发布 → 订阅观察 → 拉取消费（顺序、深度、`sim.message-published` 事实）；
+  故障例＝`freeze` 期间发布**显式抛错**、**存量消息不丢**、解冻后恢复。
+- 为落地故障例，`VirtualMessageBroker` **新增实现 `FaultInjectable`**（`freeze`/`clear`，
+  幂等，未声明动作显式拒绝），provider 元数据同步声明 `supportedFaults={freeze}`——
+  否则 §7.5 的注册期一致性校验会直接报错（这正是该校验存在的意义）。
+- 端点形态 `NONE + interface-direct` 的契约（message/filestore/resource）**没有地址可给 SUT**，
+  其正例/故障例只能由 JUnit 夹具从同进程门面发起；YAML 只提供真实拓扑。这是如实记录的口径，
+  不是"漏了 YAML"。
+
+### 6.4 一处**假绿**的发现与修正（重要）
+
+`m5-new-contracts-acceptance` 的三个故障原本注入在 100/200/300ms，而 virtual worker 300ms
+就把 DAG 跑完了 —— 故障窗口里**没有任何在途任务**，`eventSequence` 断言形同"对着空气通过"。
+本轮把注入时点压到 200/400/600ms 并把 engine 任务时长拉到 3s，使故障真正落在任务**在途期间**。
+根因是 DSL 没有「声明但不启动」的开关（→ G11）：场景作者无法裁剪拓扑。
+
+### 6.5 新缺口（如实记录，未修）
+
+| 缺口 | 现象 | 证据 | 优先级 |
+| --- | --- | --- | --- |
+| **G10** | worker 回报 REJECTED 后调度侧**不再重派**（`DispatchSelector` 收不到槽位上报，最后一格容量被永久占用），任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsNotRedispatchedAfterWorkerRefuses`（守卫用例，记录现状而非期望） | P1 |
+| **G11** | DSL 无 `autoStart` 类开关，未知键**静默忽略** | `ScenarioLoader.parseNode` 源码核对 + §6.4 的假绿现场 | P2 |

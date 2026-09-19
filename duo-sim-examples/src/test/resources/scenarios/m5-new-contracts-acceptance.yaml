@@ -22,6 +22,14 @@ topology:
     exposes: [{ contract: scheduler, port: 0 }]
     wiring:
       registry: { node: zk, contract: registry }
+  # workers 在本场景里**没有作用**：本场景验的是「契约 × 故障动作」本身。
+  # worker 一旦起来，它会在故障注入之前就把 DAG 跑完，故障窗口里根本没有在途任务——
+  # 断言会退化成「对着空气通过」。scheduler 槽仍须静态可解析，故节点声明保留。
+  # ⚠ 已知 DSL 限制（G11，本轮记录）：DSL **没有**「声明节点但不启动」的开关
+  # （NodeSpec 无 autoStart 字段，写了也不解析＝静默忽略，违反 §12），所以节点照常启动；
+  # 本场景因此**不**断言「故障期间无终态」，故障期语义的确定性覆盖在
+  # duo-sim-components 的单测里（VirtualEngineTest/VirtualResourceManagerTest/
+  # VirtualMessageBrokerTest 的故障例，与各自的正例成对）。
   - id: workers
     contract: worker
     tier: virtual
@@ -30,10 +38,13 @@ topology:
     wiring:
       registry: { node: zk, contract: registry }
   # engine/virtual（M5 新增）：提交→受理→状态流转→终态+日志，行为模型复用 TaskStub
+  # duration 3s：须长于下面三个故障的注入时点，任务才会"活着"穿过整个故障窗口
   - id: engines
     contract: engine
     tier: virtual
     capacity: { slots: 2, cpu: 2, memGB: 4 }
+    config:
+      behaviors.default.duration: 3s
   # filestore/virtual（M5 新增）：端点形态 FS_PATH
   - id: files
     contract: filestore
@@ -54,19 +65,21 @@ behaviors:
     - node: workers
       profile: default
 timeline:
-  # M5-3 三个动作各自可注入且**可观测**（每步都发对应 sim.* 事实）
-  - at: 100ms
+  # M5-3 三个动作各自可注入且**可观测**（每步都发对应 sim.* 事实），顺序＝注入次序。
+  # slow 的目标仍是 workers：worker 不参与 DAG，但 slow 的**动作语义**（参数校验、倍数生效）
+  # 在这里被端到端走通一遍；engine 侧同一动作的确定性语义在 VirtualEngineTest 的故障例里。
+  - at: 200ms
     action: resource-exhaust
     target: resources
-  - at: 200ms
+  - at: 400ms
     action: freeze
     target: engines
-  - at: 300ms
+  - at: 600ms
     action: slow
     target: workers
     params: { factor: 2 }
 assertions:
   # 顺序事实：三个故障按注入次序落流
   - eventSequence: [sim.resource-exhausted, sim.engine-frozen, sim.worker-slowed]
-  # 派发/终态面不因故障而丢任务（slow 只拉长时长，DAG 必须收敛）
+  # 派发/终态面不因故障而丢任务（DAG 必须收敛）
   - noTaskLost: { requireAllSuccess: true }

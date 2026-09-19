@@ -6,6 +6,8 @@ import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.EndpointShape;
 import io.duo.sim.kernel.api.Event;
 import io.duo.sim.kernel.api.ExposedEndpoint;
+import io.duo.sim.kernel.api.FaultAction;
+import io.duo.sim.kernel.api.FaultInjectable;
 import io.duo.sim.kernel.api.HealthReport;
 import io.duo.sim.kernel.api.StopMode;
 import io.duo.sim.kernel.api.VirtualComponent;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,14 +48,21 @@ import java.util.function.Consumer;
  * {@code sim.message-published}（每次发布：topic + seq + 累计深度）。
  * 配置项：{@code message.maxDepthPerTopic}（缺省 10_000；超出即**显式拒绝**并抛
  * {@link ComponentException}——队列无界会静默吃内存，§12 不静默）。
+ *
+ * <p>故障注入（M5 交付物 6，G4 补对）：{@code freeze}——冻结期间 {@code publish}
+ * **显式拒绝**（`message broker frozen`），已入队消息不受影响（消息不会凭空消失），
+ * 解冻后自动恢复发布。冻结只影响**写**路径：{@code depth}/{@code drain}/{@code subscribe}
+ * 仍可读——真实 broker 卡住时消费侧仍能把已有的消息取出去。
  */
-public final class VirtualMessageBroker implements VirtualComponent {
+public final class VirtualMessageBroker implements VirtualComponent, FaultInjectable {
 
     private static final int DEFAULT_MAX_DEPTH = 10_000;
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
     private volatile int maxDepthPerTopic = DEFAULT_MAX_DEPTH;
+    /** 冻结态（M5 交付物 6）：冻结期间拒绝发布，但不丢已入队消息。 */
+    private final AtomicBoolean frozen = new AtomicBoolean(false);
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong seq = new AtomicLong();
@@ -121,6 +131,11 @@ public final class VirtualMessageBroker implements VirtualComponent {
     public long publish(String topic, String payload) {
         requireRunning();
         requireTopic(topic);
+        if (frozen.get()) {
+            // §12 不静默：冻结期间发布必须显式失败，而不是「发了但队列没动」
+            throw new ComponentException("message broker frozen: cannot publish to topic '"
+                    + topic + "'");
+        }
         Deque<String> queue = topics.computeIfAbsent(topic, k -> new ArrayDeque<>());
         long n;
         synchronized (queue) {
@@ -181,6 +196,45 @@ public final class VirtualMessageBroker implements VirtualComponent {
     /** 已创建的主题名（诊断/测试用）。 */
     public List<String> topics() {
         return new ArrayList<>(topics.keySet());
+    }
+
+    /** 冻结态（诊断/测试用）。 */
+    public boolean isFrozen() {
+        return frozen.get();
+    }
+
+    // ---- FaultInjectable（M5 交付物 6：message 契约的故障例）----
+
+    /**
+     * 冻结/解冻消息通路。{@code freeze}＝拒收新发布（显式抛错，不静默丢消息），
+     * 解冻复用同一注入点（幂等：重复注入不重复发事实）。
+     */
+    @Override
+    public void inject(FaultAction action) {
+        if (!FaultAction.FREEZE.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        if (!frozen.compareAndSet(false, true)) {
+            return; // 已冻结（幂等）
+        }
+        fire(Event.sim("sim.message-frozen", id.value(),
+                Map.of("pendingTopics", topics.size())));
+    }
+
+    @Override
+    public void clear(FaultAction action) {
+        if (!FaultAction.FREEZE.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        if (!frozen.compareAndSet(true, false)) {
+            return; // 未冻结（幂等）
+        }
+        fire(Event.sim("sim.message-resumed", id.value(), Map.of()));
+    }
+
+    /** 该契约可注入的故障（provider 元数据与实现必须一致，见 ContractRegistry 校验）。 */
+    public static Set<String> supportedFaults() {
+        return Set.of(FaultAction.FREEZE);
     }
 
     private void requireTopic(String topic) {
