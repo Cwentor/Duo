@@ -111,10 +111,22 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | `duo-sim-examples` | 52 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
 | **合计（reactor 内 8 模块）** | **366** | **11** |
 
-> **口径说明**：`duo-sim-junit` / `duo-sim-control` 在 `mvnw test` 里显示为 0，
-> 是因为 surefire 汇总行只在模块**确实有测试类**时打印——`duo-sim-junit` 无测试类；
-> `duo-sim-control` 的测试类在 examples 反应堆步里被执行（`DuoCliTest` 10 / `RestControlServerTest` 6 /
-> `ScenarioHostTest` 9，共 **25 条**单独实测：10.93s + 0.559s + 10.43s）。两处数字合计 **391 条**。
+> **口径说明**：`duo-sim-junit` / `duo-sim-control` 在 `mvnw test` 里显示为 0——
+> `duo-sim-junit` 确实没有测试类；`duo-sim-control` 则是**它的测试类不在自己模块里**
+> （`duo-sim-control` 没有 `src/test`），而在 examples 反应堆步里被执行：
+> `DuoCliTest` 10 / `RestControlServerTest` 6 / `ScenarioHostTest` 9，共 **25 条**。
+> **这 25 条不计入上表 examples 的 52 条**（它们是 `io.duo.sim.control.*` 包），
+> 所以两处口径合计 **366 + 25 = 391 条**。复算命令：
+>
+> ```bash
+> .\mvnw.cmd -o -B -pl duo-sim-examples -am "-Dtest=DuoCliTest,RestControlServerTest,ScenarioHostTest" `
+>   "-Dsurefire.failIfNoSpecifiedTests=false" test
+> # 实测 25 测 / 0 失败 / 0 错误（20.46s + 0.477s + 10.38s）
+> ```
+>
+> ⚠️ **已知的"存在但不显形"问题**：这 25 条在 `mvnw test` 输出里没有任何归属行，
+> 数字对不上却看不出来。彻底修法是给 `duo-sim-control` 建自己的 `src/test` 并搬迁
+> （需动依赖与反应堆顺序，收益仅是输出美观，风险不划算）——**记为待办而非本轮执行**。
 
 ```bash
 .\mvnw.cmd -o -B test                          # 本机实测：366 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
