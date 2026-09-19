@@ -62,7 +62,7 @@
 | **G5** | ~~**故障动作未闭环**~~ **✅ 已闭合（M5 第 4 轮）**：~~`HookRegistry` 无 `ScenarioEngine` 注入入口~~（第 3 轮闭合）；~~`freeze`/`slow`/`resource-exhaust` 仅常量声明~~（第 4 轮实现：`FaultInjectable` + `supportedFaults` 声明 + 幂等/显式拒绝用例 + YAML 端到端） | `FaultAction` 常量 vs Provider `Set.of(...)`（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource） | — | ~~P1~~ 已闭合 |
 | **G6** | ✅ **已闭合（第 10 轮）**：~~Prometheus 指标未实现~~（`MetricsCollector` + `GET /metrics`，零依赖手写，见 M8 §）；~~结构化日志无 logback 配置~~（`logback.xml` 生产档 + `logback-test.xml` 测试档，`logback-classic/core` 版本钉 1.5.16）。**第 10 轮补第 3 条通道**：`FaultLog`（`io.duo.sim.fault` 固定 logger）+ `duo diagnose`（四段因果链单命令导出，断链退出码 1）。取证：`MetricsEndpointAcceptanceTest` 2 例 / `FaultCausalChainLoggingTest` 2 例 / `FaultDiagnosticsAcceptanceTest` 1 例 | 全仓 `logback*.xml` ×2、`/metrics`、`/diagnose` | §11 三条通道（事件流 / 日志 / 指标）现已全部落地并各自有门禁 | ✅ 已闭合 |
 | **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
-| **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
+| **G8** | ✅ **已闭合（第 11 轮）**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact）；~~发布配置~~（第 8 轮：source/javadoc/版本策略/CHANGELOG）；~~质量门禁~~（**第 11 轮**：`-Dquality` 依赖门禁 + CI regression job 接入；JaCoCo 评估后决定不引入，理由在案） | 仓库根目录清单 + `pom.xml`（`quality` profile）+ `.github/workflows/ci.yml` | — | ✅ 已闭合 |
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**第 4 轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
 | **G10** | ✅ **已闭合（第 6 轮）**：worker 回报 `REJECTED` 时，`DispatchSelector` 现在会**退还** `onDispatched` 记下的本地递减（新增 `onDispatchRolledBack`，以最近一次 `SlotReport` 的槽位数为上界，防凭空加账）⇒ 被拒任务能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。修复前症状：实例仅 1 格容量时最后一格被永久占用、任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsRedispatchedAfterLocalSlotRollback`（缺口用例**已翻转**为修复守卫：派发事实 ≥2、worker 侧收到次数一致、`attempt` 恒为 1、无 `sut.task-retry`）+ `DispatchSelector.onDispatchRolledBack` | 「G9 已闭合」此前只覆盖**同进程**通路，线协议通路会把任务卡死（违反 §12 的完整语义） | ~~P1~~ 已完成 |
 | **G11** | ✅ **已闭合（第 8 轮）**：① `Scenario.NodeSpec` 新增 `autoStart`（缺省 `true`，11 字段兼容构造器保住既有场景零改动），`ScenarioEngine.startComponents` 的启动判据加 `!n.autoStart()` ⇒「声明但不启动」可表达；② **未知节点键显式报错**（`ScenarioLoader` 的 `NODE_KEYS` 白名单 + 列出受支持键），拼错的键不再被静默忽略；③ 校验层补边界：SUT 与 external 节点由 `startSut()` 单独启动，在它们身上写 `autoStart: false` 是**看似生效实则无效**的陷阱，`ScenarioValidator` 显式报错（§12） | `ScenarioLoaderTest.autoStartDefaultsToTrueAndCanBeTurnedOff` / `unknownNodeKeyIsRejectedNeverSilentlyIgnored`；`ScenarioValidatorTest.autoStartFalseOnOrdinaryNodeIsAccepted` / `autoStartFalseOnSutOrExternalNodeIsRejectedLoudly` | 此前「只验某契约、不要 worker 一起跑」无法表达，且写错的键不报错（与 §12 冲突） | ✅ 已闭合 |
@@ -274,7 +274,39 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
    `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2 接入根 POM（缺省 `skip=true`，
    `-Drelease` 一次性产出源码/文档 jar），POM 元数据（`licenses`/`scm`/`url`）补全，
    版本策略与 `CHANGELOG.md` 落地。
-4. **依赖与质量门禁**（**未做**，下一轮）：`dependency:analyze`、可选覆盖率报告（JaCoCo）。
+4. **依赖与质量门禁**（**第 11 轮完成**）：`maven-dependency-plugin:analyze-only` 已接入
+   根 POM 的 `quality` profile（`-Dquality` 激活，缺省不跑 ⇒ 常规回归零开销），
+   `failOnWarning=true`；并接进 CI 的 `regression` job（`-Dquality -DskipTests verify`）。
+   逐条基线与取舍（**哪几条是真修复、哪几条是有意保留**）见
+   [`docs/superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md)。
+
+**质量门禁的实测取证（第 11 轮）**
+
+- **基线**（未加任何豁免时）：9 个模块共 **7 类告警**——`Used undeclared` 5 条
+  （`junit-jupiter-api` ×6 模块、`jackson-annotations`@protocol、`jackson-core`@control、
+  embedded 的 fabric8/zk/curator 传递件、examples 的 slf4j-core/curator-test）、
+  `Unused declared` 2 条（`junit-jupiter` 聚合件 ×6 模块、embedded 的 logback/h2/postgresql/
+  jackson-annotations）、`Non-test scoped test only` 2 条（embedded 的 k8s mock 件、examples 的
+  全部 compile 依赖）；
+- **真修复 3 处**：protocol 显式声明 `jackson-annotations`、control 显式声明 `jackson-core`、
+  examples 显式声明 `curator-test` —— 这三条此前都靠**传递依赖**编译，上游改版即断；
+- **有意保留并逐条豁免 4 类**：① logback/h2/postgresql 是运行期必需但源码不 import
+  （ServiceLoader / DriverManager 反射加载）；② `junit-jupiter` 是空壳聚合件，被 import 的是
+  api/params/engine；③ embedded 档承载的第三方服务的**传递件**不必抄进本仓 POM；
+  ④ examples 是端到端宿主/示例模块，`src/main` 只有资源，"compile 依赖只在测试里用到"是正常形态；
+- **终态**：`mvnw -o -Dquality -DskipTests verify` → 8 × `No dependency problems found` +
+  `BUILD SUCCESS`；配套回归 `mvnw -o test` → **366 测 / 0 失败 / 0 错误 / 11 skip**（无变化）。
+
+**JaCoCo 覆盖率门禁：评估后决定不接入（理由在案）**
+
+- 本仓的门禁是**行为正确性**而非"行数覆盖率"：366 条用例里有 200+ 条是**端到端场景**
+  （真 ZK/真 JDBC/线协议往返），覆盖率数字对它们的价值极低；
+- 覆盖率一旦进门禁就必然要定阈值，而**阈值只会催生"为覆盖而写的测试"**——
+  本仓已有更强的约束（每个契约位一份可失败用例 + skip 逐条可见）；
+- 容器档用例在本机 skip（10 条），覆盖率在这些路径上天然是 0，
+  合并报告会把"环境缺失"读成"代码没测"，反而误导；
+- **触发条件**（与 M8 交付物 4 同一纪律）：若将来出现"重构频繁但回归抓不住"的实际事故，
+  再引入 JaCoCo 做**诊断**（只出报告、不设阈值）。
 
 **发布配置的实测取证（第 8 轮）**
 
@@ -346,6 +378,7 @@ components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control �
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ✅ **第 8 轮完成**（`autoStart` + 未知键严格校验 + SUT/external 陷阱校验；4 例） | 已闭环 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ✅ **第 8 轮完成**（`-Drelease` 产出 8 对 sources/javadoc jar；缺省行为不变；`CHANGELOG.md` + 版本策略） | 已闭环 |
 | 7 | **M8 观测面** | ✅ **第 10 轮完成交付物 1/2/3**（`/metrics` + logback 双档 + `duo diagnose` 因果链；交付物 4「加速时钟评估」触发条件未出现，保持 ⏸ 待触发） | 已落地 |
+| 8 | **M7 质量门禁** | ✅ **第 11 轮完成**（`-Dquality` 依赖门禁收敛到零告警 + 进 CI `regression` job；JaCoCo 评估后决定不引，理由在案） | 已闭环 |
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
@@ -438,13 +471,27 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 远端复验 | 修复后 CI：[35329022833](https://github.com/Cwentor/Duo/actions/runs/35329022833) `regression` ✓ / `container` ✓；[35329733881](https://github.com/Cwentor/Duo/actions/runs/35329733881)（含 real 档镜像修复）`regression` ✓ / `container` ✓，并对后者 `gh run rerun` 两次亦全绿——**修复后连续 4 次全绿**（修复前 3 次中 2 次挂起） |
 | 测试 | 全量回归 **263 测 / 0 失败 / 5 skip**（3.0 分钟）：kernel 76、scenario 41、examples 54（含 M6 端到端 3 例、G9 3 例）、embedded 39、components 44（含 G9 2 例）、protocol 9 |
 | M7-3 发布配置（第 8 轮） | 根 POM：`licenses`/`scm`/`url` 元数据 + `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2（`doclint=none`）；`release` profile 以 `-Drelease` 激活（缺省 `skip=true`）；`CHANGELOG.md`（Keep a Changelog 形态 + 版本策略）。**实测**：`-Drelease -DskipTests package` → 8 对 `-sources.jar`/`-javadoc.jar`；缺省 `package` 只出主 jar（`Skipping javadoc generation`）；`mvnw test` 379 测全绿 |
-| 未做（下一轮） | M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）；**M8 全部**（观测面：Prometheus `/metrics` + logback） |
+| 未做（下一轮） | **M7 的质量门禁已在第 11 轮补齐**（`-Dquality` 依赖门禁 + CI 接入；JaCoCo 评估后不引）；**M8 全部**（观测面：Prometheus `/metrics` + logback） |
 
-> **下一轮的入口建议**：M8 交付物 1/2/3 已落地（G6 闭合）。剩余优先级：
-> ① M7 质量门禁（`dependency:analyze` + 可选 JaCoCo，最小改动即可补上「依赖与覆盖率无门禁」）；
-> ② 指标口径扩充（任务时延直方图、SUT 侧队列深度——需先定分桶口径，避免拍脑袋）；
-> ③ M8 交付物 4「加速时钟评估」——**触发条件未出现**（需小时级长稳 + virtual 档场景），
-> 建议等真实长稳需求出现再做，避免为评估而评估。
+> **下一轮的入口建议**：M8 交付物 1/2/3 与 M7 质量门禁均已落地（G6/G8 闭合）。剩余优先级：
+> ① 指标口径扩充（任务时延直方图、SUT 侧队列深度——需先定分桶口径，避免拍脑袋）；
+> ② M8 交付物 4「加速时钟评估」——**触发条件未出现**（需小时级长稳 + virtual 档场景），
+> 建议等真实长稳需求出现再做，避免为评估而评估；
+> ③ CI 已接入依赖门禁（`regression` job 里 `-Dquality -DskipTests verify`），
+> 后续任何"顺手引依赖"都会被拦住。
+
+### 2026-09-19（第 11 轮）：M7 质量门禁落地——G8 闭合（依赖门禁进 CI；JaCoCo 评估后不引）
+
+| 项 | 结果 |
+| --- | --- |
+| 拍板 | ① 门禁用 `dependency:analyze-only` 而非 `analyze`（后者在 `verify` 之后才跑，本地循环里看不到）；② **不引入 JaCoCo**（理由在案，见 M7 §）；③ 门禁放进 CI 的 `regression` job 而非新开 job（复用 `~/.m2` 缓存，且"依赖干净"与"测试全绿"是同一条纪律） |
+| 基线（先量后改） | 未加豁免时 **7 类告警**：`Used undeclared` 5 条、`Unused declared` 2 条、`Non-test scoped test only` 2 条（全量原文见 [`m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md)） |
+| **真修复 3 处** | protocol 显式声明 `jackson-annotations`、control 显式声明 `jackson-core`、examples 显式声明 `curator-test`——这三条此前都**靠传递依赖编译**，上游改版即断（analyze 正是靠"用过但没声明"把它们逼出来的） |
+| 逐条豁免 4 类（有意保留） | ① logback/h2/postgresql：运行期必需但源码不 import（ServiceLoader / `DriverManager` 按 URL 反射加载）；② `junit-jupiter` 是**空壳聚合件**，被 import 的是 api/params/engine；③ embedded 档承载的第三方服务的**传递件**（zk/curator-client/fabric8/*）不必抄进本仓 POM——要求"你承载的服务的全部库都写进你的 POM"等于把上游依赖树抄一遍；④ examples 是**端到端宿主/示例**模块，`src/main` 只有资源，"compile 依赖只在测试里用到"是正常形态。每条豁免都写在 `pom.xml` 里并附理由注释 |
+| 门禁强度 | `failOnWarning=true`：本轮已把 9 个模块收敛到**零告警**，因此"新增一条告警"＝构建失败（§12 不静默）。`ignoreNonCompileDirectives` 在 3.8.1 上**是未知参数**（实测 `[WARNING] Parameter ... is unknown`）——已删除，避免留一条"看着在配、其实没生效"的假配置 |
+| 实测终态 | `mvnw -o -B "-Dquality" "-DskipTests" verify` → **7 × `No dependency problems found` + parent(pom packaging 按设计跳过) + BUILD SUCCESS**；配套全量回归 `mvnw -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（依赖调整后零变化） |
+| CI | `.github/workflows/ci.yml` 的 `regression` job 新增 `dependency gate (no unused/undeclared deps)`：`./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests verify`（测试已在上一步跑过，门禁只跑 `analyze-only`，几乎不增加墙钟时间） |
+| 未做（下一轮） | M8 交付物 4「加速时钟评估」（触发条件未出现）；指标口径扩充（时延直方图/SUT 队列深度——需先定口径）；examples 的 real worker `SutMain` 示例（§8 已记录的诚实缺口） |
 
 ### 2026-09-18（第 3 轮）：M5 启动——DSL 断链 G7 闭合 + custom-hook 闭环
 
@@ -471,5 +518,5 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | M8-3 单命令因果链（交付物 3 ✅） | `FaultLog`（固定 logger `io.duo.sim.fault`，成功 INFO / 拒绝 WARN，`ScenarioHost.inject` 在两个分支都记日志——含"场景未运行"的早退分支）+ `FaultDiagnostics`（按窗口重建四段：注入 → 组件反应 → SUT 事实 → 断言）。**窗口语义**：终点取「下一次注入 / `sim.scenario-finished` / `sim.sut-exited`」，因为链只在场景收口后才完整。**SUT 事实按类型归并计数**：一次 20s 场景 586 条 SUT 事件归并为 8 类（`sut.heartbeat×564` 等），逐条打印等于没有输出。**断链显式化**：无 SUT 事实 ⇒ `gaps` 记录原因、渲染 `MISSING`、CLI 退出码 1（§12） |
 | 测试 | 本轮新增/改动用例 **30 例全绿**（control 25：`DuoCliTest` 10 / `ScenarioHostTest` 9 / `RestControlServerTest` 6；examples 观测面 5：`MetricsEndpointAcceptanceTest` 2 / `FaultCausalChainLoggingTest` 2 / `FaultDiagnosticsAcceptanceTest` 1）。全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（protocol 12、kernel 76、scenario 51、components 120、embedded 55+10 skip、examples 52+1 skip） |
 | 验收记录 | [`docs/superpowers/acceptance/2026-09-19-duo-m8-observability-record.md`](superpowers/acceptance/2026-09-19-duo-m8-observability-record.md)；指标口径文档 `docs/METRICS.md` |
-| 未做（下一轮） | 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现，无输入）；M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）；`@Observability` 之外的指标口径扩充（如按任务的时延直方图——当前刻意只用 counter/gauge，histogram 需要明确分桶口径） |
+| 未做（下一轮） | 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现，无输入）；~~M7 的质量门禁~~（**第 11 轮已补齐**）；`@Observability` 之外的指标口径扩充（如按任务的时延直方图——当前刻意只用 counter/gauge，histogram 需要明确分桶口径） |
 
