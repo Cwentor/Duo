@@ -248,3 +248,13 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 | --- | --- | --- | --- |
 | **G10** | worker 回报 REJECTED 后调度侧**不再重派**（`DispatchSelector` 收不到槽位上报，最后一格容量被永久占用），任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsNotRedispatchedAfterWorkerRefuses`（守卫用例，记录现状而非期望） | P1 |
 | **G11** | DSL 无 `autoStart` 类开关，未知键**静默忽略** | `ScenarioLoader.parseNode` 源码核对 + §6.4 的假绿现场 | P2 |
+
+### 6.6 远端 CI 取证（commit `1da4218`，run 35417427531）
+
+| job | 结果 | 说明 |
+| --- | --- | --- |
+| `regression (no Docker)` | ✅ success | 全量回归含新增的 message 契约 3 例 |
+| `container tier (Docker)` | ✅ success（10 steps） | 本机无 Docker，容器档只能在 CI 取证 |
+| `scale (nightly / manual)` | ⏸ 按设计跳过 | — |
+
+结论：本轮 G4 增补**远端全绿**，与第 4 轮的证据链连续。
