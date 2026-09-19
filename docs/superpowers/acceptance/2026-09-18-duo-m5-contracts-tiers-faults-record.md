@@ -352,3 +352,9 @@ duration 若大于场景收敛时间，`engine.stop()` 会取消 pending 的定�
 为对账锚点，断言「其后不存在 CANCELLED」。这是**假绿的反面**：断言写得比语义更严，同样不可信。
 
 修复后本机：`VirtualEngineTest` 12 例全绿；全量回归 **372/0/0/11 连跑 2 次全绿**。
+
+### 7.8 远端 CI 取证
+
+修复提交 `abb2475` 的 CI run **35420349133**：`regression (no Docker)` ✅ 3m15s、
+`container tier (Docker)` ✅ 59s、`scale` 按设计跳过。
+上一提交 `87e748e` 的 run 35419372086 为 ❌（即 7.7 里那个竞态），已由本次修复闭环。
