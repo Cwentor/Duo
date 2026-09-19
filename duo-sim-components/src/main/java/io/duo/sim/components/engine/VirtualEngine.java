@@ -96,11 +96,14 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
     /** 在途执行。 */
     static final class TaskExecution {
         final String taskId;
+        /** 提交侧连接（同进程提交为 null）；stop 时用它同步回写取消终态。 */
+        final FrameConnection conn;
         volatile boolean cancelled;
         volatile Thread thread;
 
-        TaskExecution(String taskId) {
+        TaskExecution(String taskId, FrameConnection conn) {
             this.taskId = taskId;
+            this.conn = conn;
         }
     }
 
@@ -159,15 +162,20 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
             }
         }
         conns.clear();
+        // 先把代际推进再发取消终态：被唤醒的任务线程即使插到中间跑完 catch，
+        // 也会看到 gen != generation ⇒ 不再重复发事实（§12：一条取消只记一条事实）
+        generation.incrementAndGet();
+        // **同步**为每个在途任务发一次 CANCELLED 终态事实：见 reportCancelledNow 的注释——
+        // 若留给被中断的任务线程发，事实会偶发漂移到重启之后（CI run 35419372086 实测）
+        for (TaskExecution exec : runningTasks) {
+            reportCancelledNow(exec.conn, exec.taskId, "cancelled");
+        }
         for (TaskExecution exec : runningTasks) {
             Thread t = exec.thread;
             if (t != null) {
                 t.interrupt();
             }
         }
-        // 代际递增：被中断的任务线程在 finally 里会归还槽位——若不设代际，
-        // 上一代任务的归还会计入**新一代**的计数（CI 实测 freeSlots 2→3 的漂移）
-        generation.incrementAndGet();
         runningTasks.clear();
         freeSlots.set(slots);
         if (server != null && !server.isClosed()) {
@@ -440,7 +448,7 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
 
     /** 执行一个任务（conn 为 null＝同进程提交，无回报通道，仅事件）。 */
     private void launch(FrameConnection conn, String taskId, String taskName, int cpu, int memGB) {
-        TaskExecution exec = new TaskExecution(taskId);
+        TaskExecution exec = new TaskExecution(taskId, conn);
         runningTasks.add(exec);
         // 代际快照：本任务只对**自己这一代**的计数与事实负责（stop/restart 后旧任务必须彻底沉默）
         final long gen = generation.get();
@@ -473,18 +481,32 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
                     fire(Event.sim("sim.engine-task-unreported", id.value(),
                             Map.of("taskId", taskId)));
                 } else {
+                    // 与 catch 分支同一纪律：**以中止标志为准**。任务正常跑完时 stop()/cancel()
+                    // 可能恰好正在推进代际，此时把 SUCCEEDED 报成终态是"事实与意图不符"
+                    // （CI run 35419372086 实测：重启后仍出现 CANCELLED 终态事实）
+                    if (exec.cancelled) {
+                        return;
+                    }
                     String state = result.success() ? TaskStatus.SUCCESS : TaskStatus.FAILED;
                     reportTerminal(conn, taskId, state,
                             exec.cancelled ? "cancelled" : result.errorMessage());
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                if (gen == generation.get()) {
-                    reportTerminal(conn, taskId, TaskStatus.CANCELLED,
-                            exec.cancelled ? "cancelled" : "interrupted");
+                // 取消的终态事实已由 stop() 在**递增代际之后**同步发出（reportCancelledNow）；
+                // 这里既不重复发事实（一条取消只记一条事实），也只在本代际仍有效时补连接回写
+                if (gen == generation.get() && conn != null) {
+                    try {
+                        conn.write(new TaskStatus(taskId, id.value(), TaskStatus.CANCELLED,
+                                exec.cancelled ? "cancelled" : "interrupted"));
+                    } catch (IOException ignored) {
+                        // 提交侧已断开
+                    }
                 }
             } finally {
-                // 只有本代际的任务才归还槽位：否则上一代任务的归还会计入新一代（计数漂移）
+                // 只有**当前**代际的任务才归还槽位：上一代的归还计入新一代会造成计数漂移
+                // （CI 实测 freeSlots 2→3）。注意这里必须是「代际未变」而不是「代际相同」——
+                // 任务在本代际内正常结束也要归还槽位（下面的 CAS 与判据都指向这一点）。
                 if (gen == generation.get()) {
                     runningTasks.remove(exec);
                     freeSlots.incrementAndGet();
@@ -533,6 +555,28 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         }
         fire(Event.sim("sim.engine-task-status", id.value(),
                 Map.of("taskId", taskId, "state", state)));
+    }
+
+    /**
+     * 取消终态：**事实先在调用线程（＝stop/restart 的线程）落流**，再回写连接。
+     *
+     * <p>为什么必须与 {@link #reportTerminal} 分开：stop/restart 走的是
+     * 「先中断任务线程 → 再 {@code generation.incrementAndGet()}」的顺序，被中断的任务线程
+     * 在 {@code catch (InterruptedException)} 里先读到**旧代际**、于是进入上报分支，
+     * 随后才执行 {@code fire}——这条窗口让旧代际的 CANCELLED 事实**偶发**落到重启之后
+     * （CI run 35419372086 实测：断言"旧代际不得向新一代报终态"失败）。
+     * 把事实挪到 stop 线程同步发射后，代际判定与事实发射之间不再有任何异步空隙。
+     */
+    private void reportCancelledNow(FrameConnection conn, String taskId, String detail) {
+        fire(Event.sim("sim.engine-task-status", id.value(),
+                Map.of("taskId", taskId, "state", TaskStatus.CANCELLED)));
+        if (conn != null) {
+            try {
+                conn.write(new TaskStatus(taskId, id.value(), TaskStatus.CANCELLED, detail));
+            } catch (IOException ignored) {
+                // 同上：提交侧已断开
+            }
+        }
     }
 
     /** 假日志落流（与 worker 同口径：{@code logLines} 逐行、占位符可展开、终态之前）。 */

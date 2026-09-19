@@ -326,3 +326,29 @@ duration 若大于场景收敛时间，`engine.stop()` 会取消 pending 的定�
 
 §13 的「每契约一正例一故障例」现在 **8 个契约里 7 个成对**，唯一余项是
 **scheduler 的「同拓扑换档」用例**（机制已存在，缺的是场景），已记入 G4 行。
+
+### 7.7 远端 CI 抓到的一个真实竞态（本机两次全绿也没抓到）
+
+推送 `87e748e` 后 CI 判红：`regression (no Docker)` 失败于
+`VirtualEngineTest.restartDoesNotLetStaleTaskThreadsDriftSlotCount`
+（`旧代际任务不得向新一代报终态事实`）。这是**真实竞态**，不是偶发噪声：
+
+- `stop()` 的顺序是「中断任务线程 → `generation.incrementAndGet()` → 清空 `runningTasks`」；
+  被中断的任务线程在 `catch (InterruptedException)` 里**先读到旧代际**、于是进入上报分支，
+  之后才执行 `fire(...)`——这条窗口让旧代际的 `CANCELLED` 终态事实偶发漂移到重启之后。
+- 本机连跑两次全绿、CI 一次即红，正是窗口型竞态的典型表现。
+
+修复分三处，都在"事实与意图必须一致"这条线上：
+
+1. `stop()` 改为 **先递增代际、再同步发射取消终态**（`reportCancelledNow`，事实在 stop 线程
+   落流，先事件后回写连接），最后才中断任务线程。这样代际判定与事实发射之间不再有异步空隙。
+2. 被中断任务线程的 `catch` 分支**不再重复发事实**（一条取消只记一条事实），只在代际未变时
+   补一次连接回写。
+3. 正常完成分支补齐与 `catch` 对称的守卫：`exec.cancelled` 为真时**不报终态**
+   （此前会把"已决定取消"报成 succeeded/failed）。
+
+**用例口径同时更正**：原断言「不得存在任何 CANCELLED 事实」本身是错的——取消事实**本该存在**，
+它必须出现在 `sim.engine-restarted` **之前**（谁取消谁记账）。改为以 `sim.engine-restarted`
+为对账锚点，断言「其后不存在 CANCELLED」。这是**假绿的反面**：断言写得比语义更严，同样不可信。
+
+修复后本机：`VirtualEngineTest` 12 例全绿；全量回归 **372/0/0/11 连跑 2 次全绿**。
