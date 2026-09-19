@@ -358,3 +358,36 @@ duration 若大于场景收敛时间，`engine.stop()` 会取消 pending 的定�
 修复提交 `abb2475` 的 CI run **35420349133**：`regression (no Docker)` ✅ 3m15s、
 `container tier (Docker)` ✅ 59s、`scale` 按设计跳过。
 上一提交 `87e748e` 的 run 35419372086 为 ❌（即 7.7 里那个竞态），已由本次修复闭环。
+
+## 8. 第 6 轮：G10 修复（被拒任务的槽位记账退还，P1）
+
+### 8.1 缺口与症状
+
+worker 对派发回报 `REJECTED` 时，调度侧**没有任何人退还** `DispatchSelector.onDispatched` 记下的
+本地递减。实例只有 1 格容量时，本地账永久停在 0 ⇒ `select()` 恒返回 null ⇒ 被拒任务停在待派发态，
+整个 DAG 永不收敛。修复前的实测症状（曾以缺口用例钉住）：
+`sut.task-dispatched` 与 `sut.task-rejected` **各只有 1 条**、`sut.dag-terminal` 永不出现。
+
+### 8.2 修复
+
+- `DispatchSelector` 新增 `onDispatchRolledBack(name)`：退还本地递减，**但以最近一次 `SlotReport`
+  上报的槽位数为上界**（新增 `lastKnown` 表，`onRemoved` 同步清理），不做无根据的加账；
+  权威数值仍只由 worker 的 `SlotReport` 决定。
+- `VirtualScheduler.readFeed`：收到 `state == REJECTED` 的 `TaskStatus` 时先退还本地记账，
+  再交给状态机（状态机侧「回滚尝试、不消耗重试额度」的语义不变）。
+- 缺口用例翻转为**修复守卫**：`rejectedTaskIsNotRedispatchedAfterWorkerRefuses`
+  → `rejectedTaskIsRedispatchedAfterLocalSlotRollback`，断言由「派发只有 1 条、DAG 不收敛」
+  翻转为「派发事实 ≥2、worker 侧收到次数与事实一致、attempt 恒为 1、无 `sut.task-retry`」。
+
+### 8.3 实测证据
+
+- `VirtualSchedulerTest` 10 例全绿（含翻转后的守卫用例）。
+- 全量回归 **372 测 / 0 失败 / 0 错误 / 11 skip**（components 120、embedded 55 含 10 skip、
+  examples 62 含 1 skip、kernel 76、protocol 12、scenario 47），**连跑 2 次全绿**。
+
+### 8.4 语义边界（如实记录，不夸大）
+
+退还是「调度侧把派发前的账还原」，**不是**替 worker 报数：worker 若因自身原因确实不空闲，
+它会用下一次拒绝或 `SlotReport` 把真相带回来（拒绝上限 `MAX_REJECTIONS` 兜底，见状态机用例）。
+故退还只保证「被拒不会永久吃掉本地容量」，不保证「被拒之后一定有别的实例可派」——
+后者取决于拓扑里是否有第二个候选实例。

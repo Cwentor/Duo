@@ -331,6 +331,14 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
                 var msg = feed.conn.read();
                 if (msg instanceof TaskStatus ts) {
                     // 线协议 TaskStatus 自带 instanceName：透传给状态事件（断言数据契约）
+                    // G10 修复（P1）：worker **显式拒绝**时必须把派发时的本地槽位预留退还，
+                    // 否则「最后一格容量」被被拒任务永久占用、且无其它候选 ⇒ 被拒任务停在
+                    // 待派发态、DAG 永不收敛（缺口用例 rejectedTaskIsNotRedispatchedAfterWorkerRefuses）。
+                    // 仅回滚**本地记账**（selector 自己的账）；不发 SlotReport、不替 worker 报数——
+                    // 权威数值仍只由 worker 的 SlotReport 决定。
+                    if (TaskStatus.REJECTED.equals(ts.state())) {
+                        selector.onDispatchRolledBack(feed.name);
+                    }
                     stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail(),
                             ts.instanceName());
                 } else if (msg instanceof HeartbeatReport hb) {

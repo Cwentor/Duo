@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class DispatchSelector {
 
     private final Map<String, AtomicInteger> freeSlots = new ConcurrentHashMap<>();
+    /** 最近一次 SlotReport 上报的槽位数＝调度侧已知容量（退还时的上界，防止凭空加账）。 */
+    private final Map<String, Integer> lastKnown = new ConcurrentHashMap<>();
     private final AtomicInteger cursor = new AtomicInteger();
 
     /** 注册实例（连接建立时）；初始 known=false，SlotReport 到达后才可被选中。 */
@@ -28,6 +30,7 @@ public final class DispatchSelector {
     /** SlotReport 权威刷新。 */
     public void onSlotReport(String instanceName, int slots) {
         freeSlots.computeIfAbsent(instanceName, k -> new AtomicInteger()).set(slots);
+        lastKnown.put(instanceName, slots);
     }
 
     /** 派发成功：本地递减（SlotReport 到达时会被权威值覆盖）。 */
@@ -38,9 +41,30 @@ public final class DispatchSelector {
         }
     }
 
+    /**
+     * 派发被 worker **显式拒绝**：退还 {@link #onDispatched} 的本地递减（G10 修复，P1）。
+     *
+     * <p>为什么必须退：被拒的任务没有占用 worker 的槽位，但本地账已经记了一笔；实例只有
+     * 一格容量时账就永久停在 0，{@link #select()} 永远返回 null ⇒ 被拒任务无处可派、
+     * 整个 DAG 卡在待派发态（实测：派发事实与拒绝事实各只有 1 条，DAG 永不收敛）。
+     *
+     * <p>上限：只退到调度侧**已知的**容量为止（{@code lastKnown}），不做无根据的加账——
+     * 退还值仍可能比 worker 真实空闲数保守（worker 若因自身原因不空闲，它会用 SlotReport
+     * 或下一次拒绝把真相带回来），但**绝不会**凭空超过 worker 上报的槽位数。
+     */
+    public void onDispatchRolledBack(String instanceName) {
+        AtomicInteger v = freeSlots.get(instanceName);
+        if (v == null) {
+            return; // 实例已移除（连接丢失）：重派由状态机的失联路径负责
+        }
+        int cap = lastKnown.getOrDefault(instanceName, Integer.MAX_VALUE);
+        v.updateAndGet(cur -> Math.min(cap, cur + 1));
+    }
+
     /** 派发失败/实例移除。 */
     public void onRemoved(String instanceName) {
         freeSlots.remove(instanceName);
+        lastKnown.remove(instanceName);
     }
 
     public int freeSlotsOf(String instanceName) {

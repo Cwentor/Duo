@@ -289,47 +289,47 @@ class VirtualSchedulerTest {
     }
 
     /**
-     * **线上语义缺口**（如实记录，不伪造覆盖）：worker 对任务给出 REJECTED 后，**调度侧不会把
-     * 它重新派发到别的实例**——被拒任务会停在待派发态，DAG 永不收敛（只发生**一次**拒绝事实）。
+     * **G10 修复守卫**（P1，本轮落地）：worker 对派发给出 {@code REJECTED} 后，调度侧必须把
+     * 派发时的本地槽位预留**退还**，使被拒任务能继续被重派（受状态机的拒绝上限兜底）。
      *
-     * <p>证据链（均为实测，非推断）：
-     * <ol>
-     *   <li>{@code readLoop} 确实消费了重派的帧（策略按「本 worker 收到的派发次数」计数，
-     *       第 2 次以后仍返回 REJECTED），但**第 2 次派发并未发生**：
-     *       {@code sut.task-dispatched} 事实只有 1 条、拒绝事实也只有 1 条；</li>
-     *   <li>原因在 {@link DispatchSelector}：worker 拒绝时**没有任何上报**（既不 SlotReport
-     *       也不回滚本地计数），调度侧仍把上一轮 {@code onDispatched} 的本地递减记在账上，
-     *       于是「最后一格容量」被这一条被拒的任务**永久占用**，且该实例无其它候选；
-     *   <li>{@link SchedulerStateMachine} 侧的 PENDING 是对的，缺的是「派发对象」。</li>
-     * </ol>
+     * <p>修复前的实测症状（曾以缺口用例钉住）：实例只有 1 格容量时，{@link DispatchSelector}
+     * 的本地递减无人回滚 ⇒ {@code select()} 永远返回 null ⇒ 派发事实与拒绝事实**各只有 1 条**、
+     * DAG 永不收敛。
      *
-     * <p>本用例只断言**观察到的现状**（不是期望行为），把它钉成有据可查的缺口；修复需产品拍板
-     * （例如：worker 拒绝时补偿本地计数，或让 {@code SlotReport} 成为唯一权威）——**独立工作项**，
-     * 本轮不动产品代码。
+     * <p>修复后断言：拒绝被如实记录、重派确实发生（派发事实 ≥2），且
+     * **仍不消耗重试额度**（每次 attempt 都是 1、无 {@code sut.task-retry}）。
      */
     @Test
-    void rejectedTaskIsNotRedispatchedAfterWorkerRefuses() throws Exception {
+    void rejectedTaskIsRedispatchedAfterLocalSlotRollback() throws Exception {
         startScheduler("job-a");
         FakeWorker w = new FakeWorker(schedulerAddress(), "workers-1", 1);
         workers.add(w);
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         w.policy = d -> {
             attempts.incrementAndGet();
-            return TaskStatus.REJECTED; // 每次派发都拒
+            return TaskStatus.REJECTED; // 每次派发都拒（拒绝上限兜底见状态机用例）
         };
 
         assertNotNull(w.awaitDispatch(3_000), "调度侧必须派发过");
         assertNotNull(awaitEvent("sut.task-rejected", 5_000), "拒绝必须留痕（不静默）");
 
-        // 给足 pump 周期（20ms × 数十次），确认「不再重派」是稳态而不是还没轮到
-        Thread.sleep(1_500);
-        int dispatched = (int) events.stream()
+        // 退还必须真实发生：给足 pump 周期，期待出现**第二次**派发（而不是停在 1 次）
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline
+                && events.stream().filter(e -> "sut.task-dispatched".equals(e.type())).count() < 2) {
+            Thread.sleep(20);
+        }
+        long dispatched = events.stream()
                 .filter(e -> "sut.task-dispatched".equals(e.type())).count();
-        assertEquals(1, dispatched,
-                "现状：被拒任务不再被重派（派发事实仅 " + dispatched + " 条）");
-        assertEquals(1, attempts.get(), "worker 侧也只收到一次派发");
-        assertNull(awaitEvent("sut.dag-terminal", 1_000),
-                "现状：被拒任务停在待派发且无候选实例 ⇒ DAG 永不收敛（缺口，记入 ROADMAP）");
+        assertTrue(dispatched >= 2,
+                "退还本地槽位后被拒任务必须能继续重派，实测派发事实 " + dispatched + " 条");
+        assertEquals(dispatched, attempts.get(), "worker 侧收到的派发次数应与派发事实一致");
+        // 准入失败不是重试：不得消耗重试额度，attempt 必须恒为 1
+        events.stream().filter(e -> "sut.task-dispatched".equals(e.type()))
+                .forEach(e -> assertEquals(1, e.payload().get("attempt"),
+                        "准入失败不消耗重试额度：每次派发 attempt 都必须为 1，实际 " + e.payload()));
+        assertTrue(events.stream().noneMatch(e -> "sut.task-retry".equals(e.type())),
+                "拒绝回滚不等于重试：不得发 sut.task-retry");
     }
 
     @Test

@@ -64,7 +64,7 @@
 | **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
 | **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**第 4 轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
-| **G10** | **拒绝后的重派在线上不落地（第 5 轮新发现，待产品拍板）**：worker 回报 `REJECTED` 后，`DispatchSelector` **收不到任何槽位上报**（worker 既不 `SlotReport` 也不回滚本地计数），调度侧仍记着上一轮 `onDispatched` 的本地递减 ⇒ 最后一格容量被该任务永久占用；若该实例无其它候选，任务停在 PENDING、DAG 永不收敛（只产生 1 条拒绝事实）。状态机侧的 PENDING 与回滚**是对的**，缺的是「派发对象」 | `VirtualSchedulerTest.rejectedTaskIsNotRedispatchedAfterWorkerRefuses`（如实记录现状的守卫用例：`sut.task-dispatched` 恒为 1、`attempts` 恒为 1、无 `sut.dag-terminal`）+ `DispatchSelector.onDispatched/onSlotReport` 源码核对 | 「G9 已闭合」只覆盖了**同进程**通路；线协议通路仍会把任务卡死（违反 §12 不静默的完整语义） | P1（独立修复项，非 M5 交付物 6 的一部分） |
+| **G10** | ✅ **已闭合（第 6 轮）**：worker 回报 `REJECTED` 时，`DispatchSelector` 现在会**退还** `onDispatched` 记下的本地递减（新增 `onDispatchRolledBack`，以最近一次 `SlotReport` 的槽位数为上界，防凭空加账）⇒ 被拒任务能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。修复前症状：实例仅 1 格容量时最后一格被永久占用、任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsRedispatchedAfterLocalSlotRollback`（缺口用例**已翻转**为修复守卫：派发事实 ≥2、worker 侧收到次数一致、`attempt` 恒为 1、无 `sut.task-retry`）+ `DispatchSelector.onDispatchRolledBack` | 「G9 已闭合」此前只覆盖**同进程**通路，线协议通路会把任务卡死（违反 §12 的完整语义） | ~~P1~~ 已完成 |
 | **G11** | **DSL 缺「声明但不启动」开关（第 5 轮新发现，待拍板）**：`Scenario.NodeSpec` 没有 `autoStart` 之类的字段，写进 YAML 也**不解析**（静默忽略）。于是「只验某契约、不要 worker 一起把 DAG 跑完」这种合理诉求无法表达——`m5-new-contracts-acceptance` 的三个故障因此曾经落在任务已经跑完之后（断言形同对着空气通过，本轮改注入时点绕过） | `ScenarioLoader.parseNode`（逐字段解析，无严格未知键校验）+ `ScenarioEngine.startComponents` 的启动判据（`sut() ‖ isExternal ‖ !startable ‖ 已存在` ⇒ 其余全起） | 场景作者无法裁剪拓扑；写错的键不报错（与 §12「不静默」冲突） | P2（拍板后 1 小时内可落） |
 
 ---
@@ -191,14 +191,13 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
   无 socket），把此前只能在 wire 层"试试看"的拒绝语义钉成确定性断言——拒绝 N 次 ⇒ 任务回到
   PENDING、**重试额度净消耗为 0**（`dispatch` +1 与回滚 −1 相抵，在途时 `attemptsOf == 0`）、
   超 `MAX_REJECTIONS` ⇒ 显式 FAILED + 下游 SKIPPED + `onAllTerminal` 恰好一次 + 拒绝不回调 `onRetry`
-- **本轮自测发现的一处产品缺口（G10，新增）**：worker 回报 `REJECTED` 后，调度侧**不会把任务重派到
-  其它实例**——被拒任务停在 PENDING，DAG 永不收敛（只产生 1 条拒绝事实）。
-  证据链：`FakeWorker` 按"本 worker 收到的派发次数"计数（第 2 次以后仍拒），但
-  `sut.task-dispatched` 事实始终只有 1 条 ⇒ 第 2 次派发**根本没发生**；
-  根因在 `DispatchSelector`：worker 拒绝时**没有任何槽位上报**（既不 `SlotReport` 也不回滚本地计数），
-  调度侧仍把上一轮 `onDispatched` 的本地递减记在账上，最后一格容量被该任务永久占用且无其它候选。
-  已写成**如实记录现状**的用例 `rejectedTaskIsNotRedispatchedAfterWorkerRefuses`（不是期望行为），
-  修复需产品拍板（worker 拒绝时补偿计数 / 让 `SlotReport` 成为唯一权威）——**独立工作项**
+- **G10 已修复（第 6 轮）**：worker 回报 `REJECTED` 后，调度侧**会把本地槽位预留退还**
+  （`DispatchSelector.onDispatchRolledBack`，以最近一次 `SlotReport` 的槽位数为上界），
+  被拒任务因此能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。
+  修复前证据链：`FakeWorker` 按"本 worker 收到的派发次数"计数（第 2 次以后仍拒），但
+  `sut.task-dispatched` 事实始终只有 1 条 ⇒ 第 2 次派发**根本没发生**；根因是
+  `onDispatched` 的本地递减无人回滚，最后一格容量被该任务永久占用且无其它候选。
+  守卫用例已从「如实记录现状」**翻转为期望行为** `rejectedTaskIsRedispatchedAfterLocalSlotRollback`。
 - **一处夹具级发现（非产品缺陷）**：`VirtualScheduler` 的 readFeed 只处理 `TaskStatus`，
   pump 对同一 taskId **不**区分"未派发"与"派发中"，故"帧级拒绝 → 重派"的**顺序**断言会随线程
   时序抖动（本轮实测 6 次假红）。结论：顺序性判据必须下沉到状态机（已做）；
@@ -301,7 +300,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 3 | **M5 的 DSL 断链修复（G7）+ custom-hook 闭环** | ✅ **第 3 轮完成**（G7 闭合、G5 钩子部分闭合；17 条新用例） | 与 M5 主线并行 |
 | 4 | **M5 契约与档位补全**（`engine`/`scheduler`/`filestore`/`message` + `store`/`resource` 档位 + 三个故障动作） | ✅ **第 4 轮完成**（G1/G5 闭合、G3 大幅收窄；58 条新用例 + 18 条移入 components） | 可与 M7 收尾并行 |
 | 5 | **M5 金标准场景集（G4）** | 🟡 **7/8 契约已成对**（本轮：message 成对、filestore 补故障例；余：scheduler 同拓扑换档） | 依赖顺序 4 ✅ |
-| 5b | **修复 G10（拒绝后重派不落地）** | ⏭ 与顺序 5 同一轮或紧随（守卫用例已就位，修复后翻转断言即可） | 可并行 |
+| 5b | **修复 G10（拒绝后重派不落地）** | ✅ **第 6 轮完成**（`onDispatchRolledBack` + 守卫用例翻转；全量 372/0/0/11） | 已闭环 |
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ⏭ 待拍板：要么补 `autoStart: false`，要么把「节点声明即启动」写成设计约束 | 与顺序 5 耦合 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
 | 7 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
