@@ -270,9 +270,19 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
    - `container` job：有 Docker，跑容器档（`ZookeeperContainerRegistryTest` 4 条）并**断言 skip=0**；
    - `scale` job（nightly / 手动触发）：`-Dduo.scale=true`，把 `build/scale/*.json` 与录制上传为 artifact
      ——直接解决 G8「规模数据不可追溯」。
-3. **许可与发布**：✅ `LICENSE`（Apache-2.0 全文，本轮补齐）；**未做**（下一轮）：`maven-source-plugin` /
-   `javadoc`、版本策略与 `CHANGELOG.md`。
+3. **许可与发布**：✅ `LICENSE`（Apache-2.0 全文）；✅ **第 8 轮补齐发布配置**：
+   `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2 接入根 POM（缺省 `skip=true`，
+   `-Drelease` 一次性产出源码/文档 jar），POM 元数据（`licenses`/`scm`/`url`）补全，
+   版本策略与 `CHANGELOG.md` 落地。
 4. **依赖与质量门禁**（**未做**，下一轮）：`dependency:analyze`、可选覆盖率报告（JaCoCo）。
+
+**发布配置的实测取证（第 8 轮）**
+
+- 缺省构建不产出附件、行为不变：`-DskipTests package` → `Skipping javadoc generation`，
+  `duo-sim-kernel/target` 下**只有** `duo-sim-kernel-0.1.0-SNAPSHOT.jar`；
+- `-Drelease` 全量打包 → **8 个 `-sources.jar` + 8 个 `-javadoc.jar`**（8 个模块各一对），
+  kernel 三个 jar 体量：`javadoc 438 KB / sources 47 KB / main 86 KB`；
+- 常规回归不受影响：`mvnw test` 全绿（379 测）。
 
 **验收标准**
 
@@ -317,7 +327,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 5 | **M5 金标准场景集（G4）** | ✅ **8/8 契约已成对**（第 5 轮：message/filestore 成对；第 8 轮：scheduler 的跨档位发现路径 `ZkSchedulerDiscoveryTest`） | 已闭环 |
 | 5b | **修复 G10（拒绝后重派不落地）** | ✅ **第 6 轮完成**（`onDispatchRolledBack` + 守卫用例翻转；全量 372/0/0/11） | 已闭环 |
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ✅ **第 8 轮完成**（`autoStart` + 未知键严格校验 + SUT/external 陷阱校验；4 例） | 已闭环 |
-| 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
+| 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ✅ **第 8 轮完成**（`-Drelease` 产出 8 对 sources/javadoc jar；缺省行为不变；`CHANGELOG.md` + 版本策略） | 已闭环 |
 | 7 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
@@ -410,10 +420,12 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | **G9 修复（本轮收口）** | 证据：CI run [35326005487](https://github.com/Cwentor/Duo/actions/runs/35326005487) 复现（`dispatch-per-task={job-c=2}`、`last-status={job-c=RETRYING@workers-2}`、`dispatch-per-instance={workers-3=2}`）→ 调度侧把重派任务发给**实际已满**的 `workers-3`，worker 静默丢弃 → 永久挂起。修复：`TaskStatus.REJECTED` 显式拒绝 + 调度侧回滚尝试重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报；`VirtualWorker`（virtual 档）与 `DemoRealWorker`（real 档）**同构修复**（详见验收记录 §4.1） |
 | 远端复验 | 修复后 CI：[35329022833](https://github.com/Cwentor/Duo/actions/runs/35329022833) `regression` ✓ / `container` ✓；[35329733881](https://github.com/Cwentor/Duo/actions/runs/35329733881)（含 real 档镜像修复）`regression` ✓ / `container` ✓，并对后者 `gh run rerun` 两次亦全绿——**修复后连续 4 次全绿**（修复前 3 次中 2 次挂起） |
 | 测试 | 全量回归 **263 测 / 0 失败 / 5 skip**（3.0 分钟）：kernel 76、scenario 41、examples 54（含 M6 端到端 3 例、G9 3 例）、embedded 39、components 44（含 G9 2 例）、protocol 9 |
-| 未做（下一轮） | M7 的发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁；M5 全部；M8 全部 |
+| M7-3 发布配置（第 8 轮） | 根 POM：`licenses`/`scm`/`url` 元数据 + `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2（`doclint=none`）；`release` profile 以 `-Drelease` 激活（缺省 `skip=true`）；`CHANGELOG.md`（Keep a Changelog 形态 + 版本策略）。**实测**：`-Drelease -DskipTests package` → 8 对 `-sources.jar`/`-javadoc.jar`；缺省 `package` 只出主 jar（`Skipping javadoc generation`）；`mvnw test` 379 测全绿 |
+| 未做（下一轮） | M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）；**M8 全部**（观测面：Prometheus `/metrics` + logback） |
 
-> **下一轮的入口建议**：按 §5 顺序启动 **M5（契约与档位补全 + DSL 断链修复 + 金标准场景集）**，
-> 并行补 **M7 的发布配置**；M8 待契约面稳定后再定指标口径。
+> **下一轮的入口建议**：M5 交付物 1–6 与 M7 发布配置均已收口（G4/G10/G11 闭合）。
+> 下一步进入 **M8（观测面）**：Prometheus `/metrics` 端点 + logback 结构化日志，
+> 并顺带补 M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）。
 
 ### 2026-09-18（第 3 轮）：M5 启动——DSL 断链 G7 闭合 + custom-hook 闭环
 

@@ -466,3 +466,34 @@ store、message、filestore、resource 此前已成对；scheduler 的最后一�
 
 `docs/SCENARIO-DSL.md` §1 节点字段表补 `autoStart` 行（含"对 SUT/external 无意义并会被拒绝"
 的说明），§8 偏差表新增第 10 条（未知键静默 → 已闭合）。
+
+## 11. 第 8 轮：M7 发布配置收尾（交付合规）
+
+### 11.1 交付内容
+
+| 项 | 落地 | 实测证据 |
+| --- | --- | --- |
+| 源码 jar | `maven-source-plugin` 3.3.1（`jar-no-fork`，绑 `package`） | `-Drelease -DskipTests package` ⇒ 8 个 `-sources.jar` |
+| 文档 jar | `maven-javadoc-plugin` 3.11.2（`doclint=none`，绑 `package`） | 同上 ⇒ 8 个 `-javadoc.jar`；kernel：sources 47 KB / javadoc 438 KB / main 86 KB |
+| 元数据 | 根 POM 补 `licenses`（Apache-2.0）/`scm`/`url` | `mvnw validate` 通过 |
+| 开关 | `release` profile（`-Drelease` 激活）改 `release.skipAttachments=false` | **缺省构建行为不变**：`Skipping javadoc generation`，`target/` 下只有主 jar |
+| 版本策略 + 变更日志 | `CHANGELOG.md`（Keep a Changelog 形态；0.x 规则、里程碑版本判定、1.0 前不兼容需标 BREAKING） | 文件本体 |
+
+### 11.2 为什么不把附件 jar 做成缺省
+
+`mvnw test` 是本地与 CI 的主要回路（T7「秒级反馈回路」）。附件 jar 对测试毫无用处却会
+在每次构建多跑一遍 javadoc/打包——因此**缺省 skip、发布档显式打开**，两边都不牺牲。
+
+### 11.3 实测证据
+
+- 缺省：`mvnw -o -B -pl duo-sim-kernel -am -DskipTests package` ⇒ `BUILD SUCCESS`，
+  `target/` 仅 `duo-sim-kernel-0.1.0-SNAPSHOT.jar`；
+- 发布档：`mvnw -o -B -Drelease -DskipTests package` ⇒ `BUILD SUCCESS`，
+  全仓 **8 个 `-sources.jar` + 8 个 `-javadoc.jar`**；
+- 回归：`mvnw test` ⇒ `BUILD SUCCESS`，**379 测 0 失败 / 0 错误 / 11 skip**。
+
+### 11.4 仍未做（如实记录）
+
+- **质量门禁**：`dependency:analyze`、可选 JaCoCo 覆盖率——ROADMAP M7 交付物 4，下一轮；
+- **M8 观测面**：Prometheus `/metrics` 与 logback 结构化日志**整体未实现**（G6，P2）——
+  这是「最初的目标」里 §11 承诺三条通道中唯一尚未落地的一条。

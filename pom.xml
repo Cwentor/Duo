@@ -10,6 +10,21 @@
     <packaging>pom</packaging>
     <name>Duo Sim Parent</name>
     <description>通用可组合虚拟大数据仿真系统</description>
+    <url>https://github.com/Cwentor/Duo</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:https://github.com/Cwentor/Duo.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Cwentor/Duo.git</developerConnection>
+        <url>https://github.com/Cwentor/Duo</url>
+    </scm>
 
     <modules>
         <module>duo-sim-protocol</module>
@@ -23,6 +38,11 @@
     </modules>
 
     <properties>
+        <!-- M7 发布配置（2026-09-19）：源码/文档 jar 的产出开关。
+             `-Drelease` 一次性打开（本地 `mvnw -Drelease package` 与 release CI 复用）；
+             常规 `mvnw test` 不受影响（附件 jar 不进测试类路径，也不额外耗时）。 -->
+        <release>false</release>
+        <release.skipAttachments>true</release.skipAttachments>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jackson.version>2.18.2</jackson.version>
@@ -122,6 +142,44 @@
             <plugins>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <skipSource>${release.skipAttachments}</skipSource>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>3.11.2</version>
+                    <configuration>
+                        <!-- 中文注释 + 严格 doclint 在 JDK 21 上会因缺 @param/@return 直接失败；
+                             发布产物不因此卡住（文档质量由评审守，不由构建守）。 -->
+                        <doclint>none</doclint>
+                        <quiet>true</quiet>
+                        <skip>${release.skipAttachments}</skip>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.2</version>
                     <configuration>
@@ -135,9 +193,33 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- 发布档：`mvnw -Drelease package`（或 CI 的 release job）产出源码/文档 jar。
+             常规构建（`mvnw test`）走缺省，两个附件插件被 skip 掉，行为与引入前完全一致。 -->
+        <profile>
+            <id>release</id>
+            <activation>
+                <property>
+                    <name>release</name>
+                </property>
+            </activation>
+            <properties>
+                <release.skipAttachments>false</release.skipAttachments>
+            </properties>
+        </profile>
+    </profiles>
 </project>
