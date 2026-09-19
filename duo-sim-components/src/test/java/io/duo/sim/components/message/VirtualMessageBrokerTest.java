@@ -127,5 +127,60 @@ class VirtualMessageBrokerTest {
         // §7.5 强制一致性：NONE ⇒ interfaceDirect
         assertEquals(EndpointShape.NONE, p.metadata().endpointShape());
         assertTrue(p.metadata().interfaceDirect());
+        // M5 交付物 6：声明的故障能力必须落在元数据里（§7.5 一致性校验的对象）
+        assertEquals(java.util.Set.of(io.duo.sim.kernel.api.FaultAction.FREEZE),
+                p.metadata().supportedFaults());
+    }
+
+    // ---- M5 交付物 6：message 契约的故障例（与 publishDrainKeepsOrderPerTopic 正例成对）----
+
+    /**
+     * 冻结期间发布**显式失败**、已入队消息**不丢**、解冻后恢复正常——G4 要求的
+     * 「一正例 + 一故障例」中的故障例。
+     */
+    @Test
+    void freezeRejectsPublishExplicitlyAndKeepsQueuedMessages() throws Exception {
+        start(Map.of());
+        broker.publish("orders", "before-freeze");
+        broker.inject(freezeAction());
+        assertTrue(broker.isFrozen());
+
+        var ex = assertThrows(ComponentException.class,
+                () -> broker.publish("orders", "while-frozen"));
+        assertTrue(ex.getMessage().contains("frozen"), ex.getMessage());
+        assertEquals(1, broker.depth("orders"), "冻结只拒新消息，已入队的不得丢");
+        assertEquals(List.of("before-freeze"), broker.drain("orders"),
+                "冻结只影响写路径：消费侧仍可取走已有消息");
+
+        broker.inject(freezeAction()); // 幂等：重复注入只发一条事实
+        assertEquals(1,
+                events.stream().filter(e -> "sim.message-frozen".equals(e.type())).count(),
+                "重复注入必须幂等");
+
+        broker.clear(freezeAction());
+        assertTrue(!broker.isFrozen());
+        broker.publish("orders", "after-resume");
+        assertEquals(List.of("after-resume"), broker.drain("orders"), "解冻后恢复正常发布");
+        assertEquals(1,
+                events.stream().filter(e -> "sim.message-resumed".equals(e.type())).count());
+    }
+
+    /** 未声明的故障动作必须显式拒绝（§12 不静默）。 */
+    @Test
+    void unsupportedFaultIsRejectedNotSilentlyIgnored() throws Exception {
+        start(Map.of());
+        var crash = new io.duo.sim.kernel.api.FaultAction(
+                io.duo.sim.kernel.api.FaultAction.CRASH,
+                io.duo.sim.kernel.api.FaultAction.ComponentAddress.of(new ComponentId("mq")),
+                Map.of(), null);
+        assertThrows(UnsupportedOperationException.class, () -> broker.inject(crash));
+        assertThrows(UnsupportedOperationException.class, () -> broker.clear(crash));
+    }
+
+    private static io.duo.sim.kernel.api.FaultAction freezeAction() {
+        return new io.duo.sim.kernel.api.FaultAction(
+                io.duo.sim.kernel.api.FaultAction.FREEZE,
+                io.duo.sim.kernel.api.FaultAction.ComponentAddress.of(new ComponentId("mq")),
+                Map.of(), null);
     }
 }

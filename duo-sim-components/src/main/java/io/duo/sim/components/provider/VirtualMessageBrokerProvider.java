@@ -7,13 +7,13 @@ import io.duo.sim.kernel.api.Tier;
 import io.duo.sim.kernel.api.VirtualComponent;
 import io.duo.sim.kernel.spi.ComponentProvider;
 
-import java.util.Set;
-
 /**
  * VirtualMessageBroker 提供者（(MESSAGE, VIRTUAL) 缺省实现，M5 交付物 1）。
  *
  * <p>元数据：{@code endpointShape=NONE} + {@code interfaceDirect=true}
- * （§7.5 的强制一致性：NONE ⇒ interface-direct；内存队列桩没有对外端口）。
+ * （§7.5 的强制一致性：NONE ⇒ interface-direct；内存队列桩没有对外端口）+
+ * {@code supportedFaults={freeze}}（M5 交付物 6：为 message 契约提供故障例；实现
+ * {@code FaultInjectable}——§7.5 一致性校验要求二者对应）。
  * 真实 Kafka（embedded/container 档）在有真实用例前不引入。
  */
 public final class VirtualMessageBrokerProvider implements ComponentProvider {
@@ -40,7 +40,8 @@ public final class VirtualMessageBrokerProvider implements ComponentProvider {
 
     @Override
     public CapabilityMetadata metadata() {
-        return CapabilityMetadata.inProcessDirect(Set.of()).withDefault(true);
+        return CapabilityMetadata.inProcessDirect(VirtualMessageBroker.supportedFaults())
+                .withDefault(true);
     }
 
     @Override

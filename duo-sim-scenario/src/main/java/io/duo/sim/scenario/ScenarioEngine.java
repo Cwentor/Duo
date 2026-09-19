@@ -108,7 +108,8 @@ public final class ScenarioEngine implements AutoCloseable {
         List<String> order = WiringResolver.topoOrder(new ArrayList<>(views.values()));
         for (String id : order) {
             var n = specById.get(id);
-            if (n.sut() || isExternal(n) || !startable(n) || byId.containsKey(id)) {
+            if (n.sut() || isExternal(n) || !startable(n) || byId.containsKey(id)
+                    || !n.autoStart()) {
                 continue; // byId 已含（startSut 预启动的依赖）则跳过
             }
             var provider = registry.resolve(Contract.fromYaml(n.contract()),

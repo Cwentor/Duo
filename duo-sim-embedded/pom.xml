@@ -20,6 +20,17 @@
             <groupId>org.apache.curator</groupId>
             <artifactId>curator-framework</artifactId>
         </dependency>
+        <!-- M8 观测面：钉住 SLF4J 后端（curator-test → zookeeper 只带 logback-**core** 1.2.13，
+             没有 classic 就没有绑定、日志静默丢弃；classic/core 版本不一致时 logback 连
+             ConsoleAppender 都装配不出来）。显式声明 classic + core，版本走属性统一管理。 -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>

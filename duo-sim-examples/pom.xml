@@ -45,5 +45,11 @@
             <groupId>org.apache.curator</groupId>
             <artifactId>curator-framework</artifactId>
         </dependency>
+        <!-- M8 观测面：本模块是 CLI/REST 的端到端宿主，「日志有后端」必须是本模块自身的
+             契约而不是传递依赖的偶然（embedded 也带 classic，Maven 就近原则取本声明）。 -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
     </dependencies>
 </project>

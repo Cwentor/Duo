@@ -39,6 +39,12 @@ jobs:
       - name: skip summary (must be visible)
         if: always()
         run: bash .github/scripts/skip-summary.sh
+      # M7 交付物 4：依赖门禁（`-Dquality` 激活 dependency:analyze-only，failOnWarning=true）。
+      # 放在 regression job 里而不是新开 job：复用同一份 ~/.m2 缓存与已下载的插件，
+      # 且「本仓依赖声明干净」与「测试全绿」是同一条纪律的两个面。
+      # 只到 `verify`（跳过测试）——测试已在上一步跑过。
+      - name: dependency gate (no unused/undeclared deps)
+        run: ./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests verify
       - uses: actions/upload-artifact@v4
         if: always()
         with:

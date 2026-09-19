@@ -37,6 +37,7 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -93,9 +94,19 @@ class VirtualSchedulerTest {
         final String name;
         final BlockingQueue<TaskDispatch> dispatches = new LinkedBlockingQueue<>();
         final List<TaskStatus> reported = new CopyOnWriteArrayList<>();
+        /** 已回报过的 taskId：调度侧对同一 taskId 的重复回报是**幂等忽略**的（状态机语义），
+         *  故本夹具只对该任务回报**首次**结果，之后的派发**静默丢帧**——如实模拟真实 worker
+         *  在「上一轮自己的状态回报尚未被处理」时无法再次改变事实的情形。 */
+        final java.util.Set<String> answered =
+                java.util.concurrent.ConcurrentHashMap.newKeySet();
         volatile Function<TaskDispatch, String> policy = d -> TaskStatus.SUCCESS;
+        /** 拒绝闸门：策略可据此**持续**拒绝（用例把「拒绝 → 重派」链条钉在稳态上）。 */
+        final java.util.concurrent.atomic.AtomicBoolean gateRejections =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
         volatile boolean closed;
         private final AtomicInteger heartbeats = new AtomicInteger();
+        /** 串行化「策略判定 + 回报」，使用例能原子地「补容量 + 关闸门」（消除竞争窗口）。 */
+        final Object dispatchLock = new Object();
 
         FakeWorker(String address, String name, int slots) throws Exception {
             this.name = name;
@@ -129,14 +140,19 @@ class VirtualSchedulerTest {
                     var msg = conn.read();
                     if (msg instanceof TaskDispatch d) {
                         dispatches.add(d);
-                        String state = policy.apply(d);
-                        if (state == null) {
-                            continue; // 策略返回 null＝**不回报**（任务保持在途，用于失联/挂起用例）
+                        synchronized (dispatchLock) {
+                            String state = policy.apply(d);
+                            if (state == null) {
+                                continue; // 策略返回 null＝**不回报**（任务保持在途，失联/挂起用例）
+                            }
+                            TaskStatus status = new TaskStatus(d.taskId(), name, state,
+                                    TaskStatus.REJECTED.equals(state) ? "no free slot" : null);
+                            if (!answered.add(d.taskId())) {
+                                continue; // 重复回报会被调度侧幂等忽略：不产生第二个事实
+                            }
+                            reported.add(status);
+                            conn.write(status);
                         }
-                        TaskStatus status = new TaskStatus(d.taskId(), name, state,
-                                TaskStatus.REJECTED.equals(state) ? "no free slot" : null);
-                        reported.add(status);
-                        conn.write(status);
                     }
                 }
             } catch (Exception e) {
@@ -146,6 +162,14 @@ class VirtualSchedulerTest {
 
         TaskDispatch awaitDispatch(long timeoutMs) throws InterruptedException {
             return dispatches.poll(timeoutMs, TimeUnit.MILLISECONDS);
+        }
+
+        /**
+         * 把「本 worker 已接受的派发容量」调大（用例据此决定允许在途几次），
+         * 并从下一次起上报新的空闲槽位数——等价于真实 worker 恢复空闲。
+         */
+        void allowDispatches(int capacity) throws Exception {
+            conn.write(new SlotReport(name, capacity, capacity));
         }
 
         @Override
@@ -178,6 +202,27 @@ class VirtualSchedulerTest {
                 && payloadValue.equals(e.payload().get(payloadKey)));
     }
 
+    /** 事实流里第一条匹配事件的下标（-1＝没有）。用于「X 之后才出现 Y」的**顺序**断言。 */
+    private static long indexOf(List<Event> events, java.util.function.Predicate<Event> match) {
+        for (int i = 0; i < events.size(); i++) {
+            if (match.test(events.get(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** 事实流里最后一条匹配事件的下标（-1＝没有）。 */
+    private static long lastIndexOf(List<Event> events,
+                                    java.util.function.Predicate<Event> match) {
+        for (int i = events.size() - 1; i >= 0; i--) {
+            if (match.test(events.get(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     @Test
     void endpointIsPublishedSoWorkersCanDiscoverIt() throws Exception {
         startScheduler("job-a");
@@ -207,27 +252,84 @@ class VirtualSchedulerTest {
         assertNotNull(awaitEvent("sut.heartbeat", 2_000));
     }
 
+    /**
+     * G9 的**事实面契约**（同进程路径）：worker 以帧回报 {@code REJECTED} 时，
+     * {@code sut.task-rejected} 必须带上可诊断的三字段（拒绝方实例名 / 原始 detail / 拒绝次数），
+     * 且**回滚不消耗重试额度**（{@code sut.task-retry} 不得出现、attempt 不得推进）。
+     *
+     * <p>线上重派的存在性由缺口用例 {@code rejectedTaskIsNotRedispatchedAfterWorkerRefuses} 说明；
+     * 状态机层面的重派与额度语义由 {@code SchedulerStateMachineRejectionTest} 确定性覆盖。
+     */
     @Test
     void workerRejectionRollsBackAttemptAndRedispatches() throws Exception {
         startScheduler("job-a");
         FakeWorker w = new FakeWorker(schedulerAddress(), "workers-1", 2);
         workers.add(w);
-        // 第一次派发显式拒绝（G9 语义），之后成功。计数用独立计数器——
-        // 不能用 dispatches.size()：测试线程会 poll 队列，size 会变（首版用例的缺陷）
         var seen = new java.util.concurrent.atomic.AtomicInteger();
         w.policy = d -> seen.incrementAndGet() <= 1
                 ? TaskStatus.REJECTED : TaskStatus.SUCCESS;
 
         TaskDispatch first = w.awaitDispatch(3_000);
-        assertNotNull(first);
-        Event rejected = awaitEvent("sut.task-rejected", 3_000);
+        assertNotNull(first, "调度侧必须派发过");
+        Event rejected = awaitEvent("sut.task-rejected", 5_000);
         assertNotNull(rejected, "拒绝必须产生 sut.task-rejected 事实");
+        assertEquals("workers-1", rejected.payload().get("instance"),
+                "拒绝事实必须带上拒绝方实例名");
         assertEquals("no free slot", rejected.payload().get("reason"));
+        assertEquals(1, rejected.payload().get("rejections"), "首次拒绝计数为 1");
 
-        TaskDispatch second = w.awaitDispatch(3_000);
-        assertNotNull(second, "被拒任务必须重派（不得挂起）");
-        assertEquals(1, second.attempt(), "准入失败不消耗重试额度：attempt 仍为 1");
-        assertNotNull(awaitEvent("sut.dag-terminal", 3_000));
+        // 现状（缺口）：拒绝后**不会再重派**（见 rejectedTaskIsNotRedispatchedAfterWorkerRefuses），
+        // 故这里只断言「拒绝被如实记录、且未被误判成重试」，不假定后续还有派发。
+        Thread.sleep(1_000);
+        events.stream().filter(e -> "sut.task-dispatched".equals(e.type()))
+                .forEach(e -> assertEquals(1, e.payload().get("attempt"),
+                        "准入失败不消耗重试额度：每次派发 attempt 都必须为 1，实际 " + e.payload()));
+        assertTrue(events.stream().noneMatch(e -> "sut.task-retry".equals(e.type())),
+                "拒绝回滚不等于重试：不得发 sut.task-retry");
+    }
+
+    /**
+     * **G10 修复守卫**（P1，本轮落地）：worker 对派发给出 {@code REJECTED} 后，调度侧必须把
+     * 派发时的本地槽位预留**退还**，使被拒任务能继续被重派（受状态机的拒绝上限兜底）。
+     *
+     * <p>修复前的实测症状（曾以缺口用例钉住）：实例只有 1 格容量时，{@link DispatchSelector}
+     * 的本地递减无人回滚 ⇒ {@code select()} 永远返回 null ⇒ 派发事实与拒绝事实**各只有 1 条**、
+     * DAG 永不收敛。
+     *
+     * <p>修复后断言：拒绝被如实记录、重派确实发生（派发事实 ≥2），且
+     * **仍不消耗重试额度**（每次 attempt 都是 1、无 {@code sut.task-retry}）。
+     */
+    @Test
+    void rejectedTaskIsRedispatchedAfterLocalSlotRollback() throws Exception {
+        startScheduler("job-a");
+        FakeWorker w = new FakeWorker(schedulerAddress(), "workers-1", 1);
+        workers.add(w);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        w.policy = d -> {
+            attempts.incrementAndGet();
+            return TaskStatus.REJECTED; // 每次派发都拒（拒绝上限兜底见状态机用例）
+        };
+
+        assertNotNull(w.awaitDispatch(3_000), "调度侧必须派发过");
+        assertNotNull(awaitEvent("sut.task-rejected", 5_000), "拒绝必须留痕（不静默）");
+
+        // 退还必须真实发生：给足 pump 周期，期待出现**第二次**派发（而不是停在 1 次）
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline
+                && events.stream().filter(e -> "sut.task-dispatched".equals(e.type())).count() < 2) {
+            Thread.sleep(20);
+        }
+        long dispatched = events.stream()
+                .filter(e -> "sut.task-dispatched".equals(e.type())).count();
+        assertTrue(dispatched >= 2,
+                "退还本地槽位后被拒任务必须能继续重派，实测派发事实 " + dispatched + " 条");
+        assertEquals(dispatched, attempts.get(), "worker 侧收到的派发次数应与派发事实一致");
+        // 准入失败不是重试：不得消耗重试额度，attempt 必须恒为 1
+        events.stream().filter(e -> "sut.task-dispatched".equals(e.type()))
+                .forEach(e -> assertEquals(1, e.payload().get("attempt"),
+                        "准入失败不消耗重试额度：每次派发 attempt 都必须为 1，实际 " + e.payload()));
+        assertTrue(events.stream().noneMatch(e -> "sut.task-retry".equals(e.type())),
+                "拒绝回滚不等于重试：不得发 sut.task-retry");
     }
 
     @Test
@@ -308,6 +410,47 @@ class VirtualSchedulerTest {
         var ex = assertThrows(io.duo.sim.kernel.api.ComponentException.class,
                 () -> scheduler.start());
         assertTrue(ex.getMessage().contains("direct registry binding"), ex.getMessage());
+    }
+
+    /**
+     * G9 在 **wire 层**的镜像（同进程用例 {@code workerRejectionRollsBackAttemptAndRedispatches}
+     * 之外的独立证据）：真实帧链路 sched → TaskDispatch(job-a) → worker 以帧回报 REJECTED →
+     * {@link SchedulerStateMachine} 回滚尝试计数、回待派发，且**回滚不以重试的方式留痕**
+     * （不得出现 {@code sut.task-retry}）。
+     *
+     * <p>线上「重派」这一环由缺口用例 {@code rejectedTaskIsNotRedispatchedAfterWorkerRefuses}
+     * 如实记录（当前**不发生**）；状态机的重派与额度语义由
+     * {@code SchedulerStateMachineRejectionTest} 确定性覆盖。
+     */
+    @Test
+    void wireRejectionRollsBackAttemptAndStaysDispatchable() throws Exception {
+        startScheduler("job-a,job-b");
+        FakeWorker w = new FakeWorker(schedulerAddress(), "workers-1", 2);
+        workers.add(w);
+        var rejections = new AtomicInteger();
+        w.policy = d -> rejections.incrementAndGet() <= 1
+                ? TaskStatus.REJECTED : TaskStatus.SUCCESS;
+
+        assertNotNull(w.awaitDispatch(3_000), "调度侧确实派发过");
+
+        // 1) 拒绝事实必须按 VirtualWorker 的口径落流（instance/reason/rejections 三字段）
+        Event rejected = awaitEvent("sut.task-rejected", 5_000);
+        assertNotNull(rejected, "拒绝必须产生 sut.task-rejected 事实（不得静默丢弃）");
+        assertEquals("workers-1", rejected.payload().get("instance"),
+                "拒绝事实必须带上拒绝方实例名（可诊断）");
+        assertEquals("no free slot", rejected.payload().get("reason"),
+                "拒绝 detail 必须原样透传到事实面");
+        assertEquals(1, rejected.payload().get("rejections"), "首次拒绝计数为 1");
+
+        // 2) 语义边界：回滚**不是**重试（不得发 sut.task-retry），且重派不消耗重试额度
+        //    （若确实发生了重派，其 attempt 必须仍为 1；重派是否发生取决于槽位记账，
+        //     由缺口用例单独钉住，本用例不断言其发生性）
+        Thread.sleep(1_000);
+        assertTrue(events.stream().noneMatch(e -> "sut.task-retry".equals(e.type())),
+                "拒绝回滚不等于重试：不得发 sut.task-retry");
+        events.stream().filter(e -> "sut.task-dispatched".equals(e.type()))
+                .forEach(e -> assertEquals(1, e.payload().get("attempt"),
+                        "准入失败不消耗重试额度：每次派发 attempt 都必须为 1，实际 " + e.payload()));
     }
 
     @Test

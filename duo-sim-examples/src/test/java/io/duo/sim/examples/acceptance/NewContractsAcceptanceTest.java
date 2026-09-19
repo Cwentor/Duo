@@ -77,6 +77,15 @@ class NewContractsAcceptanceTest {
                             "sut.dag-terminal".equals(e.type()))) {
                 Thread.sleep(50);
             }
+            // 再等带 duration 的 freeze 自然到期（TimelineScheduler 的定时 clear）：
+            // 该动作在 400ms 注入、300ms 后到期，而 stop 会取消 pending 的定时任务——
+            // 不等就会得到"解冻事实永不出现"的假红（本轮实测踩到并修正）。
+            long clearDeadline = System.currentTimeMillis() + 5_000;
+            while (System.currentTimeMillis() < clearDeadline
+                    && engine.events().stream().noneMatch(e ->
+                            "sim.engine-resumed".equals(e.type()))) {
+                Thread.sleep(20);
+            }
             engine.stop();
 
             List<Event> events = engine.events();
@@ -95,10 +104,42 @@ class NewContractsAcceptanceTest {
             var snapshot = engine.result().snapshot();
             assertTrue(snapshot.injectionFailures().isEmpty(),
                     "三个动作都必须被接受，实际失败：" + snapshot.injectionFailures());
-            assertEquals(2, snapshot.assertions().size());
+            // 断言条数与 YAML 一一对应（3 条：故障顺序 + 自动解冻顺序 + DAG 收敛）
+            assertEquals(3, snapshot.assertions().size(),
+                    "YAML 断言条数：" + snapshot.assertions());
             snapshot.assertions().forEach(a -> assertTrue(a.passed(),
                     "断言 '" + a.name() + "' 失败：" + a.detail()));
+            // ---- 故障**期间**的语义（不是"故障发生过"这种事后可签的空事实）----
+            int frozen = indexOf(events, "sim.engine-frozen");
+            int resumed = indexOf(events, "sim.engine-resumed");
+            assertTrue(frozen >= 0 && resumed > frozen,
+                    "解冻事实必须出现在冻结之后：" + types(events));
+            // 冻结窗口内不得补报终态（终态挂起到 clear）：engine 的 3s 任务在 400~700ms 的
+            // 冻结窗口里还没结束，窗口内出现的状态报告只能是非终态
+            for (int i = frozen; i < resumed; i++) {
+                Event e = events.get(i);
+                if ("sim.engine-task-status".equals(e.type())) {
+                    String state = String.valueOf(e.payload().get("state"));
+                    assertTrue(!state.startsWith("SUCCEEDED") && !state.startsWith("FAILED")
+                                    && !state.startsWith("CANCELLED"),
+                            "冻结期间不得补报终态，实测第 " + i + " 条：" + state);
+                }
+            }
         }
+    }
+
+    private static int indexOf(List<Event> events, String type) {
+        for (int i = 0; i < events.size(); i++) {
+            if (type.equals(events.get(i).type())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static String types(List<Event> events) {
+        return events.stream().map(Event::type).distinct()
+                .reduce((a, b) -> a + "," + b).orElse("(none)");
     }
 
     @Test

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,6 +48,25 @@ class ScenarioLoaderTest {
 
     private static Scenario.NodeSpec node(Scenario s, String id) {
         return s.nodes().stream().filter(n -> n.id().equals(id)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void autoStartDefaultsToTrueAndCanBeTurnedOff() {
+        // G11：不写 autoStart ⇒ 与既有场景语义一致（声明即启动）
+        assertTrue(node(load(HEAD), "workers").autoStart(), "缺省必须为 true（既有场景零改动）");
+        assertFalse(node(loadNodeFields("autoStart: false"), "m").autoStart(),
+                "autoStart: false 必须被解析（此前写进 YAML 会被静默忽略）");
+    }
+
+    @Test
+    void unknownNodeKeyIsRejectedNeverSilentlyIgnored() {
+        // G11/§12：拼错的键此前被静默忽略（用户以为生效了），现在必须显式报错并列出可用键
+        var e = assertThrows(IllegalArgumentException.class,
+                () -> loadNodeFields("autoStarts: false"));
+        assertTrue(e.getMessage().contains("unknown key 'autoStarts'"),
+                "报错必须点出具体键名，实际: " + e.getMessage());
+        assertTrue(e.getMessage().contains("autoStart"),
+                "报错必须列出受支持的键（含正确拼写），实际: " + e.getMessage());
     }
 
     @Test
@@ -136,3 +156,4 @@ class ScenarioLoaderTest {
         assertEquals("spark-*", bindings.get(0).taskName());
     }
 }
+

@@ -97,23 +97,41 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
 > 否则会形成 `junit ↔ examples` 循环依赖。
 
-### 3.2 当前分布（2026-09-18 实测，M5 第 4 轮后）
+### 3.2 当前分布（2026-09-19 实测，第 11 轮质量门禁后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
 | `duo-sim-protocol` | 12 | 0 |
 | `duo-sim-kernel` | 76 | 0 |
-| `duo-sim-scenario` | 47 | 0 |
-| `duo-sim-components` | 111 | 0 |
+| `duo-sim-scenario` | 51 | 0 |
+| `duo-sim-components` | 120 | 0 |
 | `duo-sim-embedded` | 55 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 41 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
-| **合计** | **342** | **11** |
+| `duo-sim-examples` | 52 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
+| **合计（reactor 内 8 模块）** | **366** | **11** |
+
+> **口径说明**：`duo-sim-junit` / `duo-sim-control` 在 `mvnw test` 里显示为 0——
+> `duo-sim-junit` 确实没有测试类；`duo-sim-control` 则是**它的测试类不在自己模块里**
+> （`duo-sim-control` 没有 `src/test`），而在 examples 反应堆步里被执行：
+> `DuoCliTest` 10 / `RestControlServerTest` 6 / `ScenarioHostTest` 9，共 **25 条**。
+> **这 25 条不计入上表 examples 的 52 条**（它们是 `io.duo.sim.control.*` 包），
+> 所以两处口径合计 **366 + 25 = 391 条**。复算命令：
+>
+> ```bash
+> .\mvnw.cmd -o -B -pl duo-sim-examples -am "-Dtest=DuoCliTest,RestControlServerTest,ScenarioHostTest" `
+>   "-Dsurefire.failIfNoSpecifiedTests=false" test
+> # 实测 25 测 / 0 失败 / 0 错误（20.46s + 0.477s + 10.38s）
+> ```
+>
+> ⚠️ **已知的"存在但不显形"问题**：这 25 条在 `mvnw test` 输出里没有任何归属行，
+> 数字对不上却看不出来。彻底修法是给 `duo-sim-control` 建自己的 `src/test` 并搬迁
+> （需动依赖与反应堆顺序，收益仅是输出美观，风险不划算）——**记为待办而非本轮执行**。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：342 测 / 11 skip（本机无 Docker）
-./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上，未单独复测）
+.\mvnw.cmd -o -B test                          # 本机实测：366 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
+./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
+.\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：9 模块零未声明/零未使用（CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
 
@@ -142,6 +160,10 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > - **examples 57 → 41（−16）**：迁出上述 18 条调度状态机测试，新增 `NewContractsAcceptanceTest` 2 条
 >   （场景 `duo-sim-examples/src/test/resources/scenarios/m5-new-contracts-acceptance.yaml`）。
 >
+> **第 5–11 轮净增 24 条（342 → 366）**，明细：scenario +4（G11 `autoStart` 2 + 未知键/SUT 陷阱 2）、
+> components +9（G10 槽位回滚守卫 + message/filestore/resource 故障例）、examples +11
+> （M8 观测面 5：指标端点 2 + 因果链日志 2 + 诊断链 1；G4 scheduler 跨档位 3；其余为契约成对补全）。
+>
 > **本轮自测发现并修复的一处并发缺陷（G9 同类，值得记账）**：`VirtualEngine` 的槽位占用是
 > 「先判定 `freeSlots > 0`、再 `decrementAndGet()`」，两条提交通路（wire 的 `onDispatch` 与同进程的
 > `submit`）在多线程并发下都会**超发槽位**（计数可为负）。修复＝CAS 原子占槽（`tryReserveSlot()`），
@@ -168,13 +190,14 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**已在 CI 上取证为绿**
 > （本机无 Docker，只能 skip）——**已在 CI container job 取证为绿**（run 35341365256：PG 6/6、ZK 4/4、skip=0 门禁通过）。
 
-### 3.3 两条明文门控
+### 3.3 三条明文门控
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
 | 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 15 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 10）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
 | 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
+| **依赖门禁** | `-Dquality` 激活 `dependency:analyze-only`（绑 `verify`），`failOnWarning=true`——**新增一条"未声明/未使用"告警即构建失败**；缺省不激活 ⇒ 常规回归零开销 | M7 交付物 4（第 11 轮）；基线取证见 [`superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) |
 
 **新增测试的纪律**：skip 必须可解释、可复算，且**安全属性不能只被门控覆盖**（容器档守卫用例的教训）。
 
@@ -261,6 +284,17 @@ components/embedded/control/junit ← examples（唯一聚合点）
   否则 surefire 测试发现失败——这是踩过的坑）。
 - `jackson-annotations` 在 `duo-sim-embedded` 中被显式钉到 `2.18.2`：Testcontainers → docker-java 会传递 `2.10.3`，
   压过 Fabric8 mock 需要的 `2.17+`（`JsonKey` 缺失 → `NoClassDefFoundError`）。
+- **依赖门禁（第 11 轮起）**：本地与 CI 都跑 `-Dquality ... verify`（`dependency:analyze-only`，
+  `failOnWarning=true`）。它把「主代码用了但没声明」（靠传递依赖编译、上游改版即断）与
+  「声明了但没人用」（多余的依赖面）都变成**构建失败**。
+  - 直接依赖就**显式声明**：`junit-jupiter-api`/`params`、`jackson-core`/`annotations`、
+    `curator-test`（examples）都是被这条门禁逼出来的真修复。
+  - 确实需要但源码不 import 的（SLF4J 后端、JDBC 驱动、聚合件、端到端宿主模块的 compile 依赖），
+    在父 POM 的 `ignoredUnusedDeclaredDependencies` / `ignoredUsedUndeclaredDependencies` /
+    `ignoredNonTestScopedDependencies` 里**逐条豁免并写理由**——豁免清单是**账本**，不是橡皮擦；
+    新增豁免必须能一句话说清"为什么这条不是缺陷"。
+  - 基线（7 类告警逐条原文 + 真修复 vs 有意保留的取舍）见
+    [`superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md)。
 
 ---
 
@@ -287,7 +321,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 342 测 / 11 skip（无 Docker）」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 366 测 / 11 skip（无 Docker）」）。
 
 ---
 

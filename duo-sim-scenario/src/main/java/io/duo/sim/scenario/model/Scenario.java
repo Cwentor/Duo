@@ -24,7 +24,20 @@ public record Scenario(String name,
                            Map<String, WiringSpec> wiring,
                            Integer count,
                            Map<String, String> capacity,
-                           String impl) {
+                           String impl,
+                           boolean autoStart) {
+
+        /**
+         * 兼容构造（G11 前的十字段形态，{@code autoStart} 缺省＝true）：
+         * 声明即启动，保持既有场景零改动。
+         */
+        public NodeSpec(String id, String contract, String tier, boolean sut, Launch launch,
+                        Map<String, String> config, List<ExposeSpec> exposes,
+                        Map<String, WiringSpec> wiring, Integer count,
+                        Map<String, String> capacity, String impl) {
+            this(id, contract, tier, sut, launch, config, exposes, wiring, count, capacity,
+                    impl, true);
+        }
     }
 
     /**

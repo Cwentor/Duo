@@ -20,7 +20,7 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * CLI 主类（M3 T34）：子命令
- * {@code run / serve / stop / inject / status / events / assert / topology / help}。
+ * {@code run / serve / stop / inject / status / events / assert / topology / metrics / help}。
  *
  * <p>两种模式（计划 D2）：
  * <ul>
@@ -62,6 +62,8 @@ public final class DuoCli {
                 case "events" -> cmdEvents(rest);
                 case "assert" -> cmdAssert(rest);
                 case "topology" -> cmdTopology(rest);
+                case "metrics" -> cmdMetrics(rest);
+                case "diagnose" -> cmdDiagnose(rest);
                 default -> {
                     System.err.println("unknown command: " + cmd + " (try 'help')");
                     yield 1;
@@ -309,6 +311,74 @@ public final class DuoCli {
                 + (healthy == null || "null".equals(healthy) ? "-" : healthy));
     }
 
+    // ---- metrics [--url X] [--summary]：Prometheus 文本 / 单行摘要（M8） ----
+
+    private static int cmdMetrics(List<String> args) throws Exception {
+        String url = opt(args, "--url");
+        if (url != null) {
+            var resp = send("GET", url + "/metrics", null);
+            if (resp.statusCode() / 100 != 2) {
+                System.err.println(resp.statusCode() + " " + resp.body());
+                return 1;
+            }
+            System.out.print(resp.body());
+            return 0;
+        }
+        ScenarioHost host = attachedOrDefault(args);
+        if (hasFlag(args, "--summary")) {
+            System.out.println(new io.duo.sim.control.metrics.MetricsCollector(host).summaryLine());
+            return 0;
+        }
+        System.out.print(new io.duo.sim.control.metrics.MetricsCollector(host).scrape());
+        return 0;
+    }
+
+    /** 布尔开关（无值标志）。 */
+    private static boolean hasFlag(List<String> args, String flag) {
+        return args.contains(flag);
+    }
+
+    // ---- diagnose [--url X]：单命令导出一次故障注入的完整因果链（M8 交付物 3） ----
+
+    private static int cmdDiagnose(List<String> args) throws Exception {
+        String url = opt(args, "--url");
+        String sinceArg = opt(args, "--since");
+        int since = sinceArg == null ? 0 : Integer.parseInt(sinceArg);
+        List<Map<String, Object>> events;
+        List<Map<String, Object>> assertions = new ArrayList<>();
+        String where;
+        if (url != null) {
+            var resp = send("GET", url + "/events?since=" + since, null);
+            if (resp.statusCode() / 100 != 2) {
+                System.err.println(resp.statusCode() + " " + resp.body());
+                return 1;
+            }
+            var node = MAPPER.readTree(resp.body()).get("events");
+            events = new ArrayList<>();
+            for (var e : node) {
+                events.add(MAPPER.convertValue(e, new com.fasterxml.jackson.core.type
+                        .TypeReference<Map<String, Object>>() {
+                }));
+            }
+            where = url;
+        } else {
+            ScenarioHost host = attachedOrDefault(args);
+            events = host.eventsSince(since);
+            where = "in-process";
+            assertions = new ArrayList<>(asRows(host.assertions().get("assertions")));
+        }
+        io.duo.sim.control.FaultDiagnostics.Report report =
+                io.duo.sim.control.FaultDiagnostics.analyze(events, assertions);
+        System.out.print(report.render(where));
+        // 因果链断在中间时退出码非 0：脚本化验收可直接判定
+        return report.complete() ? 0 : 1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> asRows(Object o) {
+        return o instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
+    }
+
     /** 同进程接管：优先取 run --keep 注册的 host；无则空 host（状态报告 IDLE）。 */
     private static ScenarioHost attachedOrDefault(List<String> args) {
         String name = opt(args, "--name") == null ? "default" : opt(args, "--name");
@@ -390,6 +460,8 @@ public final class DuoCli {
                   events [--since N] [--url X]      事件流（增量）
                   assert [--url X]                  断言结果（退出码反映通过与否）
                   topology [--url X]                拓扑视图
+                  metrics [--url X] [--summary]     Prometheus 指标（--summary 单行摘要）
+                  diagnose [--url X] [--since N]    导出一次注入的因果链（断链退出码 1）
                   help                              本帮助
 
                 两种模式：

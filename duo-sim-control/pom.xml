@@ -23,5 +23,11 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- M8 观测面：控制面要用 SLF4J 打故障因果链（FaultLog）。
+             只引 **api**：绑定（logback-classic）由运行宿主决定，控制面不越权选后端。 -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
     </dependencies>
 </project>

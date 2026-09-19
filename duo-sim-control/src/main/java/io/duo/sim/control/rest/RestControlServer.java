@@ -27,6 +27,7 @@ import java.util.concurrent.Executors;
  *   <li>{@code POST /inject}——body 为 FaultAction JSON（未启动→409；target 不可解析→404）</li>
  *   <li>{@code GET /assertions}——断言与注入失败明细</li>
  *   <li>{@code GET /topology}——节点/契约/档位/实例/在线状态</li>
+ *   <li>{@code GET /metrics}——Prometheus 文本格式指标（M8；`text/plain; version=0.0.4`）</li>
  *   <li>{@code GET /health}——服务存活</li>
  * </ul>
  *
@@ -37,10 +38,12 @@ public final class RestControlServer implements AutoCloseable {
 
     private final ScenarioHost host;
     private final ObjectMapper mapper = JsonMapper.builder().build();
+    private final io.duo.sim.control.metrics.MetricsCollector metrics;
     private HttpServer server;
 
     public RestControlServer(ScenarioHost host) {
         this.host = host;
+        this.metrics = new io.duo.sim.control.metrics.MetricsCollector(host);
     }
 
     /** 启动（port 0 = 自动分配）。返回实际端口。 */
@@ -161,6 +164,31 @@ public final class RestControlServer implements AutoCloseable {
             }
             respond(ex, 200, Map.of("nodes", host.topology()));
         });
+        server.createContext("/metrics", ex -> {
+            if (!"GET".equals(ex.getRequestMethod())) {
+                respond(ex, 405, Map.of("error", "method not allowed"));
+                return;
+            }
+            // M8：组件未启动时也可抓（此时除 duo_up/duo_scrapes_total 外均为 0），
+            // 这样 Prometheus 的抓取目标不会因场景重启而 up=0（与 /status 的 409 语义不同，
+            // 那是"结果不可读"，这里是"指标恒可读"）。
+            respondText(ex, 200, metrics.scrape(),
+                    "text/plain; version=0.0.4; charset=utf-8");
+        });
+    }
+
+    /** 文本响应（Prometheus exposition format 不是 JSON）。 */
+    private void respondText(HttpExchange ex, int code, String body, String contentType) {
+        try {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", contentType);
+            ex.sendResponseHeaders(code, bytes.length);
+            try (OutputStream os = ex.getResponseBody()) {
+                os.write(bytes);
+            }
+        } catch (IOException e) {
+            // 客户端断开
+        }
     }
 
     private void respond(HttpExchange ex, int code, Object body) {

@@ -85,6 +85,14 @@ class ScenarioValidatorTest {
                 wiring == null ? Map.of() : wiring, null, Map.of(), null);
     }
 
+    /** 带 launch 的节点（autoStart 校验用例需要 in-process/external 两种形态）。 */
+    private static Scenario.NodeSpec nodeWithLaunch(String id, String contract, String tier,
+                                                    boolean sut, String mode) {
+        return new Scenario.NodeSpec(id, contract, tier, sut,
+                new Scenario.Launch(mode, "io.duo.Main", null), Map.of(), List.of(),
+                Map.of(), null, Map.of(), null, false);
+    }
+
     private Scenario scenario(List<Scenario.NodeSpec> nodes) {
         return new Scenario("test", nodes, new Scenario.Behaviors(Map.of(), List.of()),
                 List.of(), List.of());
@@ -104,6 +112,41 @@ class ScenarioValidatorTest {
                 node("m", "scheduler", "real", true, null),
                 node("m2", "scheduler", "real", true, null))));
         assertTrue(String.join(";", r2.errors()).contains("found 2"));
+    }
+
+    // ---- G11：autoStart 的边界 ----
+
+    @Test
+    void autoStartFalseOnOrdinaryNodeIsAccepted() {
+        var v = new ScenarioValidator(registry());
+        // SUT 用缺省（autoStart=true，见 node()）；只有 worker 显式关掉自启动
+        var r = v.validate(scenario(List.of(
+                node("zk", "registry", "virtual", false, null),
+                node("m", "scheduler", "real", true, null),
+                nodeWithLaunch("w", "worker", "virtual", false, "in-process"))));
+        assertTrue(r.ok(), "autoStart:false 对内核可自启动的节点是合法表达: " + r.errors());
+    }
+
+    /**
+     * G11/§12：SUT 与 external 节点由 {@code startSut()} 单独启动，{@code startComponents()} 本来就不碰它们——
+     * 在这里写 {@code autoStart: false} 是**看似生效实则无效**的静默陷阱，必须显式报错。
+     */
+    @Test
+    void autoStartFalseOnSutOrExternalNodeIsRejectedLoudly() {
+        var v = new ScenarioValidator(registry());
+        var onSut = v.validate(scenario(List.of(
+                node("zk", "registry", "virtual", false, null),
+                nodeWithLaunch("m", "scheduler", "real", true, "in-process"))));
+        assertFalse(onSut.ok(), "sut 节点上的 autoStart:false 必须报错（否则用户以为它不启动）");
+        assertTrue(String.join(";", onSut.errors()).contains("autoStart:false is meaningless"),
+                "实际: " + onSut.errors());
+
+        var onExternal = v.validate(scenario(List.of(
+                node("zk", "registry", "virtual", false, null),
+                nodeWithLaunch("m", "scheduler", "real", true, "external"))));
+        assertFalse(onExternal.ok());
+        assertTrue(String.join(";", onExternal.errors()).contains("external node"),
+                "实际: " + onExternal.errors());
     }
 
     // ---- 规则 1/2/3 ----

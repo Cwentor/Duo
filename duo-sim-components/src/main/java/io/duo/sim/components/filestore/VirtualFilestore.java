@@ -7,6 +7,8 @@ import io.duo.sim.kernel.api.Contract;
 import io.duo.sim.kernel.api.EndpointShape;
 import io.duo.sim.kernel.api.Event;
 import io.duo.sim.kernel.api.ExposedEndpoint;
+import io.duo.sim.kernel.api.FaultAction;
+import io.duo.sim.kernel.api.FaultInjectable;
 import io.duo.sim.kernel.api.HealthReport;
 import io.duo.sim.kernel.api.StopMode;
 import io.duo.sim.kernel.api.VirtualComponent;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
@@ -46,8 +49,14 @@ import java.util.stream.Stream;
  * <p>生命周期语义：{@code start} 创建根目录（config {@code filestore.root} 指定，缺省为
  * 系统临时目录下的随机目录，**由本组件拥有并在 stop 时删除**）；{@code restart} 保留同一
  * 根路径（§7.1「端点与身份保留」）但**清空内容**（内部状态视为全新实例）——这两点都写成测试。
+ *
+ * <p>故障注入（M5 交付物 6，G4 补对）：{@code crash}——挂载丢失。注入后所有读写**显式失败**
+ * （{@link ComponentException}，带原因），**已落盘的数据保持原样**（模拟"存储暂时不可达"，
+ * 而不是"数据被抹掉"）；{@code clear} 后自动恢复读写，数据仍在。
+ * 只声明这一个动作：filestore 的其它候选动作（{@code freeze}/{@code slow}）语义上与 crash
+ * 重复或无法观测，**不静默接受**——未声明的动作一律显式拒绝。
  */
-public final class VirtualFilestore implements VirtualComponent {
+public final class VirtualFilestore implements VirtualComponent, FaultInjectable {
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
@@ -55,6 +64,8 @@ public final class VirtualFilestore implements VirtualComponent {
     /** 根目录是否由本组件创建（决定 stop 时是否删除）。 */
     private volatile boolean ownsRoot;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** 挂载丢失态（M5 交付物 6）：注入后拒绝一切读写，但不丢已落盘数据。 */
+    private final AtomicBoolean mountLost = new AtomicBoolean(false);
 
     // ---- VirtualComponent ----
 
@@ -131,6 +142,9 @@ public final class VirtualFilestore implements VirtualComponent {
 
     @Override
     public HealthReport health() {
+        if (mountLost.get()) {
+            return HealthReport.down("filestore mount lost (injected fault)");
+        }
         return running.get() && root != null && Files.isDirectory(root)
                 ? HealthReport.ok() : HealthReport.down("filestore not running");
     }
@@ -140,6 +154,46 @@ public final class VirtualFilestore implements VirtualComponent {
         return running.get() && root != null
                 ? List.of(ExposedEndpoint.fs(Contract.FILESTORE, root.toString()))
                 : List.of();
+    }
+
+    // ---- FaultInjectable（M5 交付物 6：filestore 契约的故障例）----
+
+    /**
+     * 挂载丢失。注入后所有读写**显式失败**（不假装成功），但**不删数据**——
+     * 真实存储不可达时数据仍在盘上，场景要能区分「暂时不可达」与「数据没了」。
+     */
+    @Override
+    public void inject(FaultAction action) {
+        if (!FaultAction.CRASH.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        if (!mountLost.compareAndSet(false, true)) {
+            return; // 已丢失（幂等）
+        }
+        fire(Event.sim("sim.filestore-mount-lost", id.value(),
+                Map.of("root", String.valueOf(root))));
+    }
+
+    /** 恢复挂载（幂等；未丢失时重复清除不产生额外事实）。 */
+    @Override
+    public void clear(FaultAction action) {
+        if (!FaultAction.CRASH.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: " + action.type());
+        }
+        if (!mountLost.compareAndSet(true, false)) {
+            return;
+        }
+        fire(Event.sim("sim.filestore-mount-restored", id.value(), Map.of()));
+    }
+
+    /** 挂载是否处于丢失态（诊断/测试用）。 */
+    public boolean isMountLost() {
+        return mountLost.get();
+    }
+
+    /** 该契约可注入的故障（provider 元数据与实现必须一致，见 ContractRegistry 校验）。 */
+    public static Set<String> supportedFaults() {
+        return Set.of(FaultAction.CRASH);
     }
 
     // ---- 同进程门面（interface-direct）----
@@ -221,6 +275,10 @@ public final class VirtualFilestore implements VirtualComponent {
     private void requireRunning() {
         if (!running.get() || root == null) {
             throw new ComponentException("filestore not running: " + id);
+        }
+        if (mountLost.get()) {
+            // §12 不静默：挂载丢失期间读写必须显式失败，而不是"看起来写成功了"
+            throw new ComponentException("filestore mount lost (crash injected): " + id);
         }
     }
 

@@ -10,6 +10,21 @@
     <packaging>pom</packaging>
     <name>Duo Sim Parent</name>
     <description>通用可组合虚拟大数据仿真系统</description>
+    <url>https://github.com/Cwentor/Duo</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:https://github.com/Cwentor/Duo.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Cwentor/Duo.git</developerConnection>
+        <url>https://github.com/Cwentor/Duo</url>
+    </scm>
 
     <modules>
         <module>duo-sim-protocol</module>
@@ -23,6 +38,11 @@
     </modules>
 
     <properties>
+        <!-- M7 发布配置（2026-09-19）：源码/文档 jar 的产出开关。
+             `-Drelease` 一次性打开（本地 `mvnw -Drelease package` 与 release CI 复用）；
+             常规 `mvnw test` 不受影响（附件 jar 不进测试类路径，也不额外耗时）。 -->
+        <release>false</release>
+        <release.skipAttachments>true</release.skipAttachments>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jackson.version>2.18.2</jackson.version>
@@ -40,6 +60,19 @@
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
             </dependency>
+            <!-- 主代码直接 import 了 annotations 的注解（如 @JsonProperty）与 core 的流式类型
+                 （如 JsonParser/JsonNode 的枚举），但只声明了 databind——靠传递依赖"顺带"编译。
+                 第 11 轮依赖门禁把它们显式声明（传递依赖被上游改版就会断）。 -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.yaml</groupId>
                 <artifactId>snakeyaml</artifactId>
@@ -55,6 +88,13 @@
                 <artifactId>logback-classic</artifactId>
                 <version>${logback.version}</version>
             </dependency>
+            <!-- 显式管理 core：curator-test 传递进来的 1.2.13 与 classic 1.5.16 不匹配，
+                 logback 会因版本不一致拒绝装配 appender（日志静默）。 -->
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.curator</groupId>
                 <artifactId>curator-framework</artifactId>
@@ -68,6 +108,18 @@
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
                 <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-api</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-params</artifactId>
                 <version>${junit.version}</version>
                 <scope>test</scope>
             </dependency>
@@ -110,6 +162,10 @@
         </dependencies>
     </dependencyManagement>
 
+    <!-- 全部模块的测试基线：junit-jupiter（聚合件，作用域与版本由 dependencyManagement 统一）。
+         第 11 轮依赖门禁说明：需要直接 import api/params 的模块显式声明子件（analyze 的结果就是
+         "用过但没声明"）；而聚合件本身在源码里必然"未被 import"，属于**有意保留**，见下方
+         ignoredUnusedDeclaredDependencies 的逐条豁免与基线文档。 -->
     <dependencies>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -120,6 +176,129 @@
     <build>
         <pluginManagement>
             <plugins>
+                <!-- 依赖门禁（M7 交付物 4，第 11 轮）：`mvnw -Dquality verify` 跑 `analyze-only`。
+                     不用 `analyze`（它在 `verify` 之后才跑，本地循环里看不到）；`analyze-only`
+                     绑定到 `verify`，与 `lifecycle` 门禁同一阶段。
+                     **failOnWarning=true**：本仓当前分析结果已收敛到零告警——留下的每一条
+                     都是有意为之并逐条显式豁免（见 `ignored*Dependencies`），
+                     所以"新增一条告警"就是"有人顺手引了个没声明的依赖"，必须拦住（§12 不静默）。 -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.8.1</version>
+                    <configuration>
+                        <failOnWarning>true</failOnWarning>
+                        <ignoreNonCompile>false</ignoreNonCompile>
+                        <!-- `Non-test scoped test only`：只被测试代码用到的 compile 依赖。
+                             `io.fabric8:kubernetes-server-mock` 是 **embedded 档的运行时载体**
+                             （生产代码里 new 出 mock k8s server 给被测组件连），
+                             但它内部同时提供测试期才用到的件（mockwebserver 等），
+                             分析器的启发式据此判成 test-only。改成 test scope 会让 embedded 档
+                             在运行期缺件——所以是**有意保留**，显式豁免。 -->
+                        <ignoredNonTestScopedDependencies>
+                            <ignoredNonTestScopedDependency>io.fabric8:kubernetes-server-mock</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.fabric8:mockwebserver</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.fabric8:kubernetes-model-core</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.fabric8:kubernetes-client-api</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.fabric8:kubernetes-model-common</ignoredNonTestScopedDependency>
+                            <!-- examples：见上方 ③——本模块**就是**端到端宿主的示例，
+                                 全部 compile 依赖只在测试代码里被用到是它的正常形态
+                                 （`src/main` 只有 logback.xml 与 scenarios/ 资源）。 -->
+                            <ignoredNonTestScopedDependency>io.duo:duo-sim-embedded</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.duo:duo-sim-junit</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.duo:duo-sim-scenario</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>io.duo:duo-sim-control</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>org.slf4j:slf4j-api</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>ch.qos.logback:logback-classic</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>ch.qos.logback:logback-core</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>org.apache.curator:curator-test</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>org.apache.curator:curator-framework</ignoredNonTestScopedDependency>
+                            <ignoredNonTestScopedDependency>org.apache.zookeeper:zookeeper</ignoredNonTestScopedDependency>
+                        </ignoredNonTestScopedDependencies>
+                        <ignoredUnusedDeclaredDependencies>
+                            <!-- 本清单的**逐条基线取证**见 docs/superpowers/plans/m7-quality-gate-baseline.md
+                                 （含"哪几条是真修复、哪几条是有意保留"的取舍记录）。 -->
+                            <!-- 运行期必需，主代码不直接 import： -->
+                            <!-- ① SLF4J 后端（logback）：绑定靠 ServiceLoader 发现，编译期"用不到"；
+                                 缺了它就等于日志静默丢弃（M8 实测过这个坑）。 -->
+                            <ignoredUnusedDeclaredDependency>ch.qos.logback:logback-classic</ignoredUnusedDeclaredDependency>
+                            <ignoredUnusedDeclaredDependency>ch.qos.logback:logback-core</ignoredUnusedDeclaredDependency>
+                            <!-- ② JDBC 驱动：由 DriverManager 按 URL 反射加载，无 import。 -->
+                            <ignoredUnusedDeclaredDependency>com.h2database:h2</ignoredUnusedDeclaredDependency>
+                            <ignoredUnusedDeclaredDependency>org.postgresql:postgresql</ignoredUnusedDeclaredDependency>
+                            <!-- ⑤ embedded 显式钉住 jackson-annotations 2.18.2：这条声明的作用是
+                                 **版本仲裁**（把 docker-java 传递进来的 2.10.3 顶掉，2.17 才有 JsonKey），
+                                 源码里确实没有 import，属于 POM 层面的约束而非编译期依赖。 -->
+                            <ignoredUnusedDeclaredDependency>com.fasterxml.jackson.core:jackson-annotations</ignoredUnusedDeclaredDependency>
+                            <!-- ③ 测试聚合件：junit-jupiter 是空壳，真正被 import 的是 api/params/engine。 -->
+                            <ignoredUnusedDeclaredDependency>org.junit.jupiter:junit-jupiter</ignoredUnusedDeclaredDependency>
+                            <!-- ④ root POM 的依赖是给子模块继承用的（子模块按需取用），
+                                 root 自身没有代码；聚合件本身也必然"未被使用"。 -->
+                            <ignoredUnusedDeclaredDependency>io.duo:duo-sim-*</ignoredUnusedDeclaredDependency>
+                        </ignoredUnusedDeclaredDependencies>
+                        <ignoredUsedUndeclaredDependencies>
+                            <!-- ① jackson-*/junit 的 api、engine、params 之间是同坐标"聚合/分体"关系：
+                                 聚合件传递出全部子件，硬禁传递会让每个模块都要抄三行声明。 -->
+                            <ignoredUsedUndeclaredDependency>com.fasterxml.jackson.core:jackson-annotations</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>com.fasterxml.jackson.core:jackson-core</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>org.junit.jupiter:junit-jupiter-api</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>org.junit.jupiter:junit-jupiter-params</ignoredUsedUndeclaredDependency>
+                            <!-- ② 契约实现的"载体"依赖：embedded 档 = JVM 内的真实第三方进程/服务，
+                                 这些库的类**只由被承载的组件加载**，Duo 代码不 import（如 h2 由
+                                 H2Store 拼 JDBC URL、zk/k8s 客户端由被测组件自己 new）。 -->
+                            <ignoredUsedUndeclaredDependency>org.apache.zookeeper:zookeeper</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>org.apache.curator:curator-client</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>io.fabric8:kubernetes-client-api</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>io.fabric8:kubernetes-model-core</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>io.fabric8:mockwebserver</ignoredUsedUndeclaredDependency>
+                            <!-- ③ examples 是**端到端宿主/示例**模块：职责就是"像用户那样把整条链路
+                                 跑起来"。它声明的 logback-classic / curator-framework 为把整棵树拉齐
+                                 而存在，于是 slf4j-api、logback-core、curator-test 这些**同族件**
+                                 在测试里可直接使用（示例的正当用法）。 -->
+                            <ignoredUsedUndeclaredDependency>org.slf4j:slf4j-api</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>org.apache.curator:curator-test</ignoredUsedUndeclaredDependency>
+                            <ignoredUsedUndeclaredDependency>ch.qos.logback:logback-core</ignoredUsedUndeclaredDependency>
+                        </ignoredUsedUndeclaredDependencies>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <skipSource>${release.skipAttachments}</skipSource>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>3.11.2</version>
+                    <configuration>
+                        <!-- 中文注释 + 严格 doclint 在 JDK 21 上会因缺 @param/@return 直接失败；
+                             发布产物不因此卡住（文档质量由评审守，不由构建守）。 -->
+                        <doclint>none</doclint>
+                        <quiet>true</quiet>
+                        <skip>${release.skipAttachments}</skip>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
@@ -135,9 +314,60 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- 质量档（M7 交付物 4）：`mvnw -Dquality verify` 打开依赖门禁（`dependency:analyze-only`）。
+             缺省不激活 ⇒ 常规 `mvnw test` 零额外开销、行为完全不变（与 release 档同一手法）。 -->
+        <profile>
+            <id>quality</id>
+            <activation>
+                <property>
+                    <name>quality</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>dependency-gate</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>analyze-only</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- 发布档：`mvnw -Drelease package`（或 CI 的 release job）产出源码/文档 jar。
+             常规构建（`mvnw test`）走缺省，两个附件插件被 skip 掉，行为与引入前完全一致。 -->
+        <profile>
+            <id>release</id>
+            <activation>
+                <property>
+                    <name>release</name>
+                </property>
+            </activation>
+            <properties>
+                <release.skipAttachments>false</release.skipAttachments>
+            </properties>
+        </profile>
+    </profiles>
 </project>

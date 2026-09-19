@@ -282,7 +282,12 @@ class VirtualEngineTest {
 
     /**
      * 代际隔离守卫（CI 实测漂移）：重启时被中断的旧任务线程仍会走到 finally，
-     * 若不设代际，它归还的槽位会计入**新一代**（实测 freeSlots 2 → 3）。
+     * 若不设代际，它归还的槽位会计入**新一代**（实测 freeSlots 2 → 3）；
+     * 它发出的终态事实同样不得落到重启之后（CI run 35419372086 实测）。
+     *
+     * <p>口径说明（重要）：取消的终态事实**本来就该存在**——它必须出现在
+     * {@code sim.engine-restarted} **之前**（「谁取消的谁记账」）。因此这里断言的不是
+     * 「没有 CANCELLED 事实」，而是「CANCELLED 一律早于重启标记」。
      */
     @Test
     void restartDoesNotLetStaleTaskThreadsDriftSlotCount() throws Exception {
@@ -295,9 +300,19 @@ class VirtualEngineTest {
         Thread.sleep(600); // 越过旧任务原定 duration：旧线程此刻必然已走完 finally
         assertEquals(2, engine.freeSlots(), "旧代际任务不得污染新代际计数（曾实测 2→3）");
         assertEquals(0, engine.inFlightTasks());
-        assertTrue(events.stream().noneMatch(e -> "sim.engine-task-status".equals(e.type())
-                && "CANCELLED".equals(e.payload().get("state"))),
-                "旧代际任务不得向新一代报终态事实（事实由 sim.engine-restarted 记账）");
+        int restartedAt = -1;
+        for (int i = 0; i < events.size(); i++) {
+            if ("sim.engine-restarted".equals(events.get(i).type())) {
+                restartedAt = i;
+            }
+        }
+        assertTrue(restartedAt >= 0, "重启必须留下事实（对账锚点）");
+        for (int i = restartedAt + 1; i < events.size(); i++) {
+            Event e = events.get(i);
+            assertTrue(!"sim.engine-task-status".equals(e.type())
+                            || !"CANCELLED".equals(String.valueOf(e.payload().get("state"))),
+                    "重启之后的 CANCELLED 终态必属旧代际漂移，实测第 " + i + " 条：" + e);
+        }
     }
     @Test
     void logLinesAreEmittedAsEngineFacts() throws Exception {

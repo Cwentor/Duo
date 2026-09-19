@@ -186,3 +186,314 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 
 - CI 上**两次红均已收敛为绿**：① 夹具竞态（§3.2）② engine 代际漂移这一真实并发缺陷（§3.3）。
 - 本机同 HEAD 全量回归：**342 测 / 0 失败 / 11 skip**（`.\mvnw.cmd -o -B test`），数字与远端一致。
+
+---
+
+## 6. 第 5 轮增补：契约语义确定化 + G4 金标准场景补对（commit 待定，本机取证）
+
+本轮没有新增契约或档位，只做两件与「可验收性」直接相关的事：把**曾经只能在 wire 层"试试看"的
+拒绝语义钉成确定性用例**，以及**把 G4 的正例/故障例补成对**。过程中暴露 2 个新缺口（G10/G11），
+如实记录在 `ROADMAP.md`。
+
+### 6.1 全量回归（`.\mvnw.cmd -o -B test`，无 Docker 档）
+
+| 模块 | 测试数 | skip |
+| --- | --- | --- |
+| duo-sim-protocol | 12 | 0 |
+| duo-sim-kernel | 76 | 0 |
+| duo-sim-scenario | 47 | 0 |
+| duo-sim-components | 118 | 0 |
+| duo-sim-embedded | 55 | 10（4 ZookeeperContainer + 6 PostgresContainer，无 Docker） |
+| duo-sim-examples | 62 | 1（ScaleAcceptanceTest，压测开关未开） |
+| **合计** | **370** | **11** |
+
+- 本轮连跑 **2 次全绿**（0 失败 / 0 错误 / 11 skip）；相对第 4 轮的 342 净增 28 测。
+- 每个 skip 仍可解释（无 Docker / 压测开关），无静默跳过。
+
+### 6.2 G9 拒绝链路：语义下沉到「唯一裁判」
+
+新增 `SchedulerStateMachineRejectionTest`（3 例，单线程、无 socket、无线程池），把此前只能在
+`VirtualSchedulerTest` 里"跑跑看"的行为钉成确定性断言：
+
+- 拒绝 N 次 ⇒ 任务回到 PENDING，**重试额度净消耗为 0**（`dispatch` 的 +1 与回滚 −1 相抵）；
+- 超 `MAX_REJECTIONS`（12）⇒ 显式 FAILED + 下游 SKIPPED + `onAllTerminal` 恰好一次，
+  且拒绝**不**回调 `onRetry`；
+- 迟到的/重复的拒绝幂等忽略。
+
+同时把 `VirtualSchedulerTest` 中依赖 pump 时序的断言**降级为与线程时序无关的事实断言**
+（拒绝事实三字段、`sut.task-retry` 不出现、`attempt==1`），因为实测该层面的顺序断言会假红 6 次。
+
+### 6.3 G4：message 契约正例/故障例成对
+
+- 新增 `m5-message-contract-acceptance.yaml` + `MessageContractAcceptanceTest`（3 例）：
+  正例＝发布 → 订阅观察 → 拉取消费（顺序、深度、`sim.message-published` 事实）；
+  故障例＝`freeze` 期间发布**显式抛错**、**存量消息不丢**、解冻后恢复。
+- 为落地故障例，`VirtualMessageBroker` **新增实现 `FaultInjectable`**（`freeze`/`clear`，
+  幂等，未声明动作显式拒绝），provider 元数据同步声明 `supportedFaults={freeze}`——
+  否则 §7.5 的注册期一致性校验会直接报错（这正是该校验存在的意义）。
+- 端点形态 `NONE + interface-direct` 的契约（message/filestore/resource）**没有地址可给 SUT**，
+  其正例/故障例只能由 JUnit 夹具从同进程门面发起；YAML 只提供真实拓扑。这是如实记录的口径，
+  不是"漏了 YAML"。
+
+### 6.4 一处**假绿**的发现与修正（重要）
+
+`m5-new-contracts-acceptance` 的三个故障原本注入在 100/200/300ms，而 virtual worker 300ms
+就把 DAG 跑完了 —— 故障窗口里**没有任何在途任务**，`eventSequence` 断言形同"对着空气通过"。
+本轮把注入时点压到 200/400/600ms 并把 engine 任务时长拉到 3s，使故障真正落在任务**在途期间**。
+根因是 DSL 没有「声明但不启动」的开关（→ G11）：场景作者无法裁剪拓扑。
+
+### 6.5 新缺口（如实记录，未修）
+
+| 缺口 | 现象 | 证据 | 优先级 |
+| --- | --- | --- | --- |
+| **G10** | worker 回报 REJECTED 后调度侧**不再重派**（`DispatchSelector` 收不到槽位上报，最后一格容量被永久占用），任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsNotRedispatchedAfterWorkerRefuses`（守卫用例，记录现状而非期望） | P1 |
+| **G11** | DSL 无 `autoStart` 类开关，未知键**静默忽略** | `ScenarioLoader.parseNode` 源码核对 + §6.4 的假绿现场 | P2 |
+
+### 6.6 远端 CI 取证（commit `1da4218`，run 35417427531）
+
+| job | 结果 | 说明 |
+| --- | --- | --- |
+| `regression (no Docker)` | ✅ success | 全量回归含新增的 message 契约 3 例 |
+| `container tier (Docker)` | ✅ success（10 steps） | 本机无 Docker，容器档只能在 CI 取证 |
+| `scale (nightly / manual)` | ⏸ 按设计跳过 | — |
+
+结论：本轮 G4 增补**远端全绿**，与第 4 轮的证据链连续。
+
+---
+
+## 7. 第 5 轮续：filestore 契约补齐故障例（G4 收尾）
+
+第 6 节只把 message 补成对；本轮继续按 §13「每个契约至少一个正例一个故障例」逐契约点名，
+**先核对再动手**，结果与上一轮的记录有两处出入，一并更正。
+
+### 7.1 逐契约点名（以源码为准，不凭印象）
+
+| 契约 | 正例 | 故障例 | 结论 |
+| --- | --- | --- | --- |
+| message | `publishedMessagesAreOrderedObservableAndConsumable` | `freezeMakesPublishFailLoudlyWithoutDroppingQueuedMessages` | 第 6 节已成对 |
+| engine | `VirtualEngineTest` 提交/受理/状态流转 | 冻结、资源耗尽故障例 | 已有 |
+| **resource** | `allocateAndReleaseKeepQuotaAccounting` | `injectedExhaustionRejectsAllocationsAndIsIdempotent` | **其实第 4 轮就已成对**——上一轮 ROADMAP 记为"未成对"是错的，本轮更正 |
+| **filestore** | `writeReadListDeleteRoundTrip` | **本轮新增** | 此前**确实没有**故障例 |
+| registry / worker / scheduler | 各自既有 | 各自既有 | 沿用 |
+
+### 7.2 filestore 故障例的设计取舍
+
+`VirtualFilestore` 此前 `implements VirtualComponent` 而无 `FaultInjectable`——**连挂故障动作的洞都没有**。
+本轮补上，并且只声明一个动作：
+
+- **`crash` ＝ 挂载丢失**：注入后 `resolve/write/read/list/delete` 一律显式抛
+  `ComponentException("filestore mount lost (crash injected): …")`，`health()` 转 DOWN，
+  并发事实 `sim.filestore-mount-lost`；**已落盘数据保留**——真实存储不可达时数据仍在盘上，
+  场景必须能区分「暂时不可达」与「数据没了」。`clear` 后发 `sim.filestore-mount-restored`、
+  读写照常、数据仍在。
+- **不声明 `freeze`/`slow`**：前者与 `crash` 语义重复且同样"拒绝写"，后者对本地文件 IO
+  不可观测。**不声明即显式拒绝**（`UnsupportedOperationException`），不做"接受了但没效果"
+  的静默降级（§12）。
+- 幂等：重复 inject/clear 不产生第二条事实；provider 元数据同步声明
+  `supportedFaults={crash}`——否则 §7.5「声明与实现必须对应」的注册期校验会直接报错。
+
+新增 2 例（合计 filestore 单测 10 例），与既有正例成对。
+
+### 7.3 顺手修掉一个夹具竞态（不是产品缺陷）
+
+`VirtualWorkerTest` 的 `events` 是 `ArrayList`，由 worker 虚拟线程 `add`、
+测试线程 `stream()` 遍历 ⇒ 本轮实测偶发 `ConcurrentModificationException`
+（`taskKillTerminatesInFlightTaskWithCancelledReport`）。改为 `CopyOnWriteArrayList`
+并在字段上写明成因。**这是夹具缺陷，产品代码未改**——如实区分，避免把夹具问题记成产品缺陷。
+
+### 7.4 场景侧：让「带 duration 的自动 clear」真的被执行到
+
+`m5-new-contracts-acceptance` 的 `freeze` 加上 `duration: 300ms`，断言
+`eventSequence: [sim.engine-frozen, sim.engine-resumed]`。踩到并修正一个**假红**：
+duration 若大于场景收敛时间，`engine.stop()` 会取消 pending 的定时 clear，解冻事实永不出现。
+把 duration 压到收敛窗口内、并在用例里显式等待该事实后转绿（用例内已注释成因）。
+
+### 7.5 本轮回归
+
+| 模块 | 测试数 | skip |
+| --- | --- | --- |
+| duo-sim-protocol | 12 | 0 |
+| duo-sim-kernel | 76 | 0 |
+| duo-sim-scenario | 47 | 0 |
+| duo-sim-components | 120 | 0 |
+| duo-sim-embedded | 55 | 10（无 Docker 档） |
+| duo-sim-examples | 62 | 1（压测开关未开） |
+| **合计** | **372** | **11** |
+
+连跑 **2 次全绿**（0 失败 / 0 错误）。相对第 6 节的 370 净增 2 测（filestore 故障例）。
+
+### 7.6 结论
+
+§13 的「每契约一正例一故障例」现在 **8 个契约里 7 个成对**，唯一余项是
+**scheduler 的「同拓扑换档」用例**（机制已存在，缺的是场景），已记入 G4 行。
+
+### 7.7 远端 CI 抓到的一个真实竞态（本机两次全绿也没抓到）
+
+推送 `87e748e` 后 CI 判红：`regression (no Docker)` 失败于
+`VirtualEngineTest.restartDoesNotLetStaleTaskThreadsDriftSlotCount`
+（`旧代际任务不得向新一代报终态事实`）。这是**真实竞态**，不是偶发噪声：
+
+- `stop()` 的顺序是「中断任务线程 → `generation.incrementAndGet()` → 清空 `runningTasks`」；
+  被中断的任务线程在 `catch (InterruptedException)` 里**先读到旧代际**、于是进入上报分支，
+  之后才执行 `fire(...)`——这条窗口让旧代际的 `CANCELLED` 终态事实偶发漂移到重启之后。
+- 本机连跑两次全绿、CI 一次即红，正是窗口型竞态的典型表现。
+
+修复分三处，都在"事实与意图必须一致"这条线上：
+
+1. `stop()` 改为 **先递增代际、再同步发射取消终态**（`reportCancelledNow`，事实在 stop 线程
+   落流，先事件后回写连接），最后才中断任务线程。这样代际判定与事实发射之间不再有异步空隙。
+2. 被中断任务线程的 `catch` 分支**不再重复发事实**（一条取消只记一条事实），只在代际未变时
+   补一次连接回写。
+3. 正常完成分支补齐与 `catch` 对称的守卫：`exec.cancelled` 为真时**不报终态**
+   （此前会把"已决定取消"报成 succeeded/failed）。
+
+**用例口径同时更正**：原断言「不得存在任何 CANCELLED 事实」本身是错的——取消事实**本该存在**，
+它必须出现在 `sim.engine-restarted` **之前**（谁取消谁记账）。改为以 `sim.engine-restarted`
+为对账锚点，断言「其后不存在 CANCELLED」。这是**假绿的反面**：断言写得比语义更严，同样不可信。
+
+修复后本机：`VirtualEngineTest` 12 例全绿；全量回归 **372/0/0/11 连跑 2 次全绿**。
+
+### 7.8 远端 CI 取证
+
+修复提交 `abb2475` 的 CI run **35420349133**：`regression (no Docker)` ✅ 3m15s、
+`container tier (Docker)` ✅ 59s、`scale` 按设计跳过。
+上一提交 `87e748e` 的 run 35419372086 为 ❌（即 7.7 里那个竞态），已由本次修复闭环。
+
+## 8. 第 6 轮：G10 修复（被拒任务的槽位记账退还，P1）
+
+### 8.1 缺口与症状
+
+worker 对派发回报 `REJECTED` 时，调度侧**没有任何人退还** `DispatchSelector.onDispatched` 记下的
+本地递减。实例只有 1 格容量时，本地账永久停在 0 ⇒ `select()` 恒返回 null ⇒ 被拒任务停在待派发态，
+整个 DAG 永不收敛。修复前的实测症状（曾以缺口用例钉住）：
+`sut.task-dispatched` 与 `sut.task-rejected` **各只有 1 条**、`sut.dag-terminal` 永不出现。
+
+### 8.2 修复
+
+- `DispatchSelector` 新增 `onDispatchRolledBack(name)`：退还本地递减，**但以最近一次 `SlotReport`
+  上报的槽位数为上界**（新增 `lastKnown` 表，`onRemoved` 同步清理），不做无根据的加账；
+  权威数值仍只由 worker 的 `SlotReport` 决定。
+- `VirtualScheduler.readFeed`：收到 `state == REJECTED` 的 `TaskStatus` 时先退还本地记账，
+  再交给状态机（状态机侧「回滚尝试、不消耗重试额度」的语义不变）。
+- 缺口用例翻转为**修复守卫**：`rejectedTaskIsNotRedispatchedAfterWorkerRefuses`
+  → `rejectedTaskIsRedispatchedAfterLocalSlotRollback`，断言由「派发只有 1 条、DAG 不收敛」
+  翻转为「派发事实 ≥2、worker 侧收到次数与事实一致、attempt 恒为 1、无 `sut.task-retry`」。
+
+### 8.3 实测证据
+
+- `VirtualSchedulerTest` 10 例全绿（含翻转后的守卫用例）。
+- 全量回归 **372 测 / 0 失败 / 0 错误 / 11 skip**（components 120、embedded 55 含 10 skip、
+  examples 62 含 1 skip、kernel 76、protocol 12、scenario 47），**连跑 2 次全绿**。
+
+### 8.4 语义边界（如实记录，不夸大）
+
+退还是「调度侧把派发前的账还原」，**不是**替 worker 报数：worker 若因自身原因确实不空闲，
+它会用下一次拒绝或 `SlotReport` 把真相带回来（拒绝上限 `MAX_REJECTIONS` 兜底，见状态机用例）。
+故退还只保证「被拒不会永久吃掉本地容量」，不保证「被拒之后一定有别的实例可派」——
+后者取决于拓扑里是否有第二个候选实例。
+
+## 9. 第 8 轮：G4 收口（scheduler 跨档位发现路径）+ 档位互通断点
+
+### 9.1 为什么「同拓扑换档」用例不能照抄 worker 的做法
+
+worker 的换档用例（`TierSwapAcceptanceTest`）跑的是 **real×real**（`DemoScheduler` +
+`DemoRealWorker`）与 **virtual×virtual** 两组，**从未跑过 real 档 SUT × virtual 档 scheduler**。
+把这两者拼起来时暴露一个真实的**档位互通断点**：
+
+- `DemoScheduler` 注册端点走的是**它自己的 ZK 客户端**，路径 `${SUT_SCHEDULER_PATH}`
+  （`/duo/endpoints/scheduler`），**不是** registry 组件；
+- `DemoRealWorker.discoverMaster()` 只问 `ctx.directRegistry()`（内核 registry 门面）；
+- 于是 real×real 能发现（两边共用同一台 ZK），而 **real 档 SUT × virtual 档 scheduler**
+  永远发现不到 master——virtual 档 registry 是独立内存后端，其中根本没有那个节点。
+
+### 9.2 结论（写进 ROADMAP 作为设计约束，不是待修 bug）
+
+**跨档位组合要求 registry 后端同源**：real 档 SUT 必须配 embedded/container 档 registry
+（同一台真实 ZooKeeper）。不同源时发现为空 → worker 重试耗尽后**显式失败**
+（`ComponentException: scheduler not discovered within retries`），符合 §12 不静默；
+**不做**「起了但永远发现不了」的假成功。
+
+### 9.3 落地与证据
+
+`ZkSchedulerDiscoveryTest`（duo-sim-examples，3 例，全绿）：
+
+| 用例 | 钉住的语义 |
+| --- | --- |
+| `kernelRegistryOnSameZkSeesSutWrittenSchedulerEndpoint` | embedded 档（真实 ZK）下，SUT 式写入的 `/duo/endpoints/scheduler` 对内核门面**可见**，未知契约返回空（不编造） |
+| `foreignZkEndpointIsInvisibleToIndependentBackend` | 异源后端：别的 ZK 上的节点对 virtual 档 registry **不可见**（发现失败要显式暴露，不做假成功） |
+| `registryFacadeIsTheEmbeddedTierImplementation` | 门面确实来自 embedded 档实现（守卫自身不因重构失去意义） |
+
+全量回归 **375 测 0 失败 / 11 skip**（examples 62→65，其余不变）。
+
+### 9.4 G4 收口判定
+
+§13「每个契约至少一个正例 + 一个故障例」：**8/8 契约已成对**——registry、worker、engine、
+store、message、filestore、resource 此前已成对；scheduler 的最后一环（跨档位发现）由本轮
+3 例钉住。**G4 闭合**。
+
+## 10. 第 8 轮：G11 闭合（DSL「声明但不启动」+ 未知键不再静默）
+
+### 10.1 缺口
+
+`Scenario.NodeSpec` 没有 `autoStart` 之类的字段，YAML 里写了也**不解析**（静默忽略）；
+`ScenarioLoader.parseNode` 是逐字段取值、**没有未知键校验**。两个后果：
+① 「只验某契约、不要让 worker 一起把 DAG 跑完」这种合理裁剪**无法表达**；
+② 键名拼错（如 `autoStarts`）不报错——用户以为生效了，实际被丢掉，与 §12「不静默」冲突。
+（第 5 轮的一次假绿正是踩在这上面：故障注入落在了任务已跑完之后。）
+
+### 10.2 修复（三处，均有用例）
+
+| 改动 | 位置 | 语义 |
+| --- | --- | --- |
+| 新增 `autoStart`（缺省 `true`） | `Scenario.NodeSpec` + `ScenarioLoader.parseNode` | 保留 11 字段兼容构造器 ⇒ 既有场景与既有测试**零改动**；`startComponents` 的启动判据加 `!n.autoStart()` |
+| 未知节点键**显式报错** | `ScenarioLoader.NODE_KEYS` 白名单 + `validateNodeKeys` | 报错点出具体键名**并列出受支持键**（含正确拼写），用户能自助纠正 |
+| SUT/external 上的 `autoStart:false` 拒绝 | `ScenarioValidator` | 这两类节点由 `startSut()` 启动，`startComponents()` 本来就不碰它们 ⇒ 写在这里是「看似生效实则无效」的陷阱，必须报错 |
+
+### 10.3 用例
+
+- `ScenarioLoaderTest.autoStartDefaultsToTrueAndCanBeTurnedOff`：缺省 `true`（既有场景零改动）
+  与 `autoStart: false` 被正确解析（此前会被静默忽略）两条都钉住；
+- `ScenarioLoaderTest.unknownNodeKeyIsRejectedNeverSilentlyIgnored`：`autoStarts: false`
+  必须报 `unknown key 'autoStarts'` 且报错文本里出现正确拼写 `autoStart`；
+- `ScenarioValidatorTest.autoStartFalseOnOrdinaryNodeIsAccepted`：普通内核节点上合法；
+- `ScenarioValidatorTest.autoStartFalseOnSutOrExternalNodeIsRejectedLoudly`：SUT 与 external 两种形态都报错。
+
+### 10.4 实测证据
+
+全量回归 **379 测 0 失败 / 0 错误 / 11 skip**（scenario 47→51，其余不变）。
+
+### 10.5 文档同步
+
+`docs/SCENARIO-DSL.md` §1 节点字段表补 `autoStart` 行（含"对 SUT/external 无意义并会被拒绝"
+的说明），§8 偏差表新增第 10 条（未知键静默 → 已闭合）。
+
+## 11. 第 8 轮：M7 发布配置收尾（交付合规）
+
+### 11.1 交付内容
+
+| 项 | 落地 | 实测证据 |
+| --- | --- | --- |
+| 源码 jar | `maven-source-plugin` 3.3.1（`jar-no-fork`，绑 `package`） | `-Drelease -DskipTests package` ⇒ 8 个 `-sources.jar` |
+| 文档 jar | `maven-javadoc-plugin` 3.11.2（`doclint=none`，绑 `package`） | 同上 ⇒ 8 个 `-javadoc.jar`；kernel：sources 47 KB / javadoc 438 KB / main 86 KB |
+| 元数据 | 根 POM 补 `licenses`（Apache-2.0）/`scm`/`url` | `mvnw validate` 通过 |
+| 开关 | `release` profile（`-Drelease` 激活）改 `release.skipAttachments=false` | **缺省构建行为不变**：`Skipping javadoc generation`，`target/` 下只有主 jar |
+| 版本策略 + 变更日志 | `CHANGELOG.md`（Keep a Changelog 形态；0.x 规则、里程碑版本判定、1.0 前不兼容需标 BREAKING） | 文件本体 |
+
+### 11.2 为什么不把附件 jar 做成缺省
+
+`mvnw test` 是本地与 CI 的主要回路（T7「秒级反馈回路」）。附件 jar 对测试毫无用处却会
+在每次构建多跑一遍 javadoc/打包——因此**缺省 skip、发布档显式打开**，两边都不牺牲。
+
+### 11.3 实测证据
+
+- 缺省：`mvnw -o -B -pl duo-sim-kernel -am -DskipTests package` ⇒ `BUILD SUCCESS`，
+  `target/` 仅 `duo-sim-kernel-0.1.0-SNAPSHOT.jar`；
+- 发布档：`mvnw -o -B -Drelease -DskipTests package` ⇒ `BUILD SUCCESS`，
+  全仓 **8 个 `-sources.jar` + 8 个 `-javadoc.jar`**；
+- 回归：`mvnw test` ⇒ `BUILD SUCCESS`，**379 测 0 失败 / 0 错误 / 11 skip**。
+
+### 11.4 仍未做（如实记录）
+
+- **质量门禁**：`dependency:analyze`、可选 JaCoCo 覆盖率——ROADMAP M7 交付物 4，下一轮；
+- **M8 观测面**：Prometheus `/metrics` 与 logback 结构化日志**整体未实现**（G6，P2）——
+  这是「最初的目标」里 §11 承诺三条通道中唯一尚未落地的一条。

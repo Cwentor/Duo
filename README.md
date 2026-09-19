@@ -5,8 +5,9 @@
 
 - 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
 - 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
-- 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M6 external SUT 均已实施完成并验收；M5 进行中（DSL 断链 G7 与 custom-hook 已闭合；第 4 轮补齐 `scheduler`/`engine`/`message`/`filestore` 的 virtual 档与 `store` 的 container 档，金标准场景集 G4 仍开放）、M7 最小子集已交付**
-- 最近一次全量回归（2026-09-18，M5 第 4 轮后）：`.\mvnw.cmd -o -B test` → **342 测 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
+- 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M5 契约与档位补全 / M6 external SUT / M7 工程化与 CI / M8 观测面 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）
+- 最近一次全量回归（2026-09-19，第 11 轮质量门禁后）：`.\mvnw.cmd -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
+- 质量门禁：`.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（CI `regression` job 已接入）
 - 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
 
 ---
@@ -131,9 +132,48 @@ duo topology --url http://127.0.0.1:<port>
 duo inject crash workers[2] --url http://127.0.0.1:<port>
 duo events --since 0 --url http://127.0.0.1:<port>
 duo assert  --url http://127.0.0.1:<port>            # 退出码反映断言通过与否
+duo metrics --url http://127.0.0.1:<port>            # Prometheus 文本格式（可直接被 scrape）
+duo diagnose --url http://127.0.0.1:<port>           # 一次注入的完整因果链；断链退出码 1
 ```
 
-### 5.4 写一个场景测试（JUnit5）
+### 5.4 观测面：三条通道怎么用（M8）
+
+§11 承诺的三条通道相互**互补**，不要互相替代：
+
+| 通道 | 面向 | 入口 | 何时用 |
+| --- | --- | --- | --- |
+| 事件流 | 机器 | `events.jsonl` / `duo events` | 断言与录制（唯一的"事实来源"） |
+| 日志 | 人 | 控制台 / `grep FAULT` | 读因果链："谁对谁做了什么、为什么被拒" |
+| 指标 | 聚合系统 | `GET /metrics` | 趋势与告警："心跳吞吐掉了没有" |
+
+日志默认控制台可读，第三方（ZK/Curator/Netty/Testcontainers/H2）已降噪到 WARN。
+两个开关：
+
+```bash
+-Dduo.log.level=DEBUG     # 打开 Duo 自身的 DEBUG（默认 INFO）
+-Dduo.log.json=INFO       # 额外输出结构化 JSON 行（默认关闭；零新增依赖）
+```
+
+单命令导出一次故障注入的因果链（注入 → 组件反应 → SUT 事实 → 断言）：
+
+```bash
+duo diagnose --url http://127.0.0.1:<port>
+# 来源: http://127.0.0.1:51422  事件总数: 608  注入次数: 1
+#
+# [1] 注入 crash → workers-1  (事件 #6)
+#     结果: 已下达  窗口至事件 #598
+#     组件反应 (5): sim.worker-instance-crashed@workers-1  sim.worker-task-status@workers-2 …
+#     SUT 事实 (586 条，8 类): sut.heartbeat×564 […]  sut.task-dispatched×4 […] …
+#
+# 断言: 1 条，失败 0 条
+#     PASS noTaskLost: 4 task(s) terminal, all SUCCESS
+```
+
+**断链会被显式报出**：注入之后没有任何 `sut.*` 事实 ⇒ 报告打 `MISSING` 并列出原因、
+退出码非 0（"注入下达了但被测对象没反应"是最需要被看见的情形）。
+指标口径（19 个指标族逐个口径 + 已知边界）见 [`docs/METRICS.md`](docs/METRICS.md)。
+
+### 5.5 写一个场景测试（JUnit5）
 
 ```java
 @VirtualCluster("/scenarios/junit-extension-smoke.yaml")
@@ -228,8 +268,9 @@ assertions:
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议；container 档另有真 PostgreSQL（本机无 Docker 时 6 条用例 skip，**该档在 CI `container` job 上尚未观测到绿**） |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 常规回归 342 测 / 11 skip（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
-| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | 🟡 部分 | 扩展/断言库/**标准 Wrapper + CI 三 job（M7，远端连续 4 次全绿）**已交付；发布产物（source/javadoc）未做 |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
+| 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
+| — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
 
 完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
@@ -240,6 +281,7 @@ assertions:
 | [`docs/README.md`](docs/README.md) | 全仓文档索引与阅读路径 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构详解：模块、SPI、契约与档位、接线规则、事件总线、SUT 适配面、控制面、线协议 |
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
+| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（19 个指标族的语义、刷新时机与已知边界） |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 开发指南：环境、构建、测试分层、扩展点、约定、已知工程债 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单、M5–M8 阶段计划与验收口径 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：D1–D9 拍板（决定/理由/触发条件/落点）与修订记录 |
