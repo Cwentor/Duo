@@ -138,8 +138,9 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
    `CustomHookAcceptanceTest` 2 例 + `ScenarioHostTest` 1 例，含未注册名的显式失败）
 5. **DSL 断链修复（G7）**：`jitter`/`failAt` 兼容百分号；`logLines` 接入 config；`ready` 声明位置统一
    （保留 `launch.ready`，节点级 `ready` 作为兼容别名）+ 校验文案修正。✅ **已落地**（G7 闭合）
-6. **金标准场景集（G4）**：每个契约至少一个正例 + 一个故障例，全部进常规回归。🟡 **第 5 轮已补齐
-   2 个契约（message 成对；engine/resource/filestore 的故障路径同轮补齐），余下按契约逐个补**
+6. **金标准场景集（G4）**：每个契约至少一个正例 + 一个故障例，全部进常规回归。🟡 **8 个契约里 7 个已成对**
+   （第 5 轮：message 新场景成对、filestore 补 `FaultInjectable` 后成对、engine 取消/冻结语义可断言、
+   resource 经核对**第 4 轮就已存在配对**），**唯一余项＝scheduler 的「同拓扑换档」用例**
    ——正例/故障例的落点分两类：**有对外端点的契约**（registry/worker/scheduler/engine）走 YAML 场景；
    **NONE + interface-direct 的契约**（message/filestore/resource，§7.5 根本没有地址）只能由
    JUnit 夹具从同进程门面发起，YAML 只提供真实拓扑（如实记录，不是"漏了 YAML"）
@@ -147,7 +148,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 **第 5 轮实测证据**（`.\mvnw.cmd -o -B test`，无 Docker 档）
 
 - 全量回归 **372 测 0 失败 / 11 skip**（components 120、embedded 55 含 10 skip、examples 62 含 1 skip、
-  kernel 76、protocol 12、scenario 47）——较第 4 轮 342 净增 30 测；本轮**连跑 2 次全绿**
+  kernel 76、protocol 12、scenario 47）——较第 4 轮 342 净增 30 测；本轮**连跑 2 次全绿**，
+  远端 CI（run 35420349133）同 HEAD 一致全绿
 - **G4 本轮补齐的部分**：
   - **message 契约成对**（新增 `m5-message-contract-acceptance.yaml` +
     `MessageContractAcceptanceTest` 3 例）：正例＝发布→订阅观察→拉取消费的顺序/深度/事实全对；
@@ -173,6 +175,14 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 - **一处踩坑记录（假红而非假绿）**：`freeze` 的 duration 若**大于**场景收敛时间，pending 的定时
   clear 会被 `engine.stop()` 取消，断言就变成"解冻事实永不出现"的**假红**。已把 duration 调到
   收敛窗口之内，并在用例里显式等待 `sim.engine-resumed`（附注释说明成因）
+- **一处 CI 抓到的真实竞态（本机连跑 2 次全绿未复现）**：`stop()` 的顺序是「中断任务线程 →
+  代际 +1 → 清空在途表」，被中断的线程先读到**旧代际**于是进入上报分支、之后才 `fire`，
+  旧代际的 `CANCELLED` 终态事实因此偶发漂移到重启之后（CI run 35419372086 判红）。
+  修复：`stop()` 改为**先递增代际、再在 stop 线程同步发射取消终态**，最后才中断；
+  被中断线程不再重复发事实；正常完成分支补 `exec.cancelled` 守卫（否则会把"已决定取消"
+  报成 succeeded/failed）。**用例口径同时更正**：原断言「不得存在任何 CANCELLED 事实」过严
+  ——取消事实本该存在，但必须**早于** `sim.engine-restarted`；改为以重启标记为对账锚点。
+  教训：断言写得比语义更严，和假绿一样不可信
 - **一处 DSL 缺口（G11，新增）**：DSL **没有**「声明节点但不启动」的开关
   （`Scenario.NodeSpec` 无 `autoStart` 字段，写了也不解析）。于是"只验新契约、不要 worker 一起跑"
   这种合理诉求**无法表达**，只能靠场景注释说明——这正是上面那条假绿的成因之一。
@@ -290,7 +300,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 2 | **M6 external SUT** | ✅ 已完成（G2 闭合） | 主线 |
 | 3 | **M5 的 DSL 断链修复（G7）+ custom-hook 闭环** | ✅ **第 3 轮完成**（G7 闭合、G5 钩子部分闭合；17 条新用例） | 与 M5 主线并行 |
 | 4 | **M5 契约与档位补全**（`engine`/`scheduler`/`filestore`/`message` + `store`/`resource` 档位 + 三个故障动作） | ✅ **第 4 轮完成**（G1/G5 闭合、G3 大幅收窄；58 条新用例 + 18 条移入 components） | 可与 M7 收尾并行 |
-| 5 | **M5 金标准场景集（G4）** | 🟡 **第 5 轮推进中**（message 已成对；engine/resource 故障语义可断言；余：filestore 故障例 + scheduler 换档） | 依赖顺序 4 ✅ |
+| 5 | **M5 金标准场景集（G4）** | 🟡 **7/8 契约已成对**（本轮：message 成对、filestore 补故障例；余：scheduler 同拓扑换档） | 依赖顺序 4 ✅ |
 | 5b | **修复 G10（拒绝后重派不落地）** | ⏭ 与顺序 5 同一轮或紧随（守卫用例已就位，修复后翻转断言即可） | 可并行 |
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ⏭ 待拍板：要么补 `autoStart: false`，要么把「节点声明即启动」写成设计约束 | 与顺序 5 耦合 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
@@ -300,8 +310,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
 当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 1–5 ✅（余项：交付物 6 金标准场景集——7/8 契约已成对，仅余 scheduler 同拓扑换档）**
 ⇒ T1/T4/T5/T7 达成或基本达成、T2/T3/T6 机制齐备待广度与容器档取证；剩余 M5-6 收尾 + M7 收尾 + M8**。
-第 5 轮新增：**G9 语义确定性覆盖 + message/filestore 契约正例·故障例成对 + G4 假绿修正 + G11 缺口**；
-全量回归 **372/0/0/11**（连跑 2 次全绿）。
+第 5 轮新增：**G9 语义确定性覆盖 + message/filestore 契约正例·故障例成对 + G4 假绿修正 + G11 缺口
++ 一处 CI 抓到的引擎取消跨代际竞态修复**；全量回归 **372/0/0/11**（连跑 2 次全绿，远端 CI 一致）。
 
 ---
 
