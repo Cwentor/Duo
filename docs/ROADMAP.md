@@ -58,7 +58,7 @@
 | **G1** | ~~**契约覆盖不全**~~ **✅ 已闭合（M5 第 4 轮）**：`engine`/`message`/`filestore` 原有枚举占位或仅接口骨架，现已各有可运行实现（`VirtualEngine`/`VirtualMessageBroker`/`VirtualFilestore`）+ `scheduler` virtual 档 + `resource` virtual 档 + `store` container 档 | `Contract` 枚举 8/8 × SPI 注册清单（components 7 行 + embedded 5 行） | — | ~~P1~~ 已闭合 |
 | **G2** | ~~**external SUT 引擎未实现**~~ **✅ 已闭合（M6，本轮）**：`launch.mode=external` 代起/attach 两形态、端点告知双途径（配置文件 + stdout）、`tcp`/`http` ready 探针、`ready.timeout` 全链路消费、`sut.exited`/`sut.crashed` 事实与「场景结束不杀进程」全部落地 | `ExternalSutLauncher` / `ReadyProbe`；`ExternalSutAcceptanceTest`（3 例）+ `ExternalSutLauncherTest`（10 例） | — | ~~P0~~ 已闭合 |
 | **G3** | **档位覆盖窄**（M5 第 4 轮大幅收窄）：~~`store`/`resource` 仅 embedded~~（store 已补 container、resource 已补 virtual）；~~`scheduler` 仅 real~~（已补 virtual 调度桩）；~~`engine` 无实现~~（已补 virtual） | 契约 × 档位矩阵 | 剩余：engine/message/filestore/resource 仍各 1 档；`scheduler` 两档共用状态机但缺「同拓扑换档」用例；`engine` 无第二档可换（**如实记录**） | P2（剩余） |
-| **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」。第 4 轮补了 `m5-new-contracts-acceptance.yaml`（新契约 + 三故障动作同场景，但**未成对**）；第 5 轮逐契约补齐：message（冻结，新场景 + 3 例夹具）、filestore（挂载丢失，本轮新实现 `FaultInjectable`）、engine（冻结/资源耗尽，`VirtualEngineTest` 故障例）、resource（配额耗尽，**第 4 轮其实已成对**——本轮更正此前的悲观记录）。余下：scheduler 的「同拓扑换档」用例 | `duo-sim-examples/src/*/resources/scenarios/` + `duo-sim-components` 故障例 | 契约语义回归无门禁，新契约容易「实现了但没验证」 | P1（M5 交付物 6，收尾中） |
+| **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」。第 4 轮补了 `m5-new-contracts-acceptance.yaml`（新契约 + 三故障动作同场景，但**未成对**）；第 5 轮逐契约补齐：message（冻结，新场景 + 3 例夹具）、filestore（挂载丢失，本轮新实现 `FaultInjectable`）、engine（冻结/资源耗尽，`VirtualEngineTest` 故障例）、resource（配额耗尽，**第 4 轮其实已成对**——第 5 轮更正此前的悲观记录）、scheduler（**第 8 轮**：跨档位发现路径由 `ZkSchedulerDiscoveryTest` 3 例钉住）。✅ **8/8 契约已成对，本轮闭合** | `duo-sim-examples/src/*/resources/scenarios/` + `duo-sim-components` 故障例 | 契约语义回归无门禁，新契约容易「实现了但没验证」 | ✅ 已闭合（M5 交付物 6） |
 | **G5** | ~~**故障动作未闭环**~~ **✅ 已闭合（M5 第 4 轮）**：~~`HookRegistry` 无 `ScenarioEngine` 注入入口~~（第 3 轮闭合）；~~`freeze`/`slow`/`resource-exhaust` 仅常量声明~~（第 4 轮实现：`FaultInjectable` + `supportedFaults` 声明 + 幂等/显式拒绝用例 + YAML 端到端） | `FaultAction` 常量 vs Provider `Set.of(...)`（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource） | — | ~~P1~~ 已闭合 |
 | **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
 | **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
@@ -140,7 +140,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
    （保留 `launch.ready`，节点级 `ready` 作为兼容别名）+ 校验文案修正。✅ **已落地**（G7 闭合）
 6. **金标准场景集（G4）**：每个契约至少一个正例 + 一个故障例，全部进常规回归。🟡 **8 个契约里 7 个已成对**
    （第 5 轮：message 新场景成对、filestore 补 `FaultInjectable` 后成对、engine 取消/冻结语义可断言、
-   resource 经核对**第 4 轮就已存在配对**），**唯一余项＝scheduler 的「同拓扑换档」用例**
+   resource 经核对**第 4 轮就已存在配对**），**scheduler 的同档位发现路径由
+   `ZkSchedulerDiscoveryTest` 钉住（第 8 轮，3 例）**
    ——正例/故障例的落点分两类：**有对外端点的契约**（registry/worker/scheduler/engine）走 YAML 场景；
    **NONE + interface-direct 的契约**（message/filestore/resource，§7.5 根本没有地址）只能由
    JUnit 夹具从同进程门面发起，YAML 只提供真实拓扑（如实记录，不是"漏了 YAML"）
@@ -150,6 +151,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 - 全量回归 **372 测 0 失败 / 11 skip**（components 120、embedded 55 含 10 skip、examples 62 含 1 skip、
   kernel 76、protocol 12、scenario 47）——较第 4 轮 342 净增 30 测；本轮**连跑 2 次全绿**，
   远端 CI（run 35420349133）同 HEAD 一致全绿
+- **第 8 轮**追加 `ZkSchedulerDiscoveryTest` 3 例后：全量回归 **375 测 0 失败 / 11 skip**
+  （examples 62→65，其余不变）
 - **G4 本轮补齐的部分**：
   - **message 契约成对**（新增 `m5-message-contract-acceptance.yaml` +
     `MessageContractAcceptanceTest` 3 例）：正例＝发布→订阅观察→拉取消费的顺序/深度/事实全对；
@@ -229,8 +232,18 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 - 8 个契约全部至少有 1 个可运行实现（`message`/`filestore` 至少 virtual 桩）；✅ **8/8**
 - `registry`/`worker`/`scheduler`/`engine` 至少各有一个「同拓扑换档」验收（测试代码零改动）；
-  🟡 `registry`（3 档）/`worker`（2 档）已有 `TierSwapAcceptanceTest`；`scheduler` 两档**共用状态机**
-  但尚无同拓扑换档用例（virtual 档线协议用例已补）；`engine` 仅 virtual 档，无档可换（**如实记录**）
+  🟢 `registry`（3 档）/`worker`（2 档）已有 `TierSwapAcceptanceTest`；**`scheduler` 两档共用同一份
+  `SchedulerStateMachine`/`DispatchSelector`**，并用 `ZkSchedulerDiscoveryTest`（第 8 轮）把
+  「real 档 SUT × 内核 registry」的发现路径钉成契约——这正是「virtual scheduler + real worker」
+  组合成立的前提条件；`engine` 仅 virtual 档，无档可换（**如实记录**）
+- **第 8 轮实测发现（档位互通的一个真实断点）**：`TierSwapAcceptanceTest` 只跑过 real×real 与
+  virtual×virtual，**从未跑过 real 档 SUT × virtual 档 scheduler**。而 `DemoScheduler` 的端点注册走
+  自有 ZK 客户端（`/duo/endpoints/scheduler`）、`DemoRealWorker.discoverMaster()` 只问
+  `ctx.directRegistry()` ⇒ virtual 档 registry（独立内存后端）里永远没有那个节点，
+  real worker 会一直发现不到 master。结论：**跨档位组合要求 registry 后端同源**
+  （用 embedded/container 档真实 ZK）；不同源时发现为空、worker 重试耗尽后**显式失败**
+  （符合 §12 不静默，不做「起了但永远发现不了」的假成功）。两条路径都已由
+  `ZkSchedulerDiscoveryTest` 3 例钉住（同源可见 / 异源不可见 / 门面类型自证）
 - 每个新契约的故障例在 CI 常规回归中执行；✅ 三个故障动作 + 5 个新契约的用例全部在
   `duo-sim-components` 常规回归内（`m5-new-contracts-acceptance.yaml` 另在 examples 回归内）
 - `custom-hook` 有 YAML 端到端用例。✅ **已达成**
@@ -299,7 +312,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 2 | **M6 external SUT** | ✅ 已完成（G2 闭合） | 主线 |
 | 3 | **M5 的 DSL 断链修复（G7）+ custom-hook 闭环** | ✅ **第 3 轮完成**（G7 闭合、G5 钩子部分闭合；17 条新用例） | 与 M5 主线并行 |
 | 4 | **M5 契约与档位补全**（`engine`/`scheduler`/`filestore`/`message` + `store`/`resource` 档位 + 三个故障动作） | ✅ **第 4 轮完成**（G1/G5 闭合、G3 大幅收窄；58 条新用例 + 18 条移入 components） | 可与 M7 收尾并行 |
-| 5 | **M5 金标准场景集（G4）** | 🟡 **7/8 契约已成对**（本轮：message 成对、filestore 补故障例；余：scheduler 同拓扑换档） | 依赖顺序 4 ✅ |
+| 5 | **M5 金标准场景集（G4）** | ✅ **8/8 契约已成对**（第 5 轮：message/filestore 成对；第 8 轮：scheduler 的跨档位发现路径 `ZkSchedulerDiscoveryTest`） | 已闭环 |
 | 5b | **修复 G10（拒绝后重派不落地）** | ✅ **第 6 轮完成**（`onDispatchRolledBack` + 守卫用例翻转；全量 372/0/0/11） | 已闭环 |
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ⏭ 待拍板：要么补 `autoStart: false`，要么把「节点声明即启动」写成设计约束 | 与顺序 5 耦合 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
@@ -307,7 +320,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
-当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 1–5 ✅（余项：交付物 6 金标准场景集——7/8 契约已成对，仅余 scheduler 同拓扑换档）**
+当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 1–6 ✅（金标准场景集 8/8 契约已成对；G10 已闭合）**
 ⇒ T1/T4/T5/T7 达成或基本达成、T2/T3/T6 机制齐备待广度与容器档取证；剩余 M5-6 收尾 + M7 收尾 + M8**。
 第 5 轮新增：**G9 语义确定性覆盖 + message/filestore 契约正例·故障例成对 + G4 假绿修正 + G11 缺口
 + 一处 CI 抓到的引擎取消跨代际竞态修复**；全量回归 **372/0/0/11**（连跑 2 次全绿，远端 CI 一致）。

@@ -391,3 +391,42 @@ worker 对派发回报 `REJECTED` 时，调度侧**没有任何人退还** `Disp
 它会用下一次拒绝或 `SlotReport` 把真相带回来（拒绝上限 `MAX_REJECTIONS` 兜底，见状态机用例）。
 故退还只保证「被拒不会永久吃掉本地容量」，不保证「被拒之后一定有别的实例可派」——
 后者取决于拓扑里是否有第二个候选实例。
+
+## 9. 第 8 轮：G4 收口（scheduler 跨档位发现路径）+ 档位互通断点
+
+### 9.1 为什么「同拓扑换档」用例不能照抄 worker 的做法
+
+worker 的换档用例（`TierSwapAcceptanceTest`）跑的是 **real×real**（`DemoScheduler` +
+`DemoRealWorker`）与 **virtual×virtual** 两组，**从未跑过 real 档 SUT × virtual 档 scheduler**。
+把这两者拼起来时暴露一个真实的**档位互通断点**：
+
+- `DemoScheduler` 注册端点走的是**它自己的 ZK 客户端**，路径 `${SUT_SCHEDULER_PATH}`
+  （`/duo/endpoints/scheduler`），**不是** registry 组件；
+- `DemoRealWorker.discoverMaster()` 只问 `ctx.directRegistry()`（内核 registry 门面）；
+- 于是 real×real 能发现（两边共用同一台 ZK），而 **real 档 SUT × virtual 档 scheduler**
+  永远发现不到 master——virtual 档 registry 是独立内存后端，其中根本没有那个节点。
+
+### 9.2 结论（写进 ROADMAP 作为设计约束，不是待修 bug）
+
+**跨档位组合要求 registry 后端同源**：real 档 SUT 必须配 embedded/container 档 registry
+（同一台真实 ZooKeeper）。不同源时发现为空 → worker 重试耗尽后**显式失败**
+（`ComponentException: scheduler not discovered within retries`），符合 §12 不静默；
+**不做**「起了但永远发现不了」的假成功。
+
+### 9.3 落地与证据
+
+`ZkSchedulerDiscoveryTest`（duo-sim-examples，3 例，全绿）：
+
+| 用例 | 钉住的语义 |
+| --- | --- |
+| `kernelRegistryOnSameZkSeesSutWrittenSchedulerEndpoint` | embedded 档（真实 ZK）下，SUT 式写入的 `/duo/endpoints/scheduler` 对内核门面**可见**，未知契约返回空（不编造） |
+| `foreignZkEndpointIsInvisibleToIndependentBackend` | 异源后端：别的 ZK 上的节点对 virtual 档 registry **不可见**（发现失败要显式暴露，不做假成功） |
+| `registryFacadeIsTheEmbeddedTierImplementation` | 门面确实来自 embedded 档实现（守卫自身不因重构失去意义） |
+
+全量回归 **375 测 0 失败 / 11 skip**（examples 62→65，其余不变）。
+
+### 9.4 G4 收口判定
+
+§13「每个契约至少一个正例 + 一个故障例」：**8/8 契约已成对**——registry、worker、engine、
+store、message、filestore、resource 此前已成对；scheduler 的最后一环（跨档位发现）由本轮
+3 例钉住。**G4 闭合**。
