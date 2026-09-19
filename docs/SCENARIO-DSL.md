@@ -26,6 +26,7 @@ assertions: [ ... ]      # 可选
 | `tier` | ✅ | string | `virtual`/`embedded`/`container`/`real` |
 | `sut` | — | bool | 标为被测对象；**全场景恰好一个**（规则 5） |
 | `count` | — | int | 实例数（>1 时展开为逻辑实例，寻址 `id[N]`，**N 从 1 开始**）；缺省 1 |
+| `autoStart` | — | bool | 缺省 `true`＝**声明即启动**。写 `false` ⇒ 该节点只参与 wiring/校验、**不由内核启动**（用于「只验某契约、不让 worker 把 DAG 一起跑完」这类裁剪）。对 SUT 与 `launch.mode: external` 节点写 `false` 会被校验**显式拒绝**（它们由 `startSut()` 单独启动，写在这里是看似生效实则无效的陷阱） |
 | `impl` | — | string | 显式指定实现名（同 `(contract,tier)` 下有多个实现时）；缺省取 `default: true` 的那个 |
 | `config` | — | map | 自由键值，原样注入组件 `ComponentContext.config()`（值统一转字符串） |
 | `capacity` | — | map | 资源容量；展开为 `capacity.<key>` 注入 config（如 `capacity.slots`） |
@@ -389,6 +390,7 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | 7 | ~~`custom-hook` 的 `HookRegistry` 无法从 `ScenarioEngine` 注入（引擎内部 `new HookRegistry()`）~~ | **已闭合（M5）**：`ScenarioEngine.withHooks/hooks()` + `ScenarioHost.hooks()`；YAML 端到端用例（含未注册名的显式失败）进常规回归 | G5 ✅ |
 | 8 | ~~`freeze`/`slow`/`resource-exhaust` 仅有常量声明，无实现声明 `supportedFaults`~~ | **已闭合（M5 第 4 轮）**：三个动作在 worker/engine（+ scheduler 的 `freeze`、resource 的 `resource-exhaust`）上实现并声明；幂等 + 显式拒绝语义 + YAML 端到端（`m5-new-contracts-acceptance.yaml`）进常规回归 | G5 ✅ |
 | 9 | `launch.command` / `${java}` 占位符是 **M6 新增的 DSL 字段**（设计文档未定义） | 设计 §7.3 只说「用户自行启动」；实现补了「内核代起并观测退出」的形态，否则验收要求的 `sut.exited`/`sut.crashed` 无法产出（决策 D7） | DECISIONS D7 |
+| 10 | ~~节点上的**未知键被静默忽略**（写了 `autoStart`/拼错的键都不报错）~~ | **已闭合（第 8 轮/G11）**：`Scenario.NodeSpec` 新增 `autoStart`（缺省 `true`，12 键白名单），未知键在解析期**显式报错并列出受支持的键**；`autoStart:false` 对 SUT/external 节点由校验器拒绝（它们由 `startSut()` 启动，写在这里无意义） | G11 ✅ |
 
 > **M6 修正的另一处实现缺陷（不在 DSL 面，但影响断言写法）**：`sim.fault-injected` 原先在
 > `dispatch` **之后**才落流，导致组件在同一注入调用内发布的反应事件（如 embedded

@@ -57,6 +57,16 @@ public final class ScenarioValidator {
             errors.add("exactly one node must be marked sut: true, found " + sutCount);
         }
 
+        // G11：autoStart:false 只对**内核可自启动**的节点有意义——SUT 与 external 节点
+        // 都由 startSut 单独处理，写 autoStart:false 是"看似生效实则无效"的静默陷阱（§12）。
+        for (var n : byId.values()) {
+            if (!n.autoStart() && (n.sut() || isExternal(n))) {
+                errors.add("node " + n.id() + ": autoStart:false is meaningless for "
+                        + (n.sut() ? "the sut node" : "an external node")
+                        + " (both are started by startSut(), not by startComponents())");
+            }
+        }
+
         // 规则 1：契约已注册 + 档位有实现 + 交互型档位拒绝 embedded/container
         Map<String, CapabilityMetadata> metadataByNode = new LinkedHashMap<>();
         for (var n : byId.values()) {

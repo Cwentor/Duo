@@ -430,3 +430,39 @@ worker 的换档用例（`TierSwapAcceptanceTest`）跑的是 **real×real**（`
 §13「每个契约至少一个正例 + 一个故障例」：**8/8 契约已成对**——registry、worker、engine、
 store、message、filestore、resource 此前已成对；scheduler 的最后一环（跨档位发现）由本轮
 3 例钉住。**G4 闭合**。
+
+## 10. 第 8 轮：G11 闭合（DSL「声明但不启动」+ 未知键不再静默）
+
+### 10.1 缺口
+
+`Scenario.NodeSpec` 没有 `autoStart` 之类的字段，YAML 里写了也**不解析**（静默忽略）；
+`ScenarioLoader.parseNode` 是逐字段取值、**没有未知键校验**。两个后果：
+① 「只验某契约、不要让 worker 一起把 DAG 跑完」这种合理裁剪**无法表达**；
+② 键名拼错（如 `autoStarts`）不报错——用户以为生效了，实际被丢掉，与 §12「不静默」冲突。
+（第 5 轮的一次假绿正是踩在这上面：故障注入落在了任务已跑完之后。）
+
+### 10.2 修复（三处，均有用例）
+
+| 改动 | 位置 | 语义 |
+| --- | --- | --- |
+| 新增 `autoStart`（缺省 `true`） | `Scenario.NodeSpec` + `ScenarioLoader.parseNode` | 保留 11 字段兼容构造器 ⇒ 既有场景与既有测试**零改动**；`startComponents` 的启动判据加 `!n.autoStart()` |
+| 未知节点键**显式报错** | `ScenarioLoader.NODE_KEYS` 白名单 + `validateNodeKeys` | 报错点出具体键名**并列出受支持键**（含正确拼写），用户能自助纠正 |
+| SUT/external 上的 `autoStart:false` 拒绝 | `ScenarioValidator` | 这两类节点由 `startSut()` 启动，`startComponents()` 本来就不碰它们 ⇒ 写在这里是「看似生效实则无效」的陷阱，必须报错 |
+
+### 10.3 用例
+
+- `ScenarioLoaderTest.autoStartDefaultsToTrueAndCanBeTurnedOff`：缺省 `true`（既有场景零改动）
+  与 `autoStart: false` 被正确解析（此前会被静默忽略）两条都钉住；
+- `ScenarioLoaderTest.unknownNodeKeyIsRejectedNeverSilentlyIgnored`：`autoStarts: false`
+  必须报 `unknown key 'autoStarts'` 且报错文本里出现正确拼写 `autoStart`；
+- `ScenarioValidatorTest.autoStartFalseOnOrdinaryNodeIsAccepted`：普通内核节点上合法；
+- `ScenarioValidatorTest.autoStartFalseOnSutOrExternalNodeIsRejectedLoudly`：SUT 与 external 两种形态都报错。
+
+### 10.4 实测证据
+
+全量回归 **379 测 0 失败 / 0 错误 / 11 skip**（scenario 47→51，其余不变）。
+
+### 10.5 文档同步
+
+`docs/SCENARIO-DSL.md` §1 节点字段表补 `autoStart` 行（含"对 SUT/external 无意义并会被拒绝"
+的说明），§8 偏差表新增第 10 条（未知键静默 → 已闭合）。

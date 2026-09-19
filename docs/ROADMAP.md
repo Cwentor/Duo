@@ -65,7 +65,7 @@
 | **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**第 4 轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
 | **G10** | ✅ **已闭合（第 6 轮）**：worker 回报 `REJECTED` 时，`DispatchSelector` 现在会**退还** `onDispatched` 记下的本地递减（新增 `onDispatchRolledBack`，以最近一次 `SlotReport` 的槽位数为上界，防凭空加账）⇒ 被拒任务能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。修复前症状：实例仅 1 格容量时最后一格被永久占用、任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsRedispatchedAfterLocalSlotRollback`（缺口用例**已翻转**为修复守卫：派发事实 ≥2、worker 侧收到次数一致、`attempt` 恒为 1、无 `sut.task-retry`）+ `DispatchSelector.onDispatchRolledBack` | 「G9 已闭合」此前只覆盖**同进程**通路，线协议通路会把任务卡死（违反 §12 的完整语义） | ~~P1~~ 已完成 |
-| **G11** | **DSL 缺「声明但不启动」开关（第 5 轮新发现，待拍板）**：`Scenario.NodeSpec` 没有 `autoStart` 之类的字段，写进 YAML 也**不解析**（静默忽略）。于是「只验某契约、不要 worker 一起把 DAG 跑完」这种合理诉求无法表达——`m5-new-contracts-acceptance` 的三个故障因此曾经落在任务已经跑完之后（断言形同对着空气通过，本轮改注入时点绕过） | `ScenarioLoader.parseNode`（逐字段解析，无严格未知键校验）+ `ScenarioEngine.startComponents` 的启动判据（`sut() ‖ isExternal ‖ !startable ‖ 已存在` ⇒ 其余全起） | 场景作者无法裁剪拓扑；写错的键不报错（与 §12「不静默」冲突） | P2（拍板后 1 小时内可落） |
+| **G11** | ✅ **已闭合（第 8 轮）**：① `Scenario.NodeSpec` 新增 `autoStart`（缺省 `true`，11 字段兼容构造器保住既有场景零改动），`ScenarioEngine.startComponents` 的启动判据加 `!n.autoStart()` ⇒「声明但不启动」可表达；② **未知节点键显式报错**（`ScenarioLoader` 的 `NODE_KEYS` 白名单 + 列出受支持键），拼错的键不再被静默忽略；③ 校验层补边界：SUT 与 external 节点由 `startSut()` 单独启动，在它们身上写 `autoStart: false` 是**看似生效实则无效**的陷阱，`ScenarioValidator` 显式报错（§12） | `ScenarioLoaderTest.autoStartDefaultsToTrueAndCanBeTurnedOff` / `unknownNodeKeyIsRejectedNeverSilentlyIgnored`；`ScenarioValidatorTest.autoStartFalseOnOrdinaryNodeIsAccepted` / `autoStartFalseOnSutOrExternalNodeIsRejectedLoudly` | 此前「只验某契约、不要 worker 一起跑」无法表达，且写错的键不报错（与 §12 冲突） | ✅ 已闭合 |
 
 ---
 
@@ -151,8 +151,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 - 全量回归 **372 测 0 失败 / 11 skip**（components 120、embedded 55 含 10 skip、examples 62 含 1 skip、
   kernel 76、protocol 12、scenario 47）——较第 4 轮 342 净增 30 测；本轮**连跑 2 次全绿**，
   远端 CI（run 35420349133）同 HEAD 一致全绿
-- **第 8 轮**追加 `ZkSchedulerDiscoveryTest` 3 例后：全量回归 **375 测 0 失败 / 11 skip**
-  （examples 62→65，其余不变）
+- **第 8 轮**：追加 `ZkSchedulerDiscoveryTest` 3 例（examples 62→65）与 G11 的 4 例
+  （scenario 47→51）后，全量回归 **379 测 0 失败 / 0 错误 / 11 skip**
 - **G4 本轮补齐的部分**：
   - **message 契约成对**（新增 `m5-message-contract-acceptance.yaml` +
     `MessageContractAcceptanceTest` 3 例）：正例＝发布→订阅观察→拉取消费的顺序/深度/事实全对；
@@ -186,10 +186,12 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
   报成 succeeded/failed）。**用例口径同时更正**：原断言「不得存在任何 CANCELLED 事实」过严
   ——取消事实本该存在，但必须**早于** `sim.engine-restarted`；改为以重启标记为对账锚点。
   教训：断言写得比语义更严，和假绿一样不可信
-- **一处 DSL 缺口（G11，新增）**：DSL **没有**「声明节点但不启动」的开关
-  （`Scenario.NodeSpec` 无 `autoStart` 字段，写了也不解析）。于是"只验新契约、不要 worker 一起跑"
-  这种合理诉求**无法表达**，只能靠场景注释说明——这正是上面那条假绿的成因之一。
-  要么补 DSL（`autoStart: false`），要么明确"节点声明即启动"为设计约束，**待拍板**
+- **DSL 缺口 G11 已补（第 8 轮）**：`Scenario.NodeSpec` 新增 `autoStart`（缺省 `true`）⇒
+  「只验新契约、不要 worker 一起跑」现在可以表达；同时**未知节点键显式报错**（此前写错的键
+  被静默忽略，正是上面那条假绿的成因之一），并校验「SUT/external 节点上的 `autoStart:false`
+  无意义」这条陷阱。四个用例落地：`autoStartDefaultsToTrueAndCanBeTurnedOff`、
+  `unknownNodeKeyIsRejectedNeverSilentlyIgnored`、`autoStartFalseOnOrdinaryNodeIsAccepted`、
+  `autoStartFalseOnSutOrExternalNodeIsRejectedLoudly`
 - **G9 语义落地到「唯一裁判」**：新增 `SchedulerStateMachineRejectionTest`（3 例，单线程、无 pump、
   无 socket），把此前只能在 wire 层"试试看"的拒绝语义钉成确定性断言——拒绝 N 次 ⇒ 任务回到
   PENDING、**重试额度净消耗为 0**（`dispatch` +1 与回滚 −1 相抵，在途时 `attemptsOf == 0`）、
@@ -314,7 +316,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 4 | **M5 契约与档位补全**（`engine`/`scheduler`/`filestore`/`message` + `store`/`resource` 档位 + 三个故障动作） | ✅ **第 4 轮完成**（G1/G5 闭合、G3 大幅收窄；58 条新用例 + 18 条移入 components） | 可与 M7 收尾并行 |
 | 5 | **M5 金标准场景集（G4）** | ✅ **8/8 契约已成对**（第 5 轮：message/filestore 成对；第 8 轮：scheduler 的跨档位发现路径 `ZkSchedulerDiscoveryTest`） | 已闭环 |
 | 5b | **修复 G10（拒绝后重派不落地）** | ✅ **第 6 轮完成**（`onDispatchRolledBack` + 守卫用例翻转；全量 372/0/0/11） | 已闭环 |
-| 5c | **补 DSL 的「声明但不启动」开关（G11）** | ⏭ 待拍板：要么补 `autoStart: false`，要么把「节点声明即启动」写成设计约束 | 与顺序 5 耦合 |
+| 5c | **补 DSL 的「声明但不启动」开关（G11）** | ✅ **第 8 轮完成**（`autoStart` + 未知键严格校验 + SUT/external 陷阱校验；4 例） | 已闭环 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ⏭ 下一轮（交付合规；LICENSE 已补） | 随时 |
 | 7 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
 

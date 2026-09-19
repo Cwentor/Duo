@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** 场景 YAML 加载器（§8）。只做结构解析，语义校验归 {@link ScenarioValidator}。 */
 public final class ScenarioLoader {
@@ -101,10 +103,26 @@ public final class ScenarioLoader {
             wm.forEach((k, v) -> wiring.put(String.valueOf(k),
                     parseSlot(String.valueOf(k), v)));
         }
+        validateNodeKeys(id, n);
         return new Scenario.NodeSpec(id, str(n.get("contract")), str(n.get("tier")),
                 Boolean.TRUE.equals(n.get("sut")), launch, config, exposes, wiring,
                 n.get("count") == null ? null : ((Number) n.get("count")).intValue(),
-                capacity(n.get("capacity")), str(n.get("impl")));
+                capacity(n.get("capacity")), str(n.get("impl")),
+                !Boolean.FALSE.equals(n.get("autoStart")));
+    }
+
+    /** 节点允许出现的键——其余键**显式报错**（G11：未知键静默忽略与 §12「不静默」冲突）。 */
+    private static final Set<String> NODE_KEYS = Set.of(
+            "id", "contract", "tier", "sut", "launch", "config", "exposes", "wiring",
+            "count", "capacity", "impl", "ready", "autoStart");
+
+    private static void validateNodeKeys(String id, Map<String, Object> n) {
+        for (String key : n.keySet()) {
+            if (!NODE_KEYS.contains(key)) {
+                throw new IllegalArgumentException("node '" + id + "': unknown key '" + key
+                        + "' (supported: " + new TreeSet<>(NODE_KEYS) + ")");
+            }
+        }
     }
 
     /** 简写 {@code 槽名: 节点id}（规则 2：契约名＝槽名）与显式 {@code {node, contract, path}} 两种形态。 */
