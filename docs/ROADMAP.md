@@ -58,7 +58,7 @@
 | **G1** | ~~**契约覆盖不全**~~ **✅ 已闭合（M5 第 4 轮）**：`engine`/`message`/`filestore` 原有枚举占位或仅接口骨架，现已各有可运行实现（`VirtualEngine`/`VirtualMessageBroker`/`VirtualFilestore`）+ `scheduler` virtual 档 + `resource` virtual 档 + `store` container 档 | `Contract` 枚举 8/8 × SPI 注册清单（components 7 行 + embedded 5 行） | — | ~~P1~~ 已闭合 |
 | **G2** | ~~**external SUT 引擎未实现**~~ **✅ 已闭合（M6，本轮）**：`launch.mode=external` 代起/attach 两形态、端点告知双途径（配置文件 + stdout）、`tcp`/`http` ready 探针、`ready.timeout` 全链路消费、`sut.exited`/`sut.crashed` 事实与「场景结束不杀进程」全部落地 | `ExternalSutLauncher` / `ReadyProbe`；`ExternalSutAcceptanceTest`（3 例）+ `ExternalSutLauncherTest`（10 例） | — | ~~P0~~ 已闭合 |
 | **G3** | **档位覆盖窄**（M5 第 4 轮大幅收窄）：~~`store`/`resource` 仅 embedded~~（store 已补 container、resource 已补 virtual）；~~`scheduler` 仅 real~~（已补 virtual 调度桩）；~~`engine` 无实现~~（已补 virtual） | 契约 × 档位矩阵 | 剩余：engine/message/filestore/resource 仍各 1 档；`scheduler` 两档共用状态机但缺「同拓扑换档」用例；`engine` 无第二档可换（**如实记录**） | P2（剩余） |
-| **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」。第 4 轮补了 `m5-new-contracts-acceptance.yaml`（新契约 + 三故障动作同场景，但**未成对**）；第 5 轮**已补齐 3 个**——message 正例/故障例成对（新场景 + 3 例夹具）、engine 与 resource 的故障路径从「注入了算数」升级为可断言语义。余下：filestore 故障例、scheduler 同拓扑换档、registry/worker 已有的对沿用 | `duo-sim-examples/src/*/resources/scenarios/` + `duo-sim-components` 故障例 | 契约语义回归无门禁，新契约容易「实现了但没验证」 | P1（M5 交付物 6） |
+| **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」。第 4 轮补了 `m5-new-contracts-acceptance.yaml`（新契约 + 三故障动作同场景，但**未成对**）；第 5 轮逐契约补齐：message（冻结，新场景 + 3 例夹具）、filestore（挂载丢失，本轮新实现 `FaultInjectable`）、engine（冻结/资源耗尽，`VirtualEngineTest` 故障例）、resource（配额耗尽，**第 4 轮其实已成对**——本轮更正此前的悲观记录）。余下：scheduler 的「同拓扑换档」用例 | `duo-sim-examples/src/*/resources/scenarios/` + `duo-sim-components` 故障例 | 契约语义回归无门禁，新契约容易「实现了但没验证」 | P1（M5 交付物 6，收尾中） |
 | **G5** | ~~**故障动作未闭环**~~ **✅ 已闭合（M5 第 4 轮）**：~~`HookRegistry` 无 `ScenarioEngine` 注入入口~~（第 3 轮闭合）；~~`freeze`/`slow`/`resource-exhaust` 仅常量声明~~（第 4 轮实现：`FaultInjectable` + `supportedFaults` 声明 + 幂等/显式拒绝用例 + YAML 端到端） | `FaultAction` 常量 vs Provider `Set.of(...)`（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource） | — | ~~P1~~ 已闭合 |
 | **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
 | **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
@@ -146,8 +146,8 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **第 5 轮实测证据**（`.\mvnw.cmd -o -B test`，无 Docker 档）
 
-- 全量回归 **370 测 0 失败 / 11 skip**（components 118、embedded 55 含 10 skip、examples 62 含 1 skip）
-  ——较第 4 轮 342 净增 28 测；本轮连跑 **2 次全绿**
+- 全量回归 **372 测 0 失败 / 11 skip**（components 120、embedded 55 含 10 skip、examples 62 含 1 skip、
+  kernel 76、protocol 12、scenario 47）——较第 4 轮 342 净增 30 测；本轮**连跑 2 次全绿**
 - **G4 本轮补齐的部分**：
   - **message 契约成对**（新增 `m5-message-contract-acceptance.yaml` +
     `MessageContractAcceptanceTest` 3 例）：正例＝发布→订阅观察→拉取消费的顺序/深度/事实全对；
@@ -155,12 +155,24 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
     为此给 `VirtualMessageBroker` **新增 `FaultInjectable` 实现**（`freeze`/`clear` + 幂等 +
     未声明动作显式拒绝），provider 元数据同步声明 `supportedFaults={freeze}`
     （§7.5 老校验：声明与实现必须对应，否则注册期就报错）
-  - **engine/resource 的故障路径**从"注入了就算数"升级为可断言语义
-    （`VirtualEngineTest` 12 例、`VirtualResourceManagerTest`、`VirtualMessageBrokerTest` 9 例）
+  - **filestore 契约成对**（本轮新增故障例）：给 `VirtualFilestore` 补 `FaultInjectable`，
+    故障动作取 `crash`＝**挂载丢失**——注入后读/写/列/删一律显式抛 `ComponentException`
+    （含 `mount lost`）、健康面转 DOWN、**已落盘数据不丢**（模拟"暂时不可达"而非"数据没了"），
+    `clear` 后自动恢复且数据仍在；未声明的动作（如 `slow`）显式拒绝。
+    provider 元数据同步声明 `supportedFaults={crash}`。新增 2 例故障用例与既有正例成对
+  - **resource 契约其实第 4 轮就已成对**（`insufficientQuotaIsRejectedWithNumbers` 正例／
+    `injectedExhaustionRejectsAllocationsAndIsIdempotent` 故障例）——本轮**更正**了此前
+    ROADMAP 里"resource 尚未成对"的悲观记录（§12 不静默同样适用于对自己的记录）
+  - **engine 的故障路径**从"注入了就算数"升级为可断言语义（`VirtualEngineTest` 12 例）
 - **一处 YAML 侧的口径修正（否则是假绿）**：`m5-new-contracts-acceptance` 的三个故障原本注入在
   100/200/300ms，而 virtual worker 300ms 就把 DAG 跑完了——故障窗口里**没有任何在途任务**，
   断言等于对着空气通过。本轮把注入压到 200/400/600ms 并把 engine 任务时长拉到 3s，
-  使故障真正发生在任务**在途期间**
+  使故障真正发生在任务**在途期间**；同时补上 `freeze` 的 `duration: 300ms`，
+  让「带 duration 的动作到期被 `TimelineScheduler` 自动 clear」这条元路径**真的被执行到**
+  （断言 `eventSequence: [sim.engine-frozen, sim.engine-resumed]` 因此有效而非空断言）
+- **一处踩坑记录（假红而非假绿）**：`freeze` 的 duration 若**大于**场景收敛时间，pending 的定时
+  clear 会被 `engine.stop()` 取消，断言就变成"解冻事实永不出现"的**假红**。已把 duration 调到
+  收敛窗口之内，并在用例里显式等待 `sim.engine-resumed`（附注释说明成因）
 - **一处 DSL 缺口（G11，新增）**：DSL **没有**「声明节点但不启动」的开关
   （`Scenario.NodeSpec` 无 `autoStart` 字段，写了也不解析）。于是"只验新契约、不要 worker 一起跑"
   这种合理诉求**无法表达**，只能靠场景注释说明——这正是上面那条假绿的成因之一。
@@ -286,10 +298,10 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
-当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 1–5 ✅（唯一余项：交付物 6 金标准场景集）**
-⇒ T1/T4/T5/T7 达成或基本达成、T2/T3/T6 机制齐备待广度与容器档取证；剩余 M5-6 + M7 收尾 + M8**。
-第 5 轮新增：**G9 语义确定性覆盖 + message 契约正例/故障例成对 + G4 假绿修正；新增缺口 G10/G11**；
-全量回归 **370/0/0/11**（连跑 2 次全绿）。
+当前进度：**M6 ✅ + M7 最小子集 ✅ + M5 交付物 1–5 ✅（余项：交付物 6 金标准场景集——7/8 契约已成对，仅余 scheduler 同拓扑换档）**
+⇒ T1/T4/T5/T7 达成或基本达成、T2/T3/T6 机制齐备待广度与容器档取证；剩余 M5-6 收尾 + M7 收尾 + M8**。
+第 5 轮新增：**G9 语义确定性覆盖 + message/filestore 契约正例·故障例成对 + G4 假绿修正 + G11 缺口**；
+全量回归 **372/0/0/11**（连跑 2 次全绿）。
 
 ---
 

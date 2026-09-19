@@ -46,7 +46,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class VirtualWorkerTest {
 
     private SimpleEventBus bus;
-    private final List<Event> events = new ArrayList<>();
+    /**
+     * 收到的事件（**并发安全**）：事件由 worker 的虚拟线程发布，而断言在测试线程里遍历——
+     * 用 ArrayList 会偶发 {@link java.util.ConcurrentModificationException}（本轮实测踩到，
+     * 属夹具缺陷而非产品缺陷）。用 CopyOnWriteArrayList ＋ 快照读取消除该竞态。
+     */
+    private final List<Event> events = new java.util.concurrent.CopyOnWriteArrayList<>();
     private FakeScheduler scheduler;
     private VirtualWorker worker;
 

@@ -143,6 +143,64 @@ class VirtualFilestoreTest {
         assertTrue(p.isDefault());
         assertEquals(EndpointShape.FS_PATH, p.metadata().endpointShape());
         assertTrue(p.metadata().interfaceDirect(), "同进程门面可用");
-        assertTrue(p.metadata().supportedFaults().isEmpty());
+        // M5 交付物 6：声明的故障能力必须落在元数据里（§7.5 一致性校验的对象）
+        assertEquals(java.util.Set.of(io.duo.sim.kernel.api.FaultAction.CRASH),
+                p.metadata().supportedFaults());
+    }
+
+    // ---- M5 交付物 6：filestore 契约的故障例（与 writeReadListDeleteRoundTrip 正例成对）----
+
+    /**
+     * 故障例：挂载丢失后读写**显式失败**（§12 不静默），**数据不丢**（不是"数据没了"），
+     * 恢复后数据仍在、读写照常。
+     */
+    @Test
+    void crashInjectionLosesMountButNotData() throws Exception {
+        start(Map.of());
+        store.write("keep.txt", "v1");
+        store.inject(crash());
+
+        assertTrue(store.isMountLost());
+        assertFalse(store.health().healthy(), "挂载丢失必须体现在健康面上");
+        var w = assertThrows(ComponentException.class, () -> store.write("new.txt", "x"));
+        assertTrue(w.getMessage().contains("mount lost"), w.getMessage());
+        var r = assertThrows(ComponentException.class, () -> store.read("keep.txt"));
+        assertTrue(r.getMessage().contains("mount lost"), r.getMessage());
+        assertThrows(ComponentException.class, () -> store.list());
+        assertThrows(ComponentException.class, () -> store.delete("keep.txt"));
+        assertEquals(1,
+                events.stream().filter(e -> "sim.filestore-mount-lost".equals(e.type())).count());
+
+        store.inject(crash()); // 幂等
+        assertEquals(1,
+                events.stream().filter(e -> "sim.filestore-mount-lost".equals(e.type())).count(),
+                "重复注入必须幂等");
+
+        store.clear(crash());
+        assertFalse(store.isMountLost());
+        assertEquals("v1", store.read("keep.txt"), "恢复后数据必须仍在（挂载丢失≠数据抹除）");
+        assertEquals(5, store.write("new.txt", "hello"), "恢复后读写照常");
+        assertEquals(List.of("keep.txt", "new.txt"), store.list());
+        assertEquals(1,
+                events.stream().filter(e -> "sim.filestore-mount-restored".equals(e.type())).count());
+    }
+
+    /** 未声明的故障动作必须显式拒绝（§12 不静默）。 */
+    @Test
+    void undeclaredFaultIsRejectedNotSilentlyIgnored() throws Exception {
+        start(Map.of());
+        var slow = new io.duo.sim.kernel.api.FaultAction(
+                io.duo.sim.kernel.api.FaultAction.SLOW,
+                io.duo.sim.kernel.api.FaultAction.ComponentAddress.of(new ComponentId("files")),
+                Map.of(), null);
+        assertThrows(UnsupportedOperationException.class, () -> store.inject(slow));
+        assertThrows(UnsupportedOperationException.class, () -> store.clear(slow));
+    }
+
+    private static io.duo.sim.kernel.api.FaultAction crash() {
+        return new io.duo.sim.kernel.api.FaultAction(
+                io.duo.sim.kernel.api.FaultAction.CRASH,
+                io.duo.sim.kernel.api.FaultAction.ComponentAddress.of(new ComponentId("files")),
+                Map.of(), null);
     }
 }

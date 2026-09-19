@@ -258,3 +258,71 @@ $env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
 | `scale (nightly / manual)` | ⏸ 按设计跳过 | — |
 
 结论：本轮 G4 增补**远端全绿**，与第 4 轮的证据链连续。
+
+---
+
+## 7. 第 5 轮续：filestore 契约补齐故障例（G4 收尾）
+
+第 6 节只把 message 补成对；本轮继续按 §13「每个契约至少一个正例一个故障例」逐契约点名，
+**先核对再动手**，结果与上一轮的记录有两处出入，一并更正。
+
+### 7.1 逐契约点名（以源码为准，不凭印象）
+
+| 契约 | 正例 | 故障例 | 结论 |
+| --- | --- | --- | --- |
+| message | `publishedMessagesAreOrderedObservableAndConsumable` | `freezeMakesPublishFailLoudlyWithoutDroppingQueuedMessages` | 第 6 节已成对 |
+| engine | `VirtualEngineTest` 提交/受理/状态流转 | 冻结、资源耗尽故障例 | 已有 |
+| **resource** | `allocateAndReleaseKeepQuotaAccounting` | `injectedExhaustionRejectsAllocationsAndIsIdempotent` | **其实第 4 轮就已成对**——上一轮 ROADMAP 记为"未成对"是错的，本轮更正 |
+| **filestore** | `writeReadListDeleteRoundTrip` | **本轮新增** | 此前**确实没有**故障例 |
+| registry / worker / scheduler | 各自既有 | 各自既有 | 沿用 |
+
+### 7.2 filestore 故障例的设计取舍
+
+`VirtualFilestore` 此前 `implements VirtualComponent` 而无 `FaultInjectable`——**连挂故障动作的洞都没有**。
+本轮补上，并且只声明一个动作：
+
+- **`crash` ＝ 挂载丢失**：注入后 `resolve/write/read/list/delete` 一律显式抛
+  `ComponentException("filestore mount lost (crash injected): …")`，`health()` 转 DOWN，
+  并发事实 `sim.filestore-mount-lost`；**已落盘数据保留**——真实存储不可达时数据仍在盘上，
+  场景必须能区分「暂时不可达」与「数据没了」。`clear` 后发 `sim.filestore-mount-restored`、
+  读写照常、数据仍在。
+- **不声明 `freeze`/`slow`**：前者与 `crash` 语义重复且同样"拒绝写"，后者对本地文件 IO
+  不可观测。**不声明即显式拒绝**（`UnsupportedOperationException`），不做"接受了但没效果"
+  的静默降级（§12）。
+- 幂等：重复 inject/clear 不产生第二条事实；provider 元数据同步声明
+  `supportedFaults={crash}`——否则 §7.5「声明与实现必须对应」的注册期校验会直接报错。
+
+新增 2 例（合计 filestore 单测 10 例），与既有正例成对。
+
+### 7.3 顺手修掉一个夹具竞态（不是产品缺陷）
+
+`VirtualWorkerTest` 的 `events` 是 `ArrayList`，由 worker 虚拟线程 `add`、
+测试线程 `stream()` 遍历 ⇒ 本轮实测偶发 `ConcurrentModificationException`
+（`taskKillTerminatesInFlightTaskWithCancelledReport`）。改为 `CopyOnWriteArrayList`
+并在字段上写明成因。**这是夹具缺陷，产品代码未改**——如实区分，避免把夹具问题记成产品缺陷。
+
+### 7.4 场景侧：让「带 duration 的自动 clear」真的被执行到
+
+`m5-new-contracts-acceptance` 的 `freeze` 加上 `duration: 300ms`，断言
+`eventSequence: [sim.engine-frozen, sim.engine-resumed]`。踩到并修正一个**假红**：
+duration 若大于场景收敛时间，`engine.stop()` 会取消 pending 的定时 clear，解冻事实永不出现。
+把 duration 压到收敛窗口内、并在用例里显式等待该事实后转绿（用例内已注释成因）。
+
+### 7.5 本轮回归
+
+| 模块 | 测试数 | skip |
+| --- | --- | --- |
+| duo-sim-protocol | 12 | 0 |
+| duo-sim-kernel | 76 | 0 |
+| duo-sim-scenario | 47 | 0 |
+| duo-sim-components | 120 | 0 |
+| duo-sim-embedded | 55 | 10（无 Docker 档） |
+| duo-sim-examples | 62 | 1（压测开关未开） |
+| **合计** | **372** | **11** |
+
+连跑 **2 次全绿**（0 失败 / 0 错误）。相对第 6 节的 370 净增 2 测（filestore 故障例）。
+
+### 7.6 结论
+
+§13 的「每契约一正例一故障例」现在 **8 个契约里 7 个成对**，唯一余项是
+**scheduler 的「同拓扑换档」用例**（机制已存在，缺的是场景），已记入 G4 行。

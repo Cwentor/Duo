@@ -68,18 +68,24 @@ timeline:
   # M5-3 三个动作各自可注入且**可观测**（每步都发对应 sim.* 事实），顺序＝注入次序。
   # slow 的目标仍是 workers：worker 不参与 DAG，但 slow 的**动作语义**（参数校验、倍数生效）
   # 在这里被端到端走通一遍；engine 侧同一动作的确定性语义在 VirtualEngineTest 的故障例里。
+  # freeze 带 duration 300ms：验证「带 duration 的动作到期由 TimelineScheduler 自动 clear」
+  # 这条元路径确实被执行到（DSL 没有显式的解冻语法，见 G12）。
+  # duration 刻意取**小于 DAG 收敛时间**：动作必须在场景结束前自然到期，
+  # 否则 pending 的定时 clear 会被 stop 取消，断言就会变成永不成立的假红。
   - at: 200ms
     action: resource-exhaust
     target: resources
   - at: 400ms
     action: freeze
     target: engines
+    duration: 300ms
   - at: 600ms
     action: slow
     target: workers
     params: { factor: 2 }
 assertions:
-  # 顺序事实：三个故障按注入次序落流
+  # 顺序事实：三个故障按注入次序落流，且带 duration 的 freeze 在窗口内被自动 clear
   - eventSequence: [sim.resource-exhausted, sim.engine-frozen, sim.worker-slowed]
+  - eventSequence: [sim.engine-frozen, sim.engine-resumed]
   # 派发/终态面不因故障而丢任务（DAG 必须收敛）
   - noTaskLost: { requireAllSuccess: true }
