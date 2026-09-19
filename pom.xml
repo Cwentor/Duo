@@ -75,6 +75,13 @@
                 <artifactId>logback-classic</artifactId>
                 <version>${logback.version}</version>
             </dependency>
+            <!-- 显式管理 core：curator-test 传递进来的 1.2.13 与 classic 1.5.16 不匹配，
+                 logback 会因版本不一致拒绝装配 appender（日志静默）。 -->
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.curator</groupId>
                 <artifactId>curator-framework</artifactId>

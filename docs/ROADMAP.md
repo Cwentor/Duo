@@ -60,7 +60,7 @@
 | **G3** | **档位覆盖窄**（M5 第 4 轮大幅收窄）：~~`store`/`resource` 仅 embedded~~（store 已补 container、resource 已补 virtual）；~~`scheduler` 仅 real~~（已补 virtual 调度桩）；~~`engine` 无实现~~（已补 virtual） | 契约 × 档位矩阵 | 剩余：engine/message/filestore/resource 仍各 1 档；`scheduler` 两档共用状态机但缺「同拓扑换档」用例；`engine` 无第二档可换（**如实记录**） | P2（剩余） |
 | **G4** | **金标准场景集不完整**：§13 要求「每个契约至少一个正例一个故障例」。第 4 轮补了 `m5-new-contracts-acceptance.yaml`（新契约 + 三故障动作同场景，但**未成对**）；第 5 轮逐契约补齐：message（冻结，新场景 + 3 例夹具）、filestore（挂载丢失，本轮新实现 `FaultInjectable`）、engine（冻结/资源耗尽，`VirtualEngineTest` 故障例）、resource（配额耗尽，**第 4 轮其实已成对**——第 5 轮更正此前的悲观记录）、scheduler（**第 8 轮**：跨档位发现路径由 `ZkSchedulerDiscoveryTest` 3 例钉住）。✅ **8/8 契约已成对，本轮闭合** | `duo-sim-examples/src/*/resources/scenarios/` + `duo-sim-components` 故障例 | 契约语义回归无门禁，新契约容易「实现了但没验证」 | ✅ 已闭合（M5 交付物 6） |
 | **G5** | ~~**故障动作未闭环**~~ **✅ 已闭合（M5 第 4 轮）**：~~`HookRegistry` 无 `ScenarioEngine` 注入入口~~（第 3 轮闭合）；~~`freeze`/`slow`/`resource-exhaust` 仅常量声明~~（第 4 轮实现：`FaultInjectable` + `supportedFaults` 声明 + 幂等/显式拒绝用例 + YAML 端到端） | `FaultAction` 常量 vs Provider `Set.of(...)`（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource） | — | ~~P1~~ 已闭合 |
-| **G6** | **观测面缺两条**：Prometheus 指标未实现；结构化日志无 logback 配置（SLF4J 版本已管理但未成通道） | 全仓无 `logback*.xml`、无 metrics 端点 | §11 承诺的三通道只落地「事件流录制」一条 | P2 |
+| **G6** | ✅ **已闭合（第 10 轮）**：~~Prometheus 指标未实现~~（`MetricsCollector` + `GET /metrics`，零依赖手写，见 M8 §）；~~结构化日志无 logback 配置~~（`logback.xml` 生产档 + `logback-test.xml` 测试档，`logback-classic/core` 版本钉 1.5.16）。**第 10 轮补第 3 条通道**：`FaultLog`（`io.duo.sim.fault` 固定 logger）+ `duo diagnose`（四段因果链单命令导出，断链退出码 1）。取证：`MetricsEndpointAcceptanceTest` 2 例 / `FaultCausalChainLoggingTest` 2 例 / `FaultDiagnosticsAcceptanceTest` 1 例 | 全仓 `logback*.xml` ×2、`/metrics`、`/diagnose` | §11 三条通道（事件流 / 日志 / 指标）现已全部落地并各自有门禁 | ✅ 已闭合 |
 | **G7** | ~~**DSL 断链与设计偏差**~~ **已闭合（M5）**：`jitter`/`failAt` 接受 `%` 形态且越界报错点出配置键；`logLines` 接入 config 并在两档 worker 逐行落 `sim.worker-log`；`ready` 声明位置统一（节点级 `ready` 为 `launch.ready` 的等价别名，冲突显式报错）；~~`ready` 校验文案~~/~~`ready.timeout` 未消费~~（M6 已修） | 见 [DSL §8 偏差表](SCENARIO-DSL.md#8-现状与设计偏差务必先读)（1/2/3/6/7 全部闭合） | 照抄设计文档示例会直接抛异常；「写了不生效」类缺陷无门禁 | ✅ 已闭合 |
 | **G8** | **工程化交付**：~~无 CI 配置~~（M7 三 job 已落地并远端全绿）；~~`mvnw.sh` 硬编码本机路径~~（M7 换标准 Wrapper）；~~无 `LICENSE`~~（本轮补 Apache-2.0 全文）；~~压测产物不留存~~（CI scale job 上传 artifact） | 仓库根目录清单 | 剩余：发布配置（source/javadoc/版本策略/CHANGELOG）与质量门禁 | P1（剩余：发布配置） |
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**第 4 轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
@@ -314,6 +314,23 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 **验收标准**：`/metrics` 可被 Prometheus 抓取且指标口径有文档；日志能定位一次故障注入的完整因果链。
 
+**状态（实测取证，`/metrics` + 日志 + 诊断链三条已落地）**
+
+| 交付物 | 状态 | 取证 |
+| --- | --- | --- |
+| 1 Prometheus 指标导出 | ✅ | `MetricsCollector`（`duo-sim-control`）→ `GET /metrics`（`text/plain; version=0.0.4`）+ `duo metrics`；19 个指标族（`duo_up`/`duo_scenario_running`/`duo_events_total`/`duo_events_by_type_total`/`duo_injections_total`/`duo_injections_failed_total`/`duo_heartbeat_events_total`/`duo_assertions_*`/`duo_components_*`/`duo_endpoints_online` …）；`MetricsEndpointAcceptanceTest` 2 例（含暴露格式结构校验：每个样本都有 HELP/TYPE 且值可解析为 double） |
+| 2 logback 配置 + 结构化日志 | ✅ | 生产档 `duo-sim-examples/src/main/resources/logback.xml`（控制台可读 + 第三方降噪 + 可选 JSON 出口 `-Dduo.log.json=INFO`）、测试档 `logback-test.xml`；依赖侧钉住 `logback-classic/core` 1.5.16（此前 classpath 上只有 `logback-core:1.2.13` 且无绑定）；`FaultCausalChainLoggingTest` 2 例门禁（含"配置不得再引入 logback 条件块"的回归护栏） |
+| 3 单命令因果链导出 | ✅ | `FaultDiagnostics` + `duo diagnose [--url X] [--since N]`：四段结构化（注入 / 组件反应 / SUT 事实按类型归并 / 断言明细），断链以 `gaps` 显式报出且退出码 1；`FaultDiagnosticsAcceptanceTest` 1 例（链路完整性、归并"不丢不重"、CLI 退出码、拒绝路径不静默） |
+| 4 加速时钟评估 | ⏸ 未触发 | 触发条件为"出现小时级长稳场景且目标档位为 virtual"，当前场景集最长 60s，评估无输入（§17 开放问题 2 保持开放） |
+
+**实测数字**：本轮全量回归 `366 测 0 失败 0 错误 11 skip`（protocol 12 / kernel 76 / scenario 51 /
+components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control 两模块无独立测试类）。
+新增/改动用例合计 30 例全绿（control 25 例 + examples 观测面 5 例）。
+
+**已知边界**：`/metrics` 的计数器在**两次抓取之间**累积——Prometheus 抓取值单调不减，
+但若同一进程内场景重启，计数继续累加而不归零（口径见 `docs/METRICS.md`）；本机 Docker 不可用，
+10 个容器测试 skip（CI 覆盖）。
+
 ---
 
 ## 5. 建议节奏与优先级
@@ -328,7 +345,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 | 5b | **修复 G10（拒绝后重派不落地）** | ✅ **第 6 轮完成**（`onDispatchRolledBack` + 守卫用例翻转；全量 372/0/0/11） | 已闭环 |
 | 5c | **补 DSL 的「声明但不启动」开关（G11）** | ✅ **第 8 轮完成**（`autoStart` + 未知键严格校验 + SUT/external 陷阱校验；4 例） | 已闭环 |
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ✅ **第 8 轮完成**（`-Drelease` 产出 8 对 sources/javadoc jar；缺省行为不变；`CHANGELOG.md` + 版本策略） | 已闭环 |
-| 7 | **M8 观测面** | ⏭ 最后（P2） | 最后 |
+| 7 | **M8 观测面** | ✅ **第 10 轮完成交付物 1/2/3**（`/metrics` + logback 双档 + `duo diagnose` 因果链；交付物 4「加速时钟评估」触发条件未出现，保持 ⏸ 待触发） | 已落地 |
 
 **里程碑判定**：M6 + M5 完成 ⇒ T1–T6 全部达成；M7 完成 ⇒ T8 达成；T7 已达成。
 即 **M6 + M5 + M7 完成时，「最初的目标」八条全部可验收**。
@@ -423,9 +440,11 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | M7-3 发布配置（第 8 轮） | 根 POM：`licenses`/`scm`/`url` 元数据 + `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2（`doclint=none`）；`release` profile 以 `-Drelease` 激活（缺省 `skip=true`）；`CHANGELOG.md`（Keep a Changelog 形态 + 版本策略）。**实测**：`-Drelease -DskipTests package` → 8 对 `-sources.jar`/`-javadoc.jar`；缺省 `package` 只出主 jar（`Skipping javadoc generation`）；`mvnw test` 379 测全绿 |
 | 未做（下一轮） | M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）；**M8 全部**（观测面：Prometheus `/metrics` + logback） |
 
-> **下一轮的入口建议**：M5 交付物 1–6 与 M7 发布配置均已收口（G4/G10/G11 闭合）。
-> 下一步进入 **M8（观测面）**：Prometheus `/metrics` 端点 + logback 结构化日志，
-> 并顺带补 M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）。
+> **下一轮的入口建议**：M8 交付物 1/2/3 已落地（G6 闭合）。剩余优先级：
+> ① M7 质量门禁（`dependency:analyze` + 可选 JaCoCo，最小改动即可补上「依赖与覆盖率无门禁」）；
+> ② 指标口径扩充（任务时延直方图、SUT 侧队列深度——需先定分桶口径，避免拍脑袋）；
+> ③ M8 交付物 4「加速时钟评估」——**触发条件未出现**（需小时级长稳 + virtual 档场景），
+> 建议等真实长稳需求出现再做，避免为评估而评估。
 
 ### 2026-09-18（第 3 轮）：M5 启动——DSL 断链 G7 闭合 + custom-hook 闭环
 
@@ -440,3 +459,17 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 测试 | 全量回归 **280 测 / 0 失败 / 5 skip**（3.4 分钟）：protocol 12（+3 并发写守卫）、kernel 76、scenario 47（+6 loader）、components 49（+5：百分号/越界/logLines）、embedded 39、examples 57（+3 custom-hook 端到端）；`VirtualWorkerTest` 模块内连跑 **3/3 全绿**（修复前 4/4 红） |
 | 远端取证 | 本轮提交 CI run [35335848180](https://github.com/Cwentor/Duo/actions/runs/35335848180)：`regression` ✓ / `container` ✓ / `scale` 按设计 skip——**累计连续 6 次 CI 全绿** |
 | 未做（下一轮） | M5 交付物 1/2/3（`engine`/`scheduler`/`filestore`/`message` 契约补全、`store`/`resource` 档位、`freeze`/`slow`/`resource-exhaust` 故障动作）+ 交付物 6（金标准场景集 G4）；M7 发布配置；M8 全部 |
+
+### 2026-09-19（第 10 轮）：M8 观测面落地——G6 闭合（指标 + 日志 + 单命令因果链）
+
+| 项 | 结果 |
+| --- | --- |
+| 拍板 | 沿用 D4：**零依赖手写** `/metrics`，不引 Prometheus 客户端；日志后端固定 logback（版本已在父 POM 管理）；诊断链复用既有事件流，不新增内核改动（§10「控制面零内核改动」延续） |
+| M8-1 指标导出（G6 ① ✅） | `MetricsCollector`（`duo-sim-control/metrics`）：以游标消费 `ScenarioHost` 事件流快照，`/metrics` 输出 Prometheus 文本格式（`text/plain; version=0.0.4`）；19 个指标族含 `duo_up`、`duo_scenario_running`、`duo_events_total`、`duo_events_by_type_total{type=…}`、`duo_injections_total`/`_failed_total`、`duo_heartbeat_events_total`、`duo_assertions_passed/total/failed`、`duo_components_hosted/unhealthy`、`duo_component_instances`、`duo_endpoints_online`。`ScenarioHost` 新增 `eventsSnapshot()`（**不持监视器**——`awaitFinish` 是同步且长驻的，持锁会死等）；`RestControlServer` 新增 GET `/metrics`（非 GET → 405）与 `respondText(...)`；CLI 新增 `duo metrics [--url X] [--summary]` |
+| M8-2 日志（G6 ② ✅） | 生产档 `logback.xml`：控制台可读（时间/级别/线程/logger）、第三方（ZK/Curator/Netty/Testcontainers/H2/K8s mock）显式降噪到 WARN、`-Dduo.log.level` / `-Dduo.log.json=INFO` 两个开关；测试档 `logback-test.xml`：root WARN 保持「秒级反馈回路」（T7），但 `io.duo.sim.fault` 与 `io.duo.sim.control.metrics` 保持 INFO（**降噪不得静默因果链**，§12）。**依赖侧实测修正**：此前 classpath 上只有 `logback-core:1.2.13`（curator-test → zookeeper 传递）**且无绑定**（日志被静默丢弃）；本轮在父 POM 管理 `logback-classic`(+`core`) 1.5.16，embedded 与 examples 显式声明，control 只引 `slf4j-api`（绑定由宿主决定） |
+| **踩到的坑（如实记录）** | logback 1.5.16 下**条件配置块（`<if>`/`<else>`）会抛 `EmptyStackException`**（`ElseModelHandler → peekModel` 的隐式栈），导致整个 `LoggerContext` 初始化失败——**日志后端直接不可用**。首版配置正是这么写的（生产档与测试档各一处），实测炸在用例里才被发现。修复＝改用 `${属性:-默认值}` 占位符 + 无条件双出口；并把它写成**回归护栏**（用例断言两份配置都不得再出现条件块），避免日后有人"顺手"加回去 |
+| M8-3 单命令因果链（交付物 3 ✅） | `FaultLog`（固定 logger `io.duo.sim.fault`，成功 INFO / 拒绝 WARN，`ScenarioHost.inject` 在两个分支都记日志——含"场景未运行"的早退分支）+ `FaultDiagnostics`（按窗口重建四段：注入 → 组件反应 → SUT 事实 → 断言）。**窗口语义**：终点取「下一次注入 / `sim.scenario-finished` / `sim.sut-exited`」，因为链只在场景收口后才完整。**SUT 事实按类型归并计数**：一次 20s 场景 586 条 SUT 事件归并为 8 类（`sut.heartbeat×564` 等），逐条打印等于没有输出。**断链显式化**：无 SUT 事实 ⇒ `gaps` 记录原因、渲染 `MISSING`、CLI 退出码 1（§12） |
+| 测试 | 本轮新增/改动用例 **30 例全绿**（control 25：`DuoCliTest` 10 / `ScenarioHostTest` 9 / `RestControlServerTest` 6；examples 观测面 5：`MetricsEndpointAcceptanceTest` 2 / `FaultCausalChainLoggingTest` 2 / `FaultDiagnosticsAcceptanceTest` 1）。全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（protocol 12、kernel 76、scenario 51、components 120、embedded 55+10 skip、examples 52+1 skip） |
+| 验收记录 | [`docs/superpowers/acceptance/2026-09-19-duo-m8-observability-record.md`](superpowers/acceptance/2026-09-19-duo-m8-observability-record.md)；指标口径文档 `docs/METRICS.md` |
+| 未做（下一轮） | 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现，无输入）；M7 的质量门禁（`dependency:analyze`、可选 JaCoCo）；`@Observability` 之外的指标口径扩充（如按任务的时延直方图——当前刻意只用 counter/gauge，histogram 需要明确分桶口径） |
+

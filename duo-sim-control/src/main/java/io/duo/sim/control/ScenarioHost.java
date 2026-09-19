@@ -212,9 +212,34 @@ public final class ScenarioHost implements AutoCloseable {
     /** 注入转发（§10：纯外层包装，语义完全由内核决定）。 */
     public ScenarioRuntime.InjectionResult inject(FaultAction action) {
         if (engine == null || state != State.RUNNING) {
+            FaultLog.failed(action.target().componentId().value(), action.type(),
+                    "scenario not running");
             return new ScenarioRuntime.InjectionResult(false, "scenario not running");
         }
-        return engine.inject(action);
+        ScenarioRuntime.InjectionResult r = engine.inject(action);
+        // M8：日志与事件流同源同序（内核判定之后），失败必记录（§12 不静默）
+        if (r.success()) {
+            FaultLog.injected(action.target().componentId().value(),
+                    action.target().instanceIndex(), action.type());
+        } else {
+            FaultLog.failed(action.target().componentId().value(), action.type(), r.reason());
+        }
+        return r;
+    }
+
+    /**
+     * 事件流快照（M8 指标层的取数口）。
+     *
+     * <p>与 {@link #eventsSince(int)} 的区别：这里返回**原始** {@code Event} 列表，
+     * 供指标层按下标游标累计计数。内核事件流是只追加的 {@code CopyOnWriteArrayList}，
+     * 快照即读数，无拷贝语义问题。**控制面零内核改动**（§10）：只用既有公开 API。
+     */
+    public List<Event> eventsSnapshot() {
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = engine;
+        }
+        return eng == null ? List.of() : eng.events();
     }
 
     /** 断言结果。 */
