@@ -24,6 +24,15 @@
 
 ### 新增
 
+- **依赖门禁（M7 交付物 4）**：根 POM 新增 `quality` profile，`-Dquality` 激活
+  `maven-dependency-plugin:analyze-only`（绑 `verify`）且 `failOnWarning=true`；
+  缺省不激活 ⇒ 常规 `mvnw test` 零额外开销。CI 的 `regression` job 已接入
+  （`-Dquality -DskipTests verify`），9 个模块**零未声明/零未使用**。
+  门禁同时逼出 3 处真修复：`protocol` 未声明 `jackson-annotations`、`control` 未声明
+  `jackson-core`、`examples` 未声明 `curator-test`（此前都靠传递依赖编译，上游改版即断）。
+- **观测面（M8 交付物 1/2/3）**：`GET /metrics`（零依赖手写 Prometheus 文本格式，
+  19 个指标族）、生产/测试双档 logback 配置、`duo diagnose` 单命令导出四段因果链
+  （断链显式报 `gaps` 且退出码 1）。
 - **发布配置（M7 交付物 3）**：根 POM 补全 `licenses`/`scm`/`url` 元数据；
   `-Drelease` 一键产出源码 jar 与 javadoc jar（`maven-source-plugin` 3.3.1 +
   `maven-javadoc-plugin` 3.11.2，缺省 `skip=true`，**常规构建行为不变**）。
@@ -46,14 +55,23 @@
 - `ZkSchedulerDiscoveryTest`（3 例）：把「real 档 SUT 写的端点对内核 registry 可见」
   钉成契约，并记录「跨档位组合要求 registry 后端同源」这条设计约束（异源时发现为空、
   显式失败，不做假成功）。
-- 全量回归 **379 测 / 0 失败 / 0 错误 / 11 skip**（详情见
-  `docs/superpowers/acceptance/`）。
+- 观测面 5 例（`MetricsEndpointAcceptanceTest` 2 / `FaultCausalChainLoggingTest` 2 /
+  `FaultDiagnosticsAcceptanceTest` 1），其中 1 例是**日志配置回归护栏**：
+  禁止再引入 logback `<if>/<else>` 条件块（1.5.16 上会抛 `EmptyStackException`
+  并让**全部日志静默丢失**，踩过一次）。
+- 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块）；
+  另有 `duo-sim-control` 的 25 条在 examples 步内执行。
 
 ### 已知限制（如实记录）
 
 - `engine` 只有 `virtual` 档，无档可换；
 - Docker 相关的 container 档用例在本机跳过（共 10 条），由 CI 的 `container` job 承担；
-- 观测面（Prometheus `/metrics`、logback 配置）**尚未实现**（ROADMAP G6）。
+- 观测面只做 counter/gauge，**没有直方图**（任务时延等分桶口径未定，不为凑指标拍脑袋）；
+  指标为进程级累计值，场景重启不归零（口径见 `docs/METRICS.md`）；
+- `duo diagnose` 只读事件流，日志侧入口（`io.duo.sim.fault` + `grep FAULT`）已设计未实现；
+- JaCoCo 覆盖率门禁**评估后决定不引入**（理由见 `docs/ROADMAP.md` M7 §）；
+- M8 交付物 4「加速时钟评估」保持 ⏸：触发条件「小时级长稳场景 + virtual 档」未出现，
+  评估无输入（`SimClock` 接口已预留，无返工成本）。
 
 ## [0.1.0] - 2026-09-18
 
