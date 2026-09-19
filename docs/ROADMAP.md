@@ -257,7 +257,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 ---
 
-### M7 — 工程化与 CI（最小子集 ✅ **已实施完成（2026-09-18）**；LICENSE/发布待后续轮次）
+### M7 — 工程化与 CI ✅ **已全部实施完成**（最小子集 2026-09-18；LICENSE/发布第 8 轮；质量门禁第 11 轮）
 
 **为什么现在做**：这是**交付门槛**而非功能。它不提升能力，但决定别人能否用、改动能否被守住。
 成本低、收益立即兑现，建议与 M5/M6 并行启动。
@@ -477,7 +477,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 远端复验 | 修复后 CI：[35329022833](https://github.com/Cwentor/Duo/actions/runs/35329022833) `regression` ✓ / `container` ✓；[35329733881](https://github.com/Cwentor/Duo/actions/runs/35329733881)（含 real 档镜像修复）`regression` ✓ / `container` ✓，并对后者 `gh run rerun` 两次亦全绿——**修复后连续 4 次全绿**（修复前 3 次中 2 次挂起） |
 | 测试 | 全量回归 **263 测 / 0 失败 / 5 skip**（3.0 分钟）：kernel 76、scenario 41、examples 54（含 M6 端到端 3 例、G9 3 例）、embedded 39、components 44（含 G9 2 例）、protocol 9 |
 | M7-3 发布配置（第 8 轮） | 根 POM：`licenses`/`scm`/`url` 元数据 + `maven-source-plugin` 3.3.1 + `maven-javadoc-plugin` 3.11.2（`doclint=none`）；`release` profile 以 `-Drelease` 激活（缺省 `skip=true`）；`CHANGELOG.md`（Keep a Changelog 形态 + 版本策略）。**实测**：`-Drelease -DskipTests package` → 8 对 `-sources.jar`/`-javadoc.jar`；缺省 `package` 只出主 jar（`Skipping javadoc generation`）；`mvnw test` 379 测全绿 |
-| 未做（下一轮） | **M7 的质量门禁已在第 11 轮补齐**（`-Dquality` 依赖门禁 + CI 接入；JaCoCo 评估后不引）；**M8 全部**（观测面：Prometheus `/metrics` + logback） |
+| 未做（下一轮） | **M7 的质量门禁已在第 11 轮补齐**；**M8 交付物 1/2/3 已在第 10 轮落地**（观测面：Prometheus `/metrics` + logback + `duo diagnose`）——本轮列出的两项均已清空 |
 
 > **下一轮的入口建议**：M8 交付物 1/2/3 与 M7 质量门禁均已落地（G6/G8 闭合）。剩余优先级：
 > ① 指标口径扩充（任务时延直方图、SUT 侧队列深度——需先定分桶口径，避免拍脑袋）；
@@ -485,6 +485,18 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 > 建议等真实长稳需求出现再做，避免为评估而评估；
 > ③ CI 已接入依赖门禁（`regression` job 里 `-Dquality -DskipTests verify`），
 > 后续任何"顺手引依赖"都会被拦住。
+
+### 2026-09-19（第 12 轮）：文档口径收口——T1–T8 全部达成、G1–G11 全部闭合
+
+| 项 | 结果 |
+| --- | --- |
+| 触发 | 第 11 轮把最后一块差距（M7 质量门禁）补上后，ROADMAP 多处仍停在旧时点（342 测、T2 标 🟡、G3 记"P2 剩余"、§8 是待办式清单）——**旧口径会把"已完成"读成"未完成"**，这正是本轮要消除的失真 |
+| 改了什么 | **只改口径，不改事实**：§2 达成度表 T2/T3/T4/T5/T6/T8 → ✅；T7 数字 342 → 366；§3 G3 按**设计边界**收口；§4 节奏表加第 8 行 + 里程碑判定重写；§5 文档基线补 `METRICS.md`；§6/§8/§10 状态行同步；文件头日期与基线更新 |
+| G3 的收口理由 | `engine`/`message`/`filestore`/`resource` **各自只有一种档位语义**（virtual 就是它们的完整实现形态）。再造第二档＝为凑矩阵造重复实现，是**反面价值**。本仓明确不做，并且**不把它记成"未完成"**——把设计边界写成待办，会让下一个人做无用功 |
+| §8 的形态变更 | 由「当下列全部为真时可以宣告达成」的**待办式清单**（`- [ ] T1…`）改为**逐条判据 + 状态 + 取证**的表格。原清单在第 10 轮时已全部勾上，但"勾选"不携带证据；现在的表把每条判据钉到**可复现的命令或文件**上 |
+| 同步的文档 | `docs/DEVELOPMENT.md` §3.2 测试分布（366/0/0/11 + control 25 条口径说明）、§3.3「两条门控」→「三条」（新增依赖门禁）、§5 依赖纪律补依赖门禁小节；`CHANGELOG.md` 未发布段补 M7-4 与 M8-1/2/3、测试数 379→366、已知限制重写；`docs/README.md` 文档表补 `METRICS.md` 与基线文档、快照语义更新 |
+| 远端取证 | CI run [35430012635](https://github.com/Cwentor/Duo/actions/runs/35430012635)（含新增的 `dependency gate` 步骤）全绿；文档提交 run [35430557829](https://github.com/Cwentor/Duo/actions/runs/35430557829) 亦全绿 |
+| 未做（下一轮） | ① 指标口径扩充（时延直方图 / SUT 队列深度）——**需先定分桶口径**，无口径不做；② examples 的 real worker `SutMain` 示例（唯一诚实的实现缺口，非阻塞）；③ M8 交付物 4 保持 ⏸ 待触发 |
 
 ### 2026-09-19（第 11 轮）：M7 质量门禁落地——G8 闭合（依赖门禁进 CI；JaCoCo 评估后不引）
 
@@ -497,7 +509,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 门禁强度 | `failOnWarning=true`：本轮已把 9 个模块收敛到**零告警**，因此"新增一条告警"＝构建失败（§12 不静默）。`ignoreNonCompileDirectives` 在 3.8.1 上**是未知参数**（实测 `[WARNING] Parameter ... is unknown`）——已删除，避免留一条"看着在配、其实没生效"的假配置 |
 | 实测终态 | `mvnw -o -B "-Dquality" "-DskipTests" verify` → **7 × `No dependency problems found` + parent(pom packaging 按设计跳过) + BUILD SUCCESS**；配套全量回归 `mvnw -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（依赖调整后零变化） |
 | CI | `.github/workflows/ci.yml` 的 `regression` job 新增 `dependency gate (no unused/undeclared deps)`：`./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests verify`（测试已在上一步跑过，门禁只跑 `analyze-only`，几乎不增加墙钟时间） |
-| 未做（下一轮） | M8 交付物 4「加速时钟评估」（触发条件未出现）；指标口径扩充（时延直方图/SUT 队列深度——需先定口径）；examples 的 real worker `SutMain` 示例（§8 已记录的诚实缺口） |
+| 未做（下一轮） | M8 交付物 4「加速时钟评估」（触发条件未出现，属"等输入"）；指标口径扩充（时延直方图/SUT 队列深度——**需先定口径**，不为凑指标拍脑袋）；examples 的 real worker `SutMain` 示例（真实缺口，非阻塞） |
 
 ### 2026-09-18（第 3 轮）：M5 启动——DSL 断链 G7 闭合 + custom-hook 闭环
 
@@ -524,5 +536,5 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | M8-3 单命令因果链（交付物 3 ✅） | `FaultLog`（固定 logger `io.duo.sim.fault`，成功 INFO / 拒绝 WARN，`ScenarioHost.inject` 在两个分支都记日志——含"场景未运行"的早退分支）+ `FaultDiagnostics`（按窗口重建四段：注入 → 组件反应 → SUT 事实 → 断言）。**窗口语义**：终点取「下一次注入 / `sim.scenario-finished` / `sim.sut-exited`」，因为链只在场景收口后才完整。**SUT 事实按类型归并计数**：一次 20s 场景 586 条 SUT 事件归并为 8 类（`sut.heartbeat×564` 等），逐条打印等于没有输出。**断链显式化**：无 SUT 事实 ⇒ `gaps` 记录原因、渲染 `MISSING`、CLI 退出码 1（§12） |
 | 测试 | 本轮新增/改动用例 **30 例全绿**（control 25：`DuoCliTest` 10 / `ScenarioHostTest` 9 / `RestControlServerTest` 6；examples 观测面 5：`MetricsEndpointAcceptanceTest` 2 / `FaultCausalChainLoggingTest` 2 / `FaultDiagnosticsAcceptanceTest` 1）。全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（protocol 12、kernel 76、scenario 51、components 120、embedded 55+10 skip、examples 52+1 skip） |
 | 验收记录 | [`docs/superpowers/acceptance/2026-09-19-duo-m8-observability-record.md`](superpowers/acceptance/2026-09-19-duo-m8-observability-record.md)；指标口径文档 `docs/METRICS.md` |
-| 未做（下一轮） | 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现，无输入）；~~M7 的质量门禁~~（**第 11 轮已补齐**）；`@Observability` 之外的指标口径扩充（如按任务的时延直方图——当前刻意只用 counter/gauge，histogram 需要明确分桶口径） |
+| 未做（下一轮） | 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现，无输入）；~~M7 的质量门禁~~（**第 11 轮已补齐**）；`@Observability` 之外的指标口径扩充（如按任务的时延直方图——当前刻意只用 counter/gauge，histogram 需先定分桶口径，见 [`METRICS.md`](METRICS.md) §后续可扩充项） |
 
