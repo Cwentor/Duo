@@ -95,16 +95,13 @@ public final class ReadyProbe {
     }
 
     private static boolean httpOnce(Spec spec) {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS))
-                .build();
         HttpRequest request = HttpRequest.newBuilder(
                         URI.create("http://" + spec.host() + ":" + spec.port() + spec.path()))
                 .timeout(Duration.ofMillis(HTTP_TIMEOUT_MS))
                 .GET()
                 .build();
         try {
-            HttpResponse<Void> response = client.send(request,
+            HttpResponse<Void> response = SHARED_HTTP.send(request,
                     HttpResponse.BodyHandlers.discarding());
             // 有 HTTP 应答即视为就绪；5xx 表示服务在但未就绪（§7.3 探针语义）
             return response.statusCode() < 500;
@@ -115,6 +112,18 @@ public final class ReadyProbe {
             return false;
         }
     }
+
+    /**
+     * 共享的 HTTP 客户端（安全审计 2026-09-20 L-2）。
+     *
+     * <p>原实现**每次探测都 new 一个 HttpClient**：{@code HttpClient} 自带连接选择器与
+     * 线程池，逐次新建在长轮询（默认 60s 超时、每 200ms 一次）下会持续泄漏文件描述符，
+     * 直到 GC 偶然回收。客户端本身线程安全且无状态，共享即可；单次请求超时仍由
+     * {@link #HTTP_TIMEOUT_MS} 逐个请求控制，语义不变。
+     */
+    private static final HttpClient SHARED_HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS))
+            .build();
 
     private static int intOrDefault(String raw, int fallback) {
         if (raw == null || raw.isBlank()) {

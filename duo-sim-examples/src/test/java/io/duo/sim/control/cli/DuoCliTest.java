@@ -187,24 +187,44 @@ class DuoCliTest {
         Files.writeString(f, INJECT_AFTER, StandardCharsets.UTF_8);
 
         try (ScenarioHost host = new ScenarioHost();
-             RestControlServer server = new RestControlServer(host)) {
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
             int port = server.start(0);
             String url = "http://127.0.0.1:" + port;
             host.start(f);
+            String token = io.duo.sim.control.rest.TestTokens.TOKEN;
 
-            assertEquals(0, DuoCli.run("status", "--url", url));
-            assertEquals(0, DuoCli.run("events", "--since", "0", "--url", url));
-            assertEquals(0, DuoCli.run("topology", "--url", url));
-            assertEquals(0, DuoCli.run("inject", "crash", "workers[2]", "--url", url),
+            // 无令牌 → 401：客户端必须显式带凭据，控制面不会"因为你是本机进程就放行"
+            assertEquals(1, DuoCli.run("status", "--url", url),
+                    "unauthenticated REST call must fail loudly");
+
+            assertEquals(0, DuoCli.run("status", "--url", url, "--token", token));
+            assertEquals(0, DuoCli.run("events", "--since", "0", "--url", url, "--token", token));
+            assertEquals(0, DuoCli.run("topology", "--url", url, "--token", token));
+            assertEquals(0, DuoCli.run("inject", "crash", "workers[2]", "--url", url,
+                            "--token", token),
                     "cross-process hot injection must succeed");
 
             host.awaitFinish(60_000);
-            assertEquals(0, DuoCli.run("assert", "--url", url), "assertions must pass");
-            assertEquals(0, DuoCli.run("stop", "--url", url));
+            assertEquals(0, DuoCli.run("assert", "--url", url, "--token", token),
+                    "assertions must pass");
+            assertEquals(0, DuoCli.run("stop", "--url", url, "--token", token));
 
             // 错误路径：未知主机不得静默成功
-            assertEquals(1, DuoCli.run("status", "--url", "http://127.0.0.1:1"));
+            assertEquals(1, DuoCli.run("status", "--url", "http://127.0.0.1:1", "--token", token));
         }
+    }
+
+    /** serve 的认证材料解析：没有令牌就必须拒绝启动（C-1 的根因是"默认可用"）。 */
+    @Test
+    void serveRefusesToStartWithoutTokenWhenEnvAbsent() throws Exception {
+        if (System.getenv("DUO_TOKEN") != null) {
+            return; // 环境里已有令牌时不适用（避免测试依赖宿主机环境）
+        }
+        Path f = Files.createTempFile("duo-cli-serve", ".yaml");
+        Files.writeString(f, INJECT_AFTER, StandardCharsets.UTF_8);
+        assertEquals(1, DuoCli.run("serve", f.toString(), "--port", "0"),
+                "serve without a token and without --insecure-no-auth must refuse to start");
     }
 
     private static void assertNotNull(Object o) {

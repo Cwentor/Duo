@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -142,25 +143,53 @@ public final class DuoCli {
         });
     }
 
-    // ---- serve <yaml> [--port N]：独立进程承载场景 + REST 服务（跨进程模式的服务端） ----
+    // ---- serve <yaml> [--port N] [--token T | --token-file F | --insecure-no-auth] ----
 
     private static int cmdServe(List<String> args) throws Exception {
         String yamlPath = arg(args, 0);
         if (yamlPath == null) {
-            System.err.println("usage: serve <scenario.yaml> [--port N]");
+            System.err.println("usage: serve <scenario.yaml> [--port N]"
+                    + " [--token T | --token-file F | --insecure-no-auth]");
             return 1;
         }
         String portArg = opt(args, "--port");
         int port = portArg == null ? 7788 : Integer.parseInt(portArg);
 
+        // 认证材料解析（安全审计 2026-09-20 C-1）：令牌必填，缺省取环境变量 DUO_TOKEN，
+        // 两处都没有就**拒绝启动**——默认裸奔是这个漏洞的根因，不能靠"记得加参数"。
+        boolean insecure = hasFlag(args, "--insecure-no-auth");
+        String token = opt(args, "--token");
+        String tokenFile = opt(args, "--token-file");
+        if (token == null) {
+            token = System.getenv("DUO_TOKEN");
+        }
+        if (token == null && tokenFile != null) {
+            token = Files.readString(Path.of(tokenFile), java.nio.charset.StandardCharsets.UTF_8)
+                    .trim();
+        }
+        if (token == null || token.isEmpty()) {
+            if (!insecure) {
+                System.err.println("refusing to start: the control plane executes scenarios, so a"
+                        + " bearer token is required.\n"
+                        + "  pass --token <T>, or set DUO_TOKEN, or --token-file <F>.\n"
+                        + "  (--insecure-no-auth disables authentication explicitly; only for"
+                        + " throwaway local use)");
+                return 1;
+            }
+            System.out.println("WARNING: --insecure-no-auth — the control plane is unauthenticated"
+                    + " and any local process or web page can start scenarios on this machine.");
+        }
         ScenarioHost host = new ScenarioHost();
-        RestControlServer server = new RestControlServer(host);
+        RestControlServer server = new RestControlServer(host,
+                insecure ? RestControlServer.Auth.INSECURE : RestControlServer.Auth.TOKEN, token);
         host.start(Path.of(yamlPath));
         // SUT 自行退出时自动固化结果（客户端只需轮询 status，无需触发停止）
         host.awaitFinishInBackground(30 * 60_000L);
         int actual = server.start(port);
-        // 脚本据此发现端口（--port 0 时为实际分配值）
-        System.out.println("listening on http://127.0.0.1:" + actual);
+        // 脚本据此发现端口（--port 0 时为实际分配值）；令牌**不**回显（它已经在客户端手里，
+        // 回显只会把它写进日志与终端历史——审计 M-8 的口径泄露同源问题）。
+        System.out.println("listening on http://127.0.0.1:" + actual
+                + (insecure ? " (auth: none)" : " (auth: bearer token)"));
         System.out.flush();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -174,6 +203,7 @@ public final class DuoCli {
     // ---- stop [--url X]：停止场景（REST DELETE /scenario） ----
 
     private static int cmdStop(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         if (url == null) {
             ScenarioHost host = attachedOrDefault(args);
@@ -188,6 +218,7 @@ public final class DuoCli {
     // ---- inject <action> <target> [duration] [--url X] ----
 
     private static int cmdInject(List<String> args) {
+        initClientToken(args);
         String action = arg(args, 0);
         String target = arg(args, 1);
         String url = opt(args, "--url");
@@ -228,6 +259,7 @@ public final class DuoCli {
     // ---- status / events / assert / topology ----
 
     private static int cmdStatus(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
             var resp = send("GET", url + "/scenario/status", null);
@@ -240,6 +272,7 @@ public final class DuoCli {
     }
 
     private static int cmdEvents(List<String> args) throws Exception {
+        initClientToken(args);
         int since = 0;
         String sinceArg = opt(args, "--since");
         if (sinceArg != null) {
@@ -266,6 +299,7 @@ public final class DuoCli {
     }
 
     private static int cmdAssert(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
             var resp = send("GET", url + "/assertions", null);
@@ -281,6 +315,7 @@ public final class DuoCli {
     }
 
     private static int cmdTopology(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
             var resp = send("GET", url + "/topology", null);
@@ -314,6 +349,7 @@ public final class DuoCli {
     // ---- metrics [--url X] [--summary]：Prometheus 文本 / 单行摘要（M8） ----
 
     private static int cmdMetrics(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
             var resp = send("GET", url + "/metrics", null);
@@ -341,6 +377,7 @@ public final class DuoCli {
     // ---- diagnose [--url X]：单命令导出一次故障注入的完整因果链（M8 交付物 3） ----
 
     private static int cmdDiagnose(List<String> args) throws Exception {
+        initClientToken(args);
         String url = opt(args, "--url");
         String sinceArg = opt(args, "--since");
         int since = sinceArg == null ? 0 : Integer.parseInt(sinceArg);
@@ -388,8 +425,23 @@ public final class DuoCli {
 
     private static HttpResponse<String> send(String method, String url, String body)
             throws Exception {
+        return send(method, url, body, null);
+    }
+
+    /**
+     * REST 调用。{@code tokenOverride} 为空时按序取 {@code DUO_TOKEN} 环境变量 →
+     * {@code --token}/{@code --token-file}（由调用方注入 {@link #clientToken}）。
+     *
+     * <p>令牌只进请求头，不进命令行回显、不进日志（审计 M-8：凭据不得落到达不到的地方）。
+     */
+    private static HttpResponse<String> send(String method, String url, String body,
+                                             String tokenOverride) throws Exception {
         var builder = HttpRequest.newBuilder().uri(URI.create(url))
                 .timeout(java.time.Duration.ofSeconds(30));
+        String token = tokenOverride != null ? tokenOverride : clientToken.get();
+        if (token != null && !token.isEmpty()) {
+            builder.header("Authorization", "Bearer " + token);
+        }
         if ("GET".equals(method)) {
             builder.GET();
         } else if ("DELETE".equals(method)) {
@@ -399,6 +451,30 @@ public final class DuoCli {
                     .POST(HttpRequest.BodyPublishers.ofString(body));
         }
         return HTTP.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** 客户端令牌（进程级；来自 {@code DUO_TOKEN}，供各 RPC 子命令共用）。 */
+    private static final ThreadLocal<String> clientToken = new ThreadLocal<>();
+
+    /** 解析客户端令牌：显式参数 > {@code DUO_TOKEN} 环境变量 > {@code --token-file}。 */
+    private static void initClientToken(List<String> args) {
+        String token = opt(args, "--token");
+        if (token == null) {
+            token = System.getenv("DUO_TOKEN");
+        }
+        if (token == null) {
+            String file = opt(args, "--token-file");
+            if (file != null) {
+                try {
+                    token = Files.readString(Path.of(file),
+                            java.nio.charset.StandardCharsets.UTF_8).trim();
+                } catch (Exception e) {
+                    System.err.println("cannot read --token-file: " + e.getMessage());
+                    token = null;
+                }
+            }
+        }
+        clientToken.set(token);
     }
 
     // ---- 解析辅助 ----
@@ -452,11 +528,14 @@ public final class DuoCli {
                   run <scenario.yaml> [--keep] [--name N] [--wait]
                         [--inject-after <dur> "<action> <target>"]
                                                     启动场景；--inject-after 到点自动注入并等待结果
-                  serve <scenario.yaml> [--port N]  独立进程承载场景 + REST 服务（跨进程模式服务端）
-                  stop [--url X]                    停止场景
-                  inject <action> <target> [duration] [--url X]
+                  serve <scenario.yaml> [--port N] [--token T | --token-file F | --insecure-no-auth]
+                                                     独立进程承载场景 + REST 服务（跨进程模式服务端）；
+                                                     令牌必填（缺省读环境变量 DUO_TOKEN），
+                                                     --insecure-no-auth 显式关闭认证（仅本机临时用）
+                  stop [--url X] [--token T]        停止场景
+                  inject <action> <target> [duration] [--url X] [--token T]
                                                     注入故障（target 如 workers[2]）
-                  status [--url X]                  场景状态
+                  status [--url X] [--token T]      场景状态
                   events [--since N] [--url X]      事件流（增量）
                   assert [--url X]                  断言结果（退出码反映通过与否）
                   topology [--url X]                拓扑视图
@@ -467,9 +546,12 @@ public final class DuoCli {
                 两种模式：
                   同进程（缺省）——run --keep 注册到进程级 attach 表，后续命令按名接管；
                   REST 客户端——serve 起服务端后，各命令加 --url http://127.0.0.1:<port>
-                  操作运行中的独立进程场景（热注入）。
+                  操作运行中的独立进程场景（热注入）。REST 模式需带令牌：--token T 或
+                  环境变量 DUO_TOKEN（凭据只进请求头，不进日志）。
 
                 示例（单命令验收）：
-                  duo run scenario.yaml --inject-after 3s "crash workers[2]" --wait""");
+                  duo run scenario.yaml --inject-after 3s "crash workers[2]" --wait
+                  DUO_TOKEN=$(openssl rand -hex 16) duo serve scenario.yaml --port 7788 &
+                  duo status --url http://127.0.0.1:7788 --token "$DUO_TOKEN\"""");
     }
 }

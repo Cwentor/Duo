@@ -63,8 +63,15 @@ public final class ScenarioLoader {
         Map<String, String> config = new LinkedHashMap<>();
         Object launchRaw = n.get("launch");
         if (launchRaw instanceof Map<?, ?> lm) {
+            Object allowExternal = null;
+            for (var entry : lm.entrySet()) {
+                if ("allowExternalProcess".equals(String.valueOf(entry.getKey()))) {
+                    allowExternal = entry.getValue();
+                }
+            }
             launch = new Scenario.Launch(str(lm.get("mode")), str(lm.get("main")),
-                    str(lm.get("configOut")), str(lm.get("command")));
+                    str(lm.get("configOut")), str(lm.get("command")),
+                    allowExternal != null && Boolean.parseBoolean(String.valueOf(allowExternal)));
             // launch.ready.{type,port,timeout} → config.ready.*（DSL ready 声明统一落 config）
             Object readyRaw = lm.get("ready");
             if (readyRaw instanceof Map<?, ?> rm) {

@@ -74,7 +74,8 @@ class FaultDiagnosticsAcceptanceTest {
         Files.writeString(yaml, SCENARIO, StandardCharsets.UTF_8);
 
         try (ScenarioHost host = new ScenarioHost();
-             RestControlServer server = new RestControlServer(host)) {
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
             // CLI 同进程模式按名接管：把本测试的宿主注册进进程级 attach 表，
             // 这样 "duo diagnose" 走的就是**同一个**真实场景（而不是空宿主）。
             String name = "m8-diagnose-acceptance";
@@ -84,8 +85,7 @@ class FaultDiagnosticsAcceptanceTest {
             var http = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(5)).build();
 
-            var startResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/scenario"))
+            var startResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/scenario")
                             .header("Content-Type", "text/yaml")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     Files.readString(yaml, StandardCharsets.UTF_8)))
@@ -93,8 +93,7 @@ class FaultDiagnosticsAcceptanceTest {
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, startResp.statusCode(), () -> "start: " + startResp.body());
 
-            var injectResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/inject"))
+            var injectResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/inject")
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     "{\"type\":\"crash\",\"target\":"
@@ -163,8 +162,7 @@ class FaultDiagnosticsAcceptanceTest {
 
             // 4) 场景已结束 ⇒ 后续注入被拒绝；拒绝也必须在链里留痕（不静默）。
             //    这里同时验证拒绝路径的**显式性**：REST 给出 409 + 机器可读原因。
-            var reject = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/inject"))
+            var reject = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/inject")
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     "{\"type\":\"crash\",\"target\":"

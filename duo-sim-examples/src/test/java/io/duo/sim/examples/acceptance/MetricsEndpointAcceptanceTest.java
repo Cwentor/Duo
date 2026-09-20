@@ -79,7 +79,8 @@ class MetricsEndpointAcceptanceTest {
         Files.writeString(yaml, SCENARIO, StandardCharsets.UTF_8);
 
         try (ScenarioHost host = new ScenarioHost();
-             RestControlServer server = new RestControlServer(host)) {
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
             int port = server.start(0);
             String base = "http://127.0.0.1:" + port;
             var http = HttpClient.newBuilder()
@@ -102,8 +103,7 @@ class MetricsEndpointAcceptanceTest {
             assertEquals(0L, idleSamples.get("duo_injections_total"),
                     "未启动时注入计数为 0");
             // 2) 启动场景并注入一次故障
-            var startResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/scenario"))
+            var startResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/scenario")
                             .header("Content-Type", "text/yaml")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     Files.readString(yaml, StandardCharsets.UTF_8)))
@@ -111,8 +111,7 @@ class MetricsEndpointAcceptanceTest {
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, startResp.statusCode(), () -> "start: " + startResp.body());
 
-            var injectResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/inject"))
+            var injectResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/inject")
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     "{\"type\":\"crash\",\"target\":"
@@ -207,7 +206,7 @@ class MetricsEndpointAcceptanceTest {
     // ---- 极小解析器：name{labels} value → Map<String, Long> ----
 
     private static HttpResponse<String> get(HttpClient http, String url) throws Exception {
-        return http.send(HttpRequest.newBuilder().uri(URI.create(url)).GET().build(),
+        return http.send(io.duo.sim.control.rest.TestTokens.request(url).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 

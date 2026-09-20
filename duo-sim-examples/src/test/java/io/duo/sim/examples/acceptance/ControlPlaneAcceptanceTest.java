@@ -70,15 +70,15 @@ class ControlPlaneAcceptanceTest {
         Files.writeString(yaml, SCENARIO, StandardCharsets.UTF_8);
 
         try (ScenarioHost host = new ScenarioHost();
-             RestControlServer server = new RestControlServer(host)) {
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
             int port = server.start(0);
             String base = "http://127.0.0.1:" + port;
             var http = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(5)).build();
 
             // 2) REST 启动场景
-            var startResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/scenario"))
+            var startResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/scenario")
                             .header("Content-Type", "text/yaml")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     Files.readString(yaml, StandardCharsets.UTF_8)))
@@ -92,8 +92,7 @@ class ControlPlaneAcceptanceTest {
             //    eventSequence 三条断言就会因"注入时该实例无在途任务"而失败，判定随环境漂移。
             //    改为轮询事件流断言「workers-2 已派发且未终态」，把注入点钉死在在途期。
             awaitInFlightTaskOnWorkers2(host, 30_000);
-            var injectResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/inject"))
+            var injectResp = http.send(io.duo.sim.control.rest.TestTokens.request(base + "/inject")
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(
                                     "{\"type\":\"crash\",\"target\":"
@@ -111,8 +110,8 @@ class ControlPlaneAcceptanceTest {
             assertEquals("FINISHED", finalStatus.get("state"),
                     () -> "SUT state after awaitFinish: " + finalStatus
                             + "\n" + describeStream(host));
-            var assertResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/assertions")).GET().build(),
+            var assertResp = http.send(io.duo.sim.control.rest.TestTokens
+                            .request(base + "/assertions").GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, assertResp.statusCode());
             assertTrue(assertResp.body().contains("\"passed\":true"),
@@ -125,8 +124,8 @@ class ControlPlaneAcceptanceTest {
             assertTrue(allEvents.stream().anyMatch(e -> e.get("type").equals("sut.dag-terminal")),
                     "DAG must reach terminal state");
             // 6) 拓扑视图
-            var topoResp = http.send(HttpRequest.newBuilder()
-                            .uri(URI.create(base + "/topology")).GET().build(),
+            var topoResp = http.send(io.duo.sim.control.rest.TestTokens
+                            .request(base + "/topology").GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, topoResp.statusCode());
             assertTrue(topoResp.body().contains("workers"));

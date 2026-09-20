@@ -46,12 +46,23 @@ public record Scenario(String name,
      * <p>{@code command}（M6，决策 D7）仅 external 用：内核代起的外部进程命令行，
      * 空＝attach 形态（进程由用户自行启动，内核只写端点配置 + 探针就绪）。
      * 支持 {@code ${java}} / {@code ${java.home}} 占位符，避免场景文件写死本机路径。
+     *
+     * <p>{@code allowExternalProcess}（安全审计 2026-09-20 C-1）：external 节点即使不写
+     * {@code command}，也要求控制面进程**自己**起一个子进程（探针前的兜底启动）。这条
+     * 「让本机执行一个进程」的意图必须**显式声明**，且只在本机配置档有意义——外部输入档
+     * （控制面 {@code POST /scenario}）会直接拒绝它。
      */
-    public record Launch(String mode, String main, String configOut, String command) {
+    public record Launch(String mode, String main, String configOut, String command,
+                         boolean allowExternalProcess) {
+
+        /** 兼容构造（安全审计前的四字段形态，{@code allowExternalProcess} 缺省＝false）。 */
+        public Launch(String mode, String main, String configOut, String command) {
+            this(mode, main, configOut, command, false);
+        }
 
         /** 兼容构造（M6 前的三字段形态，{@code command} 缺省＝attach）。 */
         public Launch(String mode, String main, String configOut) {
-            this(mode, main, configOut, null);
+            this(mode, main, configOut, null, false);
         }
     }
 

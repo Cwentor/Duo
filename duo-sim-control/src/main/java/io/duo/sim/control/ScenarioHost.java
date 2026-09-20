@@ -65,15 +65,66 @@ public final class ScenarioHost implements AutoCloseable {
 
     // ---- 生命周期 ----
 
+    /**
+     * 场景来源的信任级（安全审计 2026-09-20：把信任边界从「能连到控制面端口」
+     * 重新画到「输入是谁给的」上）。
+     *
+     * <p>{@link #CONFIG}＝本机文件（CLI/测试/嵌入式）：与「启动一个进程」同级，
+     * 能力**不缩水**；{@link #EXTERNAL_INPUT}＝控制面 POST body／任何远程来源：
+     * 按不可信输入处理（禁外部进程启动、config 键白名单、规模上限）。
+     */
+    public enum Trust { CONFIG, EXTERNAL_INPUT }
+
+    /** REST 落盘 YAML 的隔离后缀：外部输入档下，DSL 指向本进程临时文件的路径被校验器直接拒绝。 */
+    public static final String QUARANTINE_SUFFIX = "untrusted";
+
+    private Trust trust = Trust.CONFIG;
+
+    /** 本轮场景由控制面落地的临时 YAML（外部输入隔离副本）；无则为 null（审计 M-6/L-1）。 */
+    private String currentTempName;
+
+    /** 告警累积（审计：有界缓冲/清理失败等"跳过了什么"必须可见，§12）。 */
+    private final List<String> warnings = new ArrayList<>();
+
     /** 启动场景（同进程）。YAML 先经 {@code ScenarioEngine.validated} 校验（§8 快速失败）。 */
     public synchronized Map<String, Object> start(Path yaml) throws Exception {
+        return start(yaml, Trust.CONFIG);
+    }
+
+    /**
+     * 按信任级启动场景。默认入口 {@link #start(Path)} 为 {@link Trust#CONFIG}
+     * （本机文件/测试/嵌入式），控制面 REST 显式传 {@link Trust#EXTERNAL_INPUT}。
+     */
+    public synchronized Map<String, Object> start(Path yaml, Trust trust) throws Exception {
+        return start(yaml, trust, null);
+    }
+
+    /**
+     * 按信任级启动场景，并登记「由调用方落地、需在收尾时删除」的临时文件名。
+     *
+     * <p>{@code tempName} 语义（审计 M-6/L-1）：控制面把外部输入写成临时 YAML 后再交给引擎，
+     * 这份文件在场景结束后即为垃圾。宿主只留**文件名**（不留绝对路径，避免路径出现在
+     * 错误消息与事件载荷里），收尾时用 {@code Files.createTempFile} 的同目录语义删除
+     * ——即 {@code Path.of(System.getProperty("java.io.tmpdir"), tempName)}。
+     *
+     * @param tempName 临时文件名（非路径）；null ＝本机文件，不清理
+     */
+    public synchronized Map<String, Object> start(Path yaml, Trust trust, String tempName)
+            throws Exception {
         if (state == State.RUNNING) {
             throw new IllegalStateException("scenario already running");
         }
+        this.trust = trust;
+        currentTempName = tempName;
+        warnings.clear();
         try {
             Scenario loaded = ScenarioLoader.load(yaml);
             var registry = ContractRegistry.loadFromServiceLoader();
-            engine = ScenarioEngine.validated(loaded, registry).withHooks(hooks);
+            engine = ScenarioEngine.validated(loaded, registry,
+                    trust == Trust.EXTERNAL_INPUT
+                            ? ScenarioEngine.InputPolicy.EXTERNAL_INPUT
+                            : ScenarioEngine.InputPolicy.CONFIG)
+                    .withHooks(hooks);
             scenario = loaded;
             engine.startSut();
             engine.startComponents();
@@ -81,22 +132,54 @@ public final class ScenarioHost implements AutoCloseable {
             lastError = null;
             return status();
         } catch (RuntimeException e) {
+            // 启动失败＝这份临时 YAML 从未成为场景源，就地清理（审计 L-1）；成功路径则由
+            // cleanupTempArtifacts() 在收尾时清理（文件在同一轮场景里仍是"当前源"）。
+            deleteTempNow();
             state = State.FAILED;
             lastError = String.valueOf(e.getMessage());
             throw e;
         }
     }
 
-    /** 以 classpath 资源启动（CLI/测试便捷入口）。 */
+    /** 立即删除已登记的临时 YAML（启动失败路径）。 */
+    private void deleteTempNow() {
+        String name = currentTempName;
+        currentTempName = null;
+        if (name == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(Path.of(System.getProperty("java.io.tmpdir"), name));
+        } catch (java.io.IOException e) {
+            warnings.add("cannot delete temp scenario file: " + e.getMessage());
+        }
+    }
+
+    /** 当前场景的来源信任级（控制面提示用）。 */
+    public synchronized Trust trust() {
+        return trust;
+    }
+
+    /** 本层累积的告警（如录制缓冲溢出、临时文件清理失败）；只读快照。 */
+    public synchronized List<String> warnings() {
+        return List.copyOf(warnings);
+    }
+
+    /**
+     * 以 classpath 资源启动（CLI/测试便捷入口）：classpath 资源是本机字节码的一部分，
+     * 属可信配置档，跑完即删临时文件（审计 M-6：临时 YAML 不长期滞留）。
+     */
     public synchronized Map<String, Object> startFromResource(String resourcePath) throws Exception {
+        Path tmp;
         try (InputStream in = ScenarioHost.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
                 throw new IllegalArgumentException("scenario resource not found: " + resourcePath);
             }
-            Path tmp = Files.createTempFile("duo-scenario-", ".yaml");
+            tmp = Files.createTempFile("duo-scenario-", ".yaml");
             Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            return start(tmp);
         }
+        // 登记文件名：启动失败与场景收尾两条路径都会删除它（审计 L-1）
+        return start(tmp, Trust.CONFIG, tmp.getFileName().toString());
     }
 
     /**
@@ -145,13 +228,68 @@ public final class ScenarioHost implements AutoCloseable {
     }
 
     /** 停止场景（幂等）。 */
-    public synchronized Map<String, Object> stop() {        if (engine != null) {
+    public synchronized Map<String, Object> stop() {
+        if (engine != null) {
             engine.stop();
+            cleanupTempArtifacts(); // 审计 M-6/L-1：场景收尾即清理本层产生的临时文件
             state = engine.result().passed() ? State.FINISHED : State.FAILED;
         } else {
             state = State.IDLE;
         }
         return status();
+    }
+
+    /** 本层临时产物的文件名前缀（回归用例据此在 tmpdir 里认领自己留下的文件）。 */
+    public static final java.util.Set<String> TEMP_FILE_PREFIXES =
+            java.util.Set.of("duo-rest-", "duo-scenario-", "duo-sut-");
+
+    /**
+     * 清理本层产生的临时产物（审计 M-6 / L-1）：
+     * <ul>
+     *   <li>控制面为外部输入落地的隔离 YAML（{@code duo-rest-*.untrusted.yaml}）；</li>
+     *   <li>external SUT 的端点告知文件（{@code duo-sut-*.config}，内核写入、无人回读）。</li>
+     * </ul>
+     * 两者都是"启动的踏板"，场景结束后不再需要；留着只会把机器上的路径/拓扑信息
+     * 长期暴露给同机其它进程（审计 L-1 的口径）。清理失败只告警，不影响停止语义。
+     */
+    private void cleanupTempArtifacts() {
+        List<Path> victims = new ArrayList<>();
+        if (currentTempName != null) {
+            victims.add(Path.of(System.getProperty("java.io.tmpdir"), currentTempName));
+        }
+        io.duo.sim.kernel.sut.ExternalSutLauncher sut =
+                engine == null ? null : engine.externalSut();
+        Path configOut = sut == null ? null : sut.configFile();
+        if (configOut != null) {
+            victims.add(configOut);
+        }
+        for (Path p : victims) {
+            try {
+                Files.deleteIfExists(p);
+            } catch (java.io.IOException e) {
+                warnings.add("cannot delete temp artifact " + p.getFileName() + ": "
+                        + e.getMessage());
+            }
+        }
+        currentTempName = null;
+        if (engine != null) {
+            warnings.addAll(engine.warnings()); // 引擎侧告警（如录制缓冲溢出）汇总到宿主面
+        }
+    }
+
+    /**
+     * 停止场景并**立刻返回**（不等 SUT 收尾线程）。
+     *
+     * <p>{@code serve} 模式收到 {@code DELETE /scenario} 时用这个而不是 {@link #stop()}：
+     * 真实 SUT 的 {@code engine.stop()} 可能长时间阻塞在等待子进程退出上（审计 H-5），
+     * 客户端会一直挂着。这里把收尾交给后台虚拟线程，HTTP 立刻得到 200 + 当前状态；
+     * 场景结果随后由 {@link #status()} 反映（语义仍是「已下达停止」）。
+     */
+    public Map<String, Object> stopWithoutAwait() {
+        Thread.ofVirtual().name("duo-host-stop").start(this::stop);
+        synchronized (this) {
+            return status();
+        }
     }
 
     // ---- 状态与观测 ----
