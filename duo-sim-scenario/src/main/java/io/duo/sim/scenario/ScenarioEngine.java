@@ -58,6 +58,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private volatile TimelineScheduler timeline;
     /** custom-hook 注册表（M5/G5）：可用 {@link #withHooks} 注入，默认空表。 */
     private HookRegistry hookRegistry = new HookRegistry();
+    /** 输入信任档（默认＝本机文件/classpath 配置）。 */
+    private InputPolicy inputPolicy = InputPolicy.CONFIG;
     private final EventRecorder recorder;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
@@ -85,14 +87,39 @@ public final class ScenarioEngine implements AutoCloseable {
         return hookRegistry;
     }
 
+    /** 当前输入信任档。 */
+    public InputPolicy inputPolicy() {
+        return inputPolicy;
+    }
+
     /** 加载即校验（§8 快速失败：errors 非空抛 IllegalArgumentException）。 */
     public static ScenarioEngine validated(Scenario scenario, ContractRegistry registry) {
-        var report = new ScenarioValidator(registry).validate(scenario);
+        return validated(scenario, registry, InputPolicy.CONFIG);
+    }
+
+    /**
+     * 输入来源的信任档（安全审计 2026-09-20）。
+     *
+     * <p>{@link #CONFIG}＝场景 YAML 来自本机文件/classpath：与「启动一个进程」同级，
+     * 校验按**配置**对待，能力不缩水；{@link #EXTERNAL_INPUT} 由控制面把外部输入显式降级：
+     * 禁止派生外部进程、config 键必须白名单、拓扑有界。
+     */
+    public enum InputPolicy { CONFIG, EXTERNAL_INPUT }
+
+    /** 校验 + 绑定输入信任档（EXTERNAL_INPUT 时按不可信输入收窄能力）。 */
+    public static ScenarioEngine validated(Scenario scenario, ContractRegistry registry,
+                                           InputPolicy policy) {
+        var report = new ScenarioValidator(registry,
+                policy == InputPolicy.EXTERNAL_INPUT
+                        ? ScenarioValidator.InputTrust.EXTERNAL
+                        : ScenarioValidator.InputTrust.CONFIG)
+                .validate(scenario);
         if (!report.ok()) {
             throw new IllegalArgumentException("scenario validation failed: "
                     + String.join("; ", report.errors()));
         }
         ScenarioEngine e = new ScenarioEngine(scenario, registry);
+        e.inputPolicy = policy;
         e.warnings.addAll(report.warnings());
         return e;
     }
@@ -197,6 +224,7 @@ public final class ScenarioEngine implements AutoCloseable {
             throw new IllegalStateException("SUT launch.mode must be in-process (with main) "
                     + "or external (with configOut): " + spec.id());
         }
+        assertMainAllowed(spec.launch().main());
         try {
             var cls = Class.forName(spec.launch().main());
             var main = (io.duo.sim.kernel.api.SutMain)
@@ -275,6 +303,12 @@ public final class ScenarioEngine implements AutoCloseable {
      */
     private SutLauncherHandle startExternalSut(Scenario.NodeSpec spec,
                                                Map<String, String> sutEndpoints) {
+        // 纵深防御（安全审计 C-1）：外部输入档下连「解析命令行」都不做——校验器已拒绝该形态，
+        // 这里再挡一道，避免将来有人绕过 validated(...) 直接 new ScenarioEngine(...) 时失守。
+        if (inputPolicy == InputPolicy.EXTERNAL_INPUT) {
+            throw new IllegalArgumentException("external SUT process launch is not allowed for "
+                    + "external input (launch.command / launch.allowExternalProcess): " + spec.id());
+        }
         var launcher = new io.duo.sim.kernel.sut.ExternalSutLauncher(
                 spec.id(), splitCommand(spec.launch().command()), spec.config(), sutEndpoints,
                 this::onSutEvent,
@@ -304,7 +338,25 @@ public final class ScenarioEngine implements AutoCloseable {
                 : io.duo.sim.kernel.util.Durations.parseMillis(timeout);
     }
 
-    /** external 节点的兜底探针端口（首个非 0 expose 端口）。 */
+    /**
+     * external 节点的兜底探针端口（首个非 0 expose 端口）。
+     */
+    /**
+     * 任意类加载守卫（安全审计 H-3）：外部输入档只允许加载框架自身命名空间下的 SUT 主类。
+     * 本机配置档不受限（与 {@code java -cp ... Main} 同级信任）。
+     */
+    private void assertMainAllowed(String main) {
+        if (main == null || inputPolicy != InputPolicy.EXTERNAL_INPUT) {
+            return;
+        }
+        if (ScenarioValidator.isTrustedMainClass(main)) {
+            return;
+        }
+        throw new IllegalArgumentException("sut main class '" + main + "' is outside the framework "
+                + "namespace; class loading from external input is restricted to io.duo.sim.* / "
+                + "com.duo.* (run it from a local scenario file or CLI instead)");
+    }
+
     private static int firstExposedPort(Scenario.NodeSpec n) {
         return n.exposes().stream()
                 .filter(e -> e.port() != null && e.port() > 0)
@@ -530,6 +582,14 @@ public final class ScenarioEngine implements AutoCloseable {
         started = false;
         if (recorder != null) {
             recorder.flush(); // T21：录制落盘（审查材料）
+            if (recorder.droppedEvents() > 0) {
+                // 有界缓冲的可见代价（审计 H-4 / §12）：丢了多少必须说出来，不静默
+                String hint = "event recording buffer limit reached: "
+                        + recorder.droppedEvents() + " events dropped from build/scenarios/"
+                        + scenario.name() + "/events.jsonl";
+                warnings.add(hint);
+                result.recordWarning(hint);
+            }
         }
         evaluateAssertions(); // T20：YAML 内置评估写入 ScenarioResult（场景结束判定）
     }

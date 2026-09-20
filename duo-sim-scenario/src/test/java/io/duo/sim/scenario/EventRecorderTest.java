@@ -73,4 +73,18 @@ class EventRecorderTest {
         assertEquals("workers-3", back.get(0).get("sourceId"));
         assertEquals("2026-01-01T00:00:10Z", back.get(0).get("timestamp"));
     }
+
+    /** 安全审计 2026-09-20 H-4：缓冲有界，超出部分显式计数（不静默 OOM）。 */
+    @Test
+    void bufferIsBoundedAndOverflowIsCounted(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("bounded.jsonl");
+        var recorder = EventRecorder.to(file);
+        for (int i = 0; i < EventRecorder.MAX_BUFFERED_EVENTS + 5; i++) {
+            recorder.onEvent(Event.sim("sim.flood", "sc", Map.of("i", i)));
+        }
+        assertEquals(5, recorder.droppedEvents(), "溢出条数必须精确可读");
+        recorder.flush();
+        // 落盘内容恰好是上限条数（不是 0、不是全部）：丢的是尾部，前面的审查材料保住
+        assertEquals(EventRecorder.MAX_BUFFERED_EVENTS, Files.readAllLines(file).size());
+    }
 }

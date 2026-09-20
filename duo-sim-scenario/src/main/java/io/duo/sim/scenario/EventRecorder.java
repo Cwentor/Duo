@@ -18,11 +18,24 @@ import java.util.Map;
  *
  * <p>用途（§11）：事后回放审查与回归比对。**真实时钟下不承诺确定性逐字节重放**——
  * 录制是审查材料，不是可复现重放脚本。
+ *
+ * <p><b>缓冲有界</b>（安全审计 2026-09-20 H-4）：{@code flush()} 在**场景结束时**才调用，
+ * 期间缓冲只增不减；一个刷日志的 SUT 或自定义 hook 就能把控制面堆到 OOM。故设上限
+ * {@link #MAX_BUFFERED_EVENTS}，超出后停止累积并计入 {@link #droppedEvents()}——
+ * 用"显式丢了多少"替代"静默吃掉内存"（§12：跳过必须可见）。
  */
 public final class EventRecorder implements AutoCloseable {
 
+    /**
+     * 内存缓冲上限。取值依据：既有最大验收场景（万级任务）事件量在 10^4 量级，
+     * 5×10^5 留足一个数量级余量，同时把单场景缓冲内存封在 ~10^8 字节以内。
+     */
+    public static final int MAX_BUFFERED_EVENTS = 500_000;
+
     private final Path outputFile;
     private final List<Event> buffered = new ArrayList<>();
+    private final java.util.concurrent.atomic.AtomicLong dropped =
+            new java.util.concurrent.atomic.AtomicLong();
     private final com.fasterxml.jackson.databind.ObjectMapper mapper =
             com.fasterxml.jackson.databind.json.JsonMapper.builder().build();
     private volatile boolean closed;
@@ -36,12 +49,21 @@ public final class EventRecorder implements AutoCloseable {
         return new EventRecorder(outputFile);
     }
 
+    /** 是否因达到缓冲上限而丢弃过事件（诊断/告警用）。 */
+    public long droppedEvents() {
+        return dropped.get();
+    }
+
     /** 事件总线订阅入口。 */
     public void onEvent(Event event) {
         if (closed) {
             return;
         }
         synchronized (buffered) {
+            if (buffered.size() >= MAX_BUFFERED_EVENTS) {
+                dropped.incrementAndGet();
+                return;
+            }
             buffered.add(event);
         }
     }

@@ -26,6 +26,23 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MetricsCollector {
 
+    /**
+     * 按类型计数器的**键基数上限**（安全审计 2026-09-20 H-4 / §5 caveat 5）。
+     *
+     * <p>为什么要有界：{@code type} 是事件流里的原始字符串，{@code sim.*} 受
+     * {@code Event.SIM_EVENT_TYPES} 约束，但 {@code sut.*} 由**被测对象**自由产生
+     * （hook、SUT 进程、自定义组件都能 emit 任意类型）。一个不断产生新类型的 SUT
+     * 就能让 {@code countersByType} 无限增长——控制面被观测对象拖垮。
+     * 超过上限后新类型统一并入 {@value #OVERFLOW_KEY}（总量仍准确，只是不再按名区分）。
+     */
+    public static final int MAX_EVENT_TYPES = 256;
+
+    /** 溢出桶（不再逐个区分的新类型）。 */
+    public static final String OVERFLOW_KEY = "__other__";
+
+    /** 单键最大长度（同样是为了不让一个 SUT 用超长类型名撑爆输出）。 */
+    private static final int MAX_TYPE_LENGTH = 200;
+
     private final ScenarioHost host;
     private final AtomicLong scrapes = new AtomicLong();
 
@@ -33,6 +50,8 @@ public final class MetricsCollector {
     private int cursor;
     /** 会话内按类型累计（跨 start/stop 保留，对齐 Prometheus counter 的进程生命周期语义）。 */
     private final Map<String, Long> countersByType = new LinkedHashMap<>();
+    /** 因超出 {@link #MAX_EVENT_TYPES} 而被并入 {@link #OVERFLOW_KEY} 的事件条数。 */
+    private long overflowedByType;
     private long injectionTotal;
     private long injectionFailedTotal;
     private long heartbeatTotal;
@@ -78,7 +97,9 @@ public final class MetricsCollector {
         metric(sb, "duo_sut_events_total", "counter",
                 "`sut.` 被测对象事实事件累计", sutFactTotal, List.of());
         if (!countersByType.isEmpty()) {
-            sb.append("# HELP duo_events_by_type_total 按事件类型累计的条数（仅列出已出现的类型）\n");
+            sb.append("# HELP duo_events_by_type_total 按事件类型累计的条数（仅列出已出现的类型；")
+                    .append("类型基数上限 ").append(MAX_EVENT_TYPES)
+                    .append("，超出后并入 ").append(OVERFLOW_KEY).append("）\n");
             sb.append("# TYPE duo_events_by_type_total counter\n");
             List<String> types = new ArrayList<>(countersByType.keySet());
             types.sort(String::compareTo);
@@ -136,7 +157,7 @@ public final class MetricsCollector {
         for (int i = cursor; i < events.size(); i++) {
             Event e = events.get(i);
             String type = e.type() == null ? "" : e.type();
-            countersByType.merge(type, 1L, Long::sum);
+            countByType(type);
             if (type.equals("duo.heartbeat") || type.startsWith("sut.heartbeat")) {
                 heartbeatTotal++;
             }
@@ -152,6 +173,30 @@ public final class MetricsCollector {
             }
         }
         cursor = events.size();
+    }
+
+    /**
+     * 按类型累计，**键基数有界**（审计 H-4）：已知类型继续按名计数；新类型在未达上限前
+     * 各自计数，达上限后并入 {@link #OVERFLOW_KEY}——总量恒等，只是不再逐名展开，
+     * 这样既保住了 {@code duo_events_by_type_total} 的可用性，又堵住了 SUT 拖垮控制面的路。
+     */
+    private void countByType(String type) {
+        String key = type.length() > MAX_TYPE_LENGTH ? type.substring(0, MAX_TYPE_LENGTH) : type;
+        if (countersByType.containsKey(key)) {
+            countersByType.merge(key, 1L, Long::sum);
+            return;
+        }
+        if (countersByType.size() < MAX_EVENT_TYPES) {
+            countersByType.put(key, 1L);
+            return;
+        }
+        overflowedByType++;
+        countersByType.merge(OVERFLOW_KEY, 1L, Long::sum);
+    }
+
+    /** 因类型基数上限而未逐名区分的累计条数（供摘要行与自检使用）。 */
+    public synchronized long overflowedEventTypes() {
+        return overflowedByType;
     }
 
     // ---- Prometheus 文本格式辅助 ----

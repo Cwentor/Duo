@@ -79,9 +79,31 @@ class HookRegistryTest {
         assertTrue(r.success(), r.reason());
     }
 
+    /** 安全审计 2026-09-20 M-3：hook 只能发 sim./sut. 事实，不能伪装内核事件。 */
     @Test
-    void validatorExemptsCustomHookOnSutTarget() {
-        // validator 层：crash 打 SUT 拒绝；custom-hook 打 SUT 放行
+    void hookEmitOutsideSimOrSutPrefixIsRejected() {
+        var hooks = new HookRegistry();
+        List<Event> events = new ArrayList<>();
+        hooks.register("forge", ctx -> ctx.emit("duo.custom-fact", Map.of("x", 1)));
+        var forged = hooks.execute("master", Map.of("hook", "forge"), events::add);
+        assertFalse(forged.success(), "越界类型必须失败，不得静默丢弃");
+        assertTrue(forged.reason().contains("must start with"), forged.reason());
+        assertTrue(events.isEmpty(), "越界类型不得进入事件流");
+
+        // 空类型同样拒绝（否则等于可以铸造无名事实骗过按类型断言的用例）
+        hooks.register("empty", ctx -> ctx.emit(null, Map.of()));
+        assertFalse(hooks.execute("master", Map.of("hook", "empty"), events::add).success());
+        assertTrue(events.isEmpty());
+
+        // 对照：两类合法事实照常放行，事件顺序不变（hook 事实在前）
+        hooks.register("ok", ctx -> ctx.emit("sim.custom-probe", Map.of()));
+        assertTrue(hooks.execute("master", Map.of("hook", "ok"), events::add).success());
+        assertEquals(List.of("sim.custom-probe", "sim.hook-executed"),
+                events.stream().map(Event::type).toList());
+    }
+
+    @Test
+    void validatorExemptsCustomHookOnSutTarget() {        // validator 层：crash 打 SUT 拒绝；custom-hook 打 SUT 放行
         var registry = new io.duo.sim.kernel.core.ContractRegistry();
         registry.register(new io.duo.sim.kernel.spi.ComponentProvider() {
             @Override public io.duo.sim.kernel.api.Contract contract() {

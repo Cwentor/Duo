@@ -14,10 +14,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 场景校验器（§8）：规则 1–8 全量。
+ * 场景校验器（§8）：规则 1–8 全量，外加规则 9–11（安全审计 2026-09-20 的信任边界）。
  * 规则 1（契约注册/档位实现/交互型档位）、3（路径前提）读注册表静态元数据；
  * 规则 2 做简写补全与静态一致性检查；6 校验时间线动作；7 校验剧本绑定；
  * 8 固定端口可用性；4 external 节点端点声明与 ready 探针。
+ *
+ * <p><b>规则 9–11 只在 {@link InputTrust#EXTERNAL} 档生效</b>（控制面 {@code POST /scenario}
+ * 等外部输入）。它们不改变「本机 YAML 文件」的能力——本地文件与命令行同级信任，
+ * 能力保持原样（这张网只兜外部输入）。
  */
 public final class ScenarioValidator {
 
@@ -28,10 +32,70 @@ public final class ScenarioValidator {
         }
     }
 
+    /** 输入信任档：本机配置（不限）／外部输入（规则 9–11 生效）。 */
+    public enum InputTrust { CONFIG, EXTERNAL }
+
+    // ---- 外部输入档的规模上限（审计 H-2：无认证 DoS 的次级防线）----
+
+    /** 拓扑节点数上限。 */
+    public static final int MAX_NODES = 256;
+    /** 实例总数上限（各节点 count 之和）。 */
+    public static final int MAX_INSTANCES = 4096;
+    /** 时间线条目上限。 */
+    public static final int MAX_TIMELINE = 1000;
+    /** 断言条数上限。 */
+    public static final int MAX_ASSERTIONS = 200;
+    /** 单节点实例数上限。 */
+    public static final int MAX_INSTANCES_PER_NODE = 1024;
+
+    /** 允许被外部输入加载的 SUT 主类命名空间（框架自身；其余需本机配置档）。 */
+    private static final List<String> TRUSTED_MAIN_PREFIXES = List.of("io.duo.sim.", "com.duo.");
+
+    /**
+     * 外部输入档下允许出现在 {@code config}/{@code capacity} 里的**框架自有**键。
+     *
+     * <p>为什么需要白名单：{@code config} 是任意 KV 透传给组件实现的，而组件的键里有
+     * {@code demo.endpoint.host/port/path} 这类会驱动**出站 HTTP 探针**的键（审计 M-2/H-3：
+     * 用外部输入把本机变成 SSRF 跳板），也有直接被当成文件路径写出去的键。控制面收的是
+     * **不可信字节**，因此默认拒绝：认识的框架键放行，其余键要组件实现自己声明
+     * （{@code CapabilityMetadata.trustedConfigKeys}），否则校验期失败（不静默）。
+     */
+    private static final Set<String> TRUSTED_CONFIG_KEYS = Set.of(
+            // 内核通用
+            "autoStart", "count",
+            // ready 探针（host/port/path 由 ReadyProbe 解析；此处仅要求不是绝对路径/URL）
+            "ready.type", "ready.host", "ready.port", "ready.path", "ready.timeout",
+            // 框架内置组件的既有口径（见每个实现 ctx.config() 的读取点）
+            "capacity.cpu", "capacity.memGB", "capacity.slots",
+            "dag.tasks", "dag.states", "dag.tick",
+            "heartbeat.interval", "slow.factor", "slow.window",
+            "message.maxDepthPerTopic", "scheduler.heartbeatSampleRate",
+            "worker.slowFactor",
+            // 剧本（BehaviorResolver 的 behaviors.* / 默认档所有键）
+            "behaviors.default.duration", "behaviors.default.jitter",
+            "behaviors.default.successRate", "behaviors.default.exception",
+            "behaviors.default.logLines", "behaviors.default.failAt",
+            "behaviors.default.neverReport", "behaviors.default.progress");
+
+    /** 外部输入档下禁止出现在 config 键里的「路径/URL」形态。 */
+    private static final java.util.regex.Pattern ABSOLUTE_PATH =
+            java.util.regex.Pattern.compile("^(?:[A-Za-z]:[\\\\/]|[\\\\/]{1,2}[^\\\\/])");
+    private static final java.util.regex.Pattern URL_SCHEME =
+            java.util.regex.Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*://");
+    private static final java.util.regex.Pattern SCHEME_PREFIX =
+            java.util.regex.Pattern.compile("^(?:file|jdbc|jar|classpath|ftp|ldap|rmi|gopher):",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private final ContractRegistry registry;
+    private final InputTrust trust;
 
     public ScenarioValidator(ContractRegistry registry) {
+        this(registry, InputTrust.CONFIG);
+    }
+
+    public ScenarioValidator(ContractRegistry registry, InputTrust trust) {
         this.registry = registry;
+        this.trust = trust;
     }
 
     public Report validate(Scenario scenario) {
@@ -280,7 +344,113 @@ public final class ScenarioValidator {
             }
         }
 
+        // 规则 9–11：外部输入的信任边界（安全审计 2026-09-20）
+        if (trust == InputTrust.EXTERNAL) {
+            checkExternalInput(scenario, byId, metadataByNode, errors);
+        }
+
         return new Report(errors, warnings);
+    }
+
+    /**
+     * 规则 9–11（仅外部输入档）。规则 9＝配置键白名单；规则 10＝机器级副作用禁入
+     * （配置路径/URL、任意类加载）；规则 11＝规模有界。
+     */
+    private void checkExternalInput(Scenario scenario, Map<String, Scenario.NodeSpec> byId,
+                                    Map<String, CapabilityMetadata> metadataByNode,
+                                    List<String> errors) {
+        // 规则 11：规模上限（先做，避免后面的逐节点检查在大拓扑上白跑）
+        if (byId.size() > MAX_NODES) {
+            errors.add("topology has " + byId.size() + " nodes; external input allows at most "
+                    + MAX_NODES);
+        }
+        int instances = 0;
+        for (var n : byId.values()) {
+            // 实例数＝展开后的单元数：count 是「每实例的单元数」语义时由组件自行乘，
+            // 校验层只保证「声明的实例数」有界（真正的内存由实例数×单元数决定，
+            // 故同时限制 count 本身，见 MAX_INSTANCES_PER_NODE）。
+            int count = n.count() == null ? 1 : n.count();
+            instances += count;
+            if (count > MAX_INSTANCES_PER_NODE) {
+                errors.add("node " + n.id() + ": count " + count
+                        + " exceeds external input limit " + MAX_INSTANCES_PER_NODE);
+            }
+        }
+        if (instances > MAX_INSTANCES) {
+            errors.add("topology declares " + instances + " instances; external input allows at"
+                    + " most " + MAX_INSTANCES);
+        }
+        if (scenario.timeline().size() > MAX_TIMELINE) {
+            errors.add("timeline has " + scenario.timeline().size()
+                    + " entries; external input allows at most " + MAX_TIMELINE);
+        }
+        if (scenario.assertions() != null && scenario.assertions().size() > MAX_ASSERTIONS) {
+            errors.add("assertions has " + scenario.assertions().size()
+                    + " entries; external input allows at most " + MAX_ASSERTIONS);
+        }
+
+        for (var n : byId.values()) {
+            // 规则 10①：外部进程启动（任意命令执行）——审计 C-1 的直接利用路径
+            if (isExternal(n)) {
+                boolean wantsProcess = n.launch().allowExternalProcess()
+                        || (n.launch().command() != null && !n.launch().command().isBlank());
+                if (wantsProcess) {
+                    errors.add("node " + n.id() + ": launching an external process is not allowed"
+                            + " for external input (launch.command /"
+                            + " launch.allowExternalProcess); run it from a local scenario file"
+                            + " or the CLI instead");
+                }
+                checkConfigPath(n, "launch.configOut", n.launch().configOut(), errors);
+            }
+            // 规则 10②：任意类加载（SUT 主类）
+            if (n.launch() != null && n.launch().main() != null
+                    && !n.launch().main().isBlank() && !isTrustedMainClass(n.launch().main())) {
+                errors.add("node " + n.id() + ": sut main class '" + n.launch().main()
+                        + "' is outside the framework namespace; loading arbitrary classes from"
+                        + " external input is not allowed (io.duo.sim.* / com.duo.* only)");
+            }
+            // 规则 9：config/capacity 键白名单
+            CapabilityMetadata meta = metadataByNode.get(n.id());
+            Set<String> allowed = new java.util.HashSet<>(TRUSTED_CONFIG_KEYS);
+            if (meta != null) {
+                allowed.addAll(meta.trustedConfigKeys());
+            }
+            for (var e : n.config().entrySet()) {
+                checkExternalConfigEntry(n, allowed, e.getKey(), e.getValue(), errors);
+            }
+            for (var e : n.capacity().entrySet()) {
+                checkExternalConfigEntry(n, allowed, e.getKey(), e.getValue(), errors);
+            }
+        }
+    }
+
+    private static void checkExternalConfigEntry(Scenario.NodeSpec n, Set<String> allowed,
+                                                 String key, String value, List<String> errors) {
+        if (!allowed.contains(key)) {
+            errors.add("node " + n.id() + ": config key '" + key + "' is not accepted for"
+                    + " external input (known keys only; the component implementation may"
+                    + " declare more via CapabilityMetadata.trustedConfigKeys)");
+        }
+        checkConfigPath(n, "config." + key, value, errors);
+    }
+
+    /** 规则 10③：配置值不得是绝对路径或带 scheme 的 URL（机器级副作用的入口）。 */
+    private static void checkConfigPath(Scenario.NodeSpec n, String where, String value,
+                                        List<String> errors) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        String v = value.trim();
+        if (ABSOLUTE_PATH.matcher(v).find() || URL_SCHEME.matcher(v).find()
+                || SCHEME_PREFIX.matcher(v).find()) {
+            errors.add("node " + n.id() + ": " + where + " must not be an absolute path or a"
+                    + " URL for external input (got '" + v + "')");
+        }
+    }
+
+    /** 外部输入档允许加载的 SUT 主类命名空间（框架自身）。 */
+    public static boolean isTrustedMainClass(String main) {
+        return TRUSTED_MAIN_PREFIXES.stream().anyMatch(main::startsWith);
     }
 
     /** 简写补全：wiring 值只有 node 字符串时 contract=null，由调用方按"槽名即契约名"处理。 */

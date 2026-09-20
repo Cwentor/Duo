@@ -73,6 +73,14 @@ public final class HookRegistry {
 
             @Override
             public void emit(String type, Map<String, Object> payload) {
+                // 类型前缀收窄（安全审计 2026-09-20 M-3）：事件流是断言与指标的唯一事实源，
+                // 允许 hook 发任意类型＝允许 hook 伪装内核事实（伪造 sim.* / duo. 即可骗过断言），
+                // 也让 MetricsCollector 的类型基数无界。这里只放行既有的两类事实。
+                if (type == null || !(type.startsWith(Event.SIM_PREFIX)
+                        || type.startsWith(Event.SUT_PREFIX))) {
+                    throw new IllegalArgumentException("hook emit type must start with '"
+                            + Event.SIM_PREFIX + "' or '" + Event.SUT_PREFIX + "': " + type);
+                }
                 eventSink.accept(new Event(type, target,
                         java.time.Instant.now(), payload == null ? Map.of() : payload));
             }
