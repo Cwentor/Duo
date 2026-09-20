@@ -18,22 +18,22 @@
 | --- | --- | --- | --- | --- |
 | C-1 | CRITICAL | 已修复 | 令牌必填 + 回环双校验 + 外部输入档校验规则 9–11 | §2.1 用例 ① ② ③ |
 | H-1 | HIGH | 已修复 | Bearer 令牌（自定义头，跨站简单请求无法携带）+ `Origin`/`Host` 回环 | §2.1 用例 ② ③ |
-| H-2 | HIGH | 已修复 | body 上限 1 MiB（按 `MAX+1` 截断，防谎报/chunked）→ 413；规模上限（节点/实例/时间线/断言） | §2.1 用例 ④ ⑤ |
+| H-2 | HIGH | 已修复 | body 上限 1 MiB（按 `MAX+1` 截断，防谎报/chunked）→ 413；规模上限（节点/实例/时间线/断言） | §2.1 用例 ④ ⑤、§5 用例 ① |
 | H-3 | HIGH | 已修复 | 外部输入档禁派生进程；`config` 值禁 URL scheme 与绝对路径 | §2.1 用例 ① ⑤ |
-| H-4 | HIGH | 已修复 | `MetricsCollector` 事件类型基数上限 256 + `__other__` 溢出桶（**总量恒等**） | §2.3 用例 ③ |
-| H-5 | HIGH | 已修复 | `EventRecorder` 有界缓冲（50 万）+ 丢弃计数上抛为告警；`stopWithoutAwait()`；`close()` 关 executor | §2.3 用例 ① ②、§2.1 用例 ⑥ |
+| H-4 | HIGH | **已修复（第二轮）** | ~~第一轮误记为「`MetricsCollector` 事件类型基数上限 256」~~。**审计原文指向 `ScenarioHost.start()` 覆写 `engine` 引用、旧引擎无人 `close()`**——第二轮补上：顶替时引用立即摘除、`close()` 在后台虚拟线程 `duo-host-retire` 执行、`retiredEnginesClosed()` 可观测、失败/超 30 s 上抛告警。类型基数上限那条**继续保留**（它治的是 H-4 编号下的另一个真实问题） | §5 用例 ② |
+| H-5 | HIGH | **已修复（第二轮）** | ~~第一轮误记为「`EventRecorder` 有界缓冲」~~。**审计原文指向 `ScenarioEngine.recorded` 无界 `CopyOnWriteArrayList`（`:46/:71/:516`）**——第二轮补上：有锁 `ArrayList` + 50 万上限、追加 O(1)、溢出计数 `droppedEvents()` 并在 `stop()` 上抛告警、写侧单点 `recordEvent(Event)`、`events()` 同步快照。`EventRecorder` 的有界缓冲**继续保留** | §5 用例 ③（`EventRecorderTest`）、§2.3 用例 ① |
 | M-1 | MEDIUM | 已修复 | 外部输入档 `config` 键白名单（键取自各组件的**真实读取点**，不是猜的） | §2.1 用例 ⑤ |
-| M-2 | MEDIUM | 已修复 | 同上：值禁 `jdbc:`/`file:`/`http:` 等 scheme 与绝对路径 | §2.1 用例 ① ⑤ |
+| M-2 | MEDIUM | **已修复（第二轮补完）** | 值禁 `jdbc:`/`file:`/`http:` 等 scheme 与绝对路径（第一轮）；**外加** D11 承诺的 `CapabilityMetadata.trustedConfigKeys` 从空承诺变成真契约（`effectiveTrustedConfigKeys` 取静态白名单 ∪ 组件声明的并集） | §2.1 用例 ① ⑤、§5 用例 ④ |
 | M-3 | MEDIUM | 已修复 | `HookRegistry.emit` 只接受 `sim.` / `sut.` 前缀（与 `Event` 既有不变式对齐） | §2.3 用例 ④ |
-| M-4 | MEDIUM | **口径修正** | 结果伪造面随认证关闭（未认证无法 POST/DELETE/读 `/assertions`）。但报告提到的"单请求时长上限"**没有**实现——`com.sun.net.httpserver.HttpServer` 根本没有 `setMaxReqTime`（`javap` 实证，见 §2.4）。不写"看起来有上限其实没有"的代码（§12） | §2.1 用例 ②、§2.4 |
-| M-5 | MEDIUM | 已修复 | `sanitizeReason`：绝对路径掩码 + `Bearer xxx` 掩码 + 300 字截断 | §2.1 用例 ① ⑦ |
-| M-6 | MEDIUM | 已修复 | 启动失败即删临时 YAML；`startFromResource` 用后即删；场景收尾删临时文件与 `configOut` | §2.2 用例 ① ② ③ |
-| M-7 | MEDIUM | **口径修正** | 报告字面是"`close()` 释放 stdin/stdout 句柄"。实证：Windows 上"只关流不杀进程"会**永久死锁**（§2.4）。最终口径＝**谁持有句柄谁收摊**：代起形态 `destroy()` + 关流；attach 形态不动任何进程 | §2.2 用例 ④ ⑤ |
-| M-8 | MEDIUM | 已修复 | 500 只回根因摘要，不回内部路径 | §2.1 用例 ⑦ |
+| M-4 | MEDIUM | **降级：非缺陷，已文档化** | 复核推翻第一轮的「已修复」判定：`scrape()` 的副作用**是事实**，但锁方向单一（`MetricsCollector → Host`）、无死锁环、重复抓取得单调累计量不丢数 ⇒ 不当缺陷。口径写入 `docs/METRICS.md` §4（含"别拿 `/metrics` 当探针轮询"的使用建议）。第一轮"未认证读不到 `/metrics`"的结论仍有效，只是它答的不是 M-4 字面问题 | `docs/METRICS.md` §4、§2.1 用例 ② |
+| M-5 | MEDIUM | **已修复（第二轮）** | ~~第一轮误记为「`sanitizeReason`」~~。**审计原文指向 `PostgresContainerStore.appendCredentials:351` 明文拼 `password=`**，且复核发现 **embedded 档同样成立**（`H2Store.java:76` 也把 `jdbcUrl` 送进 `sim.store-started`，而 `store.jdbcUrl` 是场景输入可指定的）。第二轮：两档统一走 `CapabilityMetadata.redactUrlCredentials(...)`；**SUT 连接用的 `jdbcUrlWithCredentials` 保持不变**（掩码只作用于事件流口径）。`sanitizeReason` 继续负责 HTTP 错误体 | §5 用例 ⑤ ⑥、§2.1 用例 ⑦ |
+| M-6 | MEDIUM | **已修复（第二轮）** | ~~第一轮误记为「删临时文件」（那是 L-1）~~。**审计原文指向 `/events` 异常回显**——第二轮三条回读路径都收口：`/events` 失败 → 500 + `sanitizeReason` 摘要（不再静默 200 空流）；`FaultDiagnostics` 对非 `sim.`/`sut.` 命名空间事件**降级为诊断事实**（`sim.diagnostics-unrecognized-event`），不再把内核前缀校验的 `IllegalArgumentException` 冒到 CLI；启动失败路径删临时 YAML 保留 | §5 用例 ⑦、§2.2 用例 ① ③ |
+| M-7 | MEDIUM | **已修复（第二轮）** | ~~第一轮误记为「`close()` 释放管道」~~（那是同一编号的**另一面**，成果保留）。**审计原文指向 `sim.external-process-started` 回显完整命令行（`ExternalSutLauncher.java:141-142`）**——第二轮：载荷改为可诊断摘要（basename + `+N args` + 每参 `i:键=<redacted>`／`i:<N chars, fp xxxxxxxx>`），异常路径同口径。`close()` 口径（代起先 `destroy()` 再关流、attach 不动用户进程）不变 | §2.2 用例 ④ ⑤、§5 用例 ⑧ ⑨ |
+| M-8 | MEDIUM | **已修复（第二轮）** | ~~第一轮报告 §5 曾把该条自我否决，台账跟着记成「诊断回显收敛」~~。**审计原文指向 CI 上传 `**/build/scenarios/**/events.jsonl`**——`ci.yml` 两处 `upload-artifact` 的 `path:` 里确有（第 56、110 行），第二轮删除。诊断/异常回显按 M-5 口径收敛这一条继续保留 | §5 用例 ⑩ |
 | L-1 | LOW | 已修复 | 临时文件失败路径与正常结束路径都删 | §2.2 用例 ① ③ |
 | L-2 | LOW | 已修复 | `FrameConnection` 双重分配：见下"未改"一行；`ReadyProbe` 复用静态 `HttpClient`（原先每次探测泄漏一个连接选择器） | §2.2 用例 ⑥ |
 | L-3 | LOW | 口径修正 | 内核**不**对用户 SUT 线程做 `destroyForcibly`（破坏 §7.3）；改为：内核自己持有的资源强制回收（M-7），并修掉"迟到的 `onStop` 注册永不生效"这一真实缺陷 | §2.2 用例 ⑤、§2.4 |
-| L-4 | LOW | 口径修正 | 不给长连接 worker 设读超时（会误杀正常空闲 worker，取舍记入 D12）；把**确定性**的 FD 泄漏源全部堵死（`ReadyProbe` / `ExternalSutLauncher.close` / `HttpServer` executor） | §2.2 用例 ④ ⑥、§2.1 用例 ⑥ |
+| L-4 | LOW | **口径修正 + 第二轮补点** | 不给长连接 worker 设读超时（会误杀正常空闲 worker，取舍记入 D12）；把**确定性**的 FD 泄漏源全部堵死（`ReadyProbe` / `ExternalSutLauncher.close` / `HttpServer` executor）。**第二个轮补正：报告只点了 worker 侧，`VirtualEngine.java:357-360` 是 SUT 侧同构代码**（首帧 10s 限时 → `setSoTimeout(0)` → 无限期 `conn.read()`），同一取舍、同一理由，但必须进台账 | §2.2 用例 ④ ⑥、§2.1 用例 ⑥ |
 | L-5 | LOW | 已修复 | 4 个已跟踪文件的本机路径/用户名改为占位符；`scripts/duo-inject-demo.sh` 的 `JAVA_HOME` 改为必填 | §2.3 用例 ⑤ |
 | L-6 | LOW | 已修复 | CI 三个 action 全部 pin 到 commit SHA | §2.3 用例 ⑥ |
 | INFO-1 | INFO | 已修复 | 工作区残留物清理 + `.gitignore` 显式封口 | §2.3 用例 ⑦ |
@@ -42,6 +42,17 @@
 双重分配保持原样。理由是它**没有突破任何上限**（`MAX_PAYLOAD_LENGTH` = 1 MiB 在两次分配**之前**
 就已校验），峰值 2 MiB/连接对压测目标（万级 worker）是可接受的常数；改它要动线协议的读写路径，
 属"没有失败证据的重构"，与 §12"改要改在有证据的地方"冲突。已在报告台账里如实标注为未做。
+
+> **第二轮更正（2026-09-20 独立复核之后）**：上面这张表的第一轮版本有 **7 行编号与主题不对应**。
+> 复核逐行读源码（`e8ea3cc` 对照整改后 HEAD）指出：`H-4 / H-5 / M-5 / M-6 / M-7` 的**原始问题
+> 在整改后代码里原样存在**，台账却把"同期做的另一件相邻的好事"记成了它们的落地点
+> （例如 H-5 记成 `EventRecorder` 有界缓冲，而审计原文指向 `ScenarioEngine.recorded`）。
+> `M-8` 则是报告 §5 自我否决、台账跟着记成另一件事。上表的 **H-4/H-5/M-2/M-4/M-5/M-6/M-7/M-8/L-4
+> 五行已按第二轮结果就地更正**（删除线保留第一轮原文，便于对照"当时是怎么记错的"）；
+> 完整叙述与逐行对照见 `docs/security-audit-2026-09-20.md` §7.2。
+> **教训**：台账的"落地点"必须能对着审计原文那句话读出因果，否则就是没修——
+> 用"自己做了的相邻工作"填格，等于用自己的交付物给自己打分。
+> 第二轮全量回归：**406 测 / 0 失败 / 0 错误 / 11 skip**（见 §3）。
 
 ---
 
@@ -93,6 +104,11 @@ Maven 3.9.11（wrapper 自备）；命令均在仓库根执行；无 Docker（`-
 合计：`duo-sim-kernel` 77/77、`duo-sim-scenario` 53/53、`duo-sim-control`（含 examples 内 control 包）30/30。
 
 ### 2.3 事件与指标基数、卫生（H-4 / H-5 / M-3 / L-5 / L-6 / INFO-1）
+
+> ⚠️ 本节标题里的 H-4/H-5 是**第一轮的错位记法**（见 §1 末尾的更正说明）：这里记录的是
+> 「`MetricsCollector` 类型基数上限」与「`EventRecorder` 有界缓冲」——两件事本身都成立、
+> 也都有用，但它们**不是**审计 H-4/H-5 的字面问题。第二轮已按审计原文补齐
+> （H-4＝引擎收摊、H-5＝`ScenarioEngine.recorded` 有界），证据见 §3 第二轮表。
 
 | # | 用例 / 检查 | 断言（要点） | 结果 |
 | --- | --- | --- | --- |
@@ -155,6 +171,26 @@ skip 11 条＝设计门控（容器档 10 = ZK 4 + PostgreSQL 6，无 Docker；�
 
 对比整改前基线（同一命令）：342 测 → **378 测**（新增 36 条安全回归用例），
 `Failures: 0, Errors: 0` 保持不变。
+
+**第二轮（同日，独立复核之后）**：
+
+```
+Tests run: 406, Failures: 0, Errors: 0, Skipped: 11
+BUILD SUCCESS   (9 模块)
+```
+
+第二轮净增 28 条补充回归，锁的都是**审计原文那句话**本身而不是它旁边的代码：
+
+| 编号 | 用例 | 锁住什么 |
+| --- | --- | --- |
+| H-4 | `SecurityRemediationAcceptanceTest.repeatedScenarioStartsRetireThePreviousEngine` | POST/DELETE 三轮后 `host.retiredEnginesClosed() >= 2`（旧引擎真被收摊，不是"引用换了"） |
+| H-5 | `EventRecorderTest.bufferIsBoundedAndOverflowIsCounted` | 溢出条数精确可读、落盘恰为上限条数（引擎侧与录制侧同一上限） |
+| M-2 | `SecurityRemediationAcceptanceTest.componentDeclaredConfigKeysAreAcceptedForExternalInput` | 组件声明的键**必须**被接受；未声明的**仍被拒**；无声明时不得凭空可信 |
+| M-5 | `H2StoreTest.storeStartedEventNeverEchoesCredentials`、`PostgresContainerStoreGuardTest.eventPayloadUrlIsMaskedWhileEndpointKeepsCredentials` | 事件载荷无明文口令；**同时**断言 SUT 连接串仍带凭据（别把可用性一起修没） |
+| M-6 | `FaultDiagnosticsAcceptanceTest.malformedEventStreamIsReportedNotThrown` | 被改坏的事件流降级为诊断事实，不把内核异常冒给用户 |
+| M-7 | `ExternalSutLauncherTest.processStartedEventNeverEchoesRawArgv`、`emptyCommandRedactionIsSafe` | 载荷不含口令/令牌/DSN/路径/位置参数；键名与参数个数保留（可诊断）；摘要可重复 |
+| C-1/H-2 | `SecurityRemediationAcceptanceTest.oversizedUploadsAreRejectedByDeclaredAndActualSize` | 声明超限 → 413；**谎报/chunked 流式**上传也被读侧截断 → 413，且场景仍 `IDLE` |
+| 录制契约 | `EventRecorderTest.jsonLineKeyOrderIsStableAcrossRuns`、`jsonLineIsReadableByTheFixedFieldContract` | 同一事件两次落盘逐字节相同；行仍是 `type/sourceId/timestamp/payload` 四字段契约（嵌套信封会被 Jackson 静默吞掉） |
 
 ---
 

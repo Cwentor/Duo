@@ -9,6 +9,7 @@ import io.duo.sim.scenario.model.Scenario;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,7 +59,8 @@ public final class ScenarioValidator {
      * {@code demo.endpoint.host/port/path} 这类会驱动**出站 HTTP 探针**的键（审计 M-2/H-3：
      * 用外部输入把本机变成 SSRF 跳板），也有直接被当成文件路径写出去的键。控制面收的是
      * **不可信字节**，因此默认拒绝：认识的框架键放行，其余键要组件实现自己声明
-     * （{@code CapabilityMetadata.trustedConfigKeys}），否则校验期失败（不静默）。
+     * （{@code CapabilityMetadata.trustedConfigKeys}，声明即生效：见
+ * {@link #effectiveTrustedConfigKeys}），否则校验期失败（不静默）。
      */
     private static final Set<String> TRUSTED_CONFIG_KEYS = Set.of(
             // 内核通用
@@ -409,12 +411,10 @@ public final class ScenarioValidator {
                         + "' is outside the framework namespace; loading arbitrary classes from"
                         + " external input is not allowed (io.duo.sim.* / com.duo.* only)");
             }
-            // 规则 9：config/capacity 键白名单
-            CapabilityMetadata meta = metadataByNode.get(n.id());
-            Set<String> allowed = new java.util.HashSet<>(TRUSTED_CONFIG_KEYS);
-            if (meta != null) {
-                allowed.addAll(meta.trustedConfigKeys());
-            }
+            // 规则 11：config/capacity 键白名单＝静态白名单 ∪ **本节点 provider 自己声明的键**
+            // （安全审计复核 M-2：声明不生效就等于没声明；见 isTrustedConfigKey 的用例）
+            Set<String> allowed = effectiveTrustedConfigKeys(
+                    metadataByNode.get(n.id()));
             for (var e : n.config().entrySet()) {
                 checkExternalConfigEntry(n, allowed, e.getKey(), e.getValue(), errors);
             }
@@ -424,12 +424,33 @@ public final class ScenarioValidator {
         }
     }
 
+    /**
+     * 生效的可信 config 键集合＝静态白名单 ∪ provider 经
+     * {@link CapabilityMetadata#withTrustedConfigKeys} 声明的键。
+     *
+     * <p>安全审计 2026-09-20 复核 M-2：D11/类注释此前宣称组件可自行扩展白名单，但全仓
+     * 没有任何读取点，是句空承诺。这里把它接上——**声明即可生效**，且声明面是注册期静态
+     * 数据（不是运行期输入），因此不引入新的信任口子。
+     */
+    public static Set<String> effectiveTrustedConfigKeys(CapabilityMetadata meta) {
+        Set<String> allowed = new LinkedHashSet<>(TRUSTED_CONFIG_KEYS);
+        if (meta != null && meta.trustedConfigKeys() != null) {
+            allowed.addAll(meta.trustedConfigKeys());
+        }
+        return allowed;
+    }
+
+    /** 单个键是否被接受（静态白名单 ∪ provider 声明键）。 */
+    public static boolean isTrustedConfigKey(String key, CapabilityMetadata meta) {
+        return key != null && effectiveTrustedConfigKeys(meta).contains(key);
+    }
+
     private static void checkExternalConfigEntry(Scenario.NodeSpec n, Set<String> allowed,
                                                  String key, String value, List<String> errors) {
         if (!allowed.contains(key)) {
             errors.add("node " + n.id() + ": config key '" + key + "' is not accepted for"
                     + " external input (known keys only; the component implementation may"
-                    + " declare more via CapabilityMetadata.trustedConfigKeys)");
+                    + " declare more via CapabilityMetadata.withTrustedConfigKeys)");
         }
         checkConfigPath(n, "config." + key, value, errors);
     }

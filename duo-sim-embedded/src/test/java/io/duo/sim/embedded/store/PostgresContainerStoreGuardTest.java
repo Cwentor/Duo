@@ -191,4 +191,27 @@ class PostgresContainerStoreGuardTest {
         assertEquals("jdbc:postgresql://localhost:32768/duo?sslmode=disable&user=u&password=p", url);
         assertEquals(1, url.chars().filter(ch -> ch == '?').count(), "只允许一个查询串起始符");
     }
+
+    /**
+     * 安全审计 2026-09-20 **复核** M-5：进入**事件流**的那份连接串必须已掩码。
+     *
+     * <p>端点的 {@code jdbcUrlWithCredentials} 是 SUT 连接时**必须**带的凭据——这条不变；
+     * 变的是事件载荷口径：{@code sim.store-started} 会被落盘成 {@code events.jsonl} 并作为
+     * CI artifact 上传，明文口令不能跟着走。本用例纯字符串级，不需要 Docker。
+     */
+    @Test
+    void eventPayloadUrlIsMaskedWhileEndpointKeepsCredentials() {
+        String endpoint = PostgresContainerStore.appendCredentials(
+                "jdbc:postgresql://localhost:32768/duo", "duo", "s3cr3t-p@ss");
+        assertTrue(endpoint.contains("password=s3cr3t-p@ss"),
+                "SUT 连接串必须保留口令（否则 SUT 连不上）: " + endpoint);
+
+        String masked = io.duo.sim.kernel.api.CapabilityMetadata
+                .redactUrlCredentials(endpoint);
+        assertFalse(masked.contains("s3cr3t-p@ss"),
+                () -> "事件载荷泄露了口令（M-5）: " + masked);
+        assertTrue(masked.contains("password=<redacted>"), () -> "掩码形态: " + masked);
+        assertTrue(masked.startsWith("jdbc:postgresql://localhost:32768/duo"),
+                () -> "URL 结构必须保留: " + masked);
+    }
 }

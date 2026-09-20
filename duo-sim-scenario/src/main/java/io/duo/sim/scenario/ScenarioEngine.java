@@ -42,8 +42,23 @@ public final class ScenarioEngine implements AutoCloseable {
     private final Scenario scenario;
     private final ContractRegistry registry;
     private final SimpleEventBus bus = new SimpleEventBus();
-    /** 事件流（多线程写入：SUT sink / 时间线线程 / 门面 watch）→ 必须线程安全。 */
-    private final List<Event> recorded = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /**
+     * 内存事件流（多线程写入：SUT sink / 时间线线程 / 门面 watch）→ 必须线程安全。
+     *
+     * <p><b>有界 + O(1) 追加</b>（安全审计 2026-09-20 复核 H-5）：早先用
+     * {@code CopyOnWriteArrayList} 记录，每次 {@code add} 都整表复制 ⇒ 单场景 O(n²)，
+     * 万级 worker 的百万级事件会把控制面拖垮；且**无上限**。现改为默认同步的
+     * {@link ArrayList} 加显式锁（追加 O(1)、读路径 O(1) 取下标），并复用
+     * {@link EventRecorder#MAX_BUFFERED_EVENTS} 作为同一道内存闸门——事件流本就要进
+     * 有界录制缓冲，内存流再单独放一个更大的上限只会让"谁先 OOM"不可预期。
+     * 超出后停止累积并计数，经 {@link #droppedEvents()} / 告警显式上报（§12 不静默）。
+     *
+     * <p>两道门的宽度一致 ⇒ 同一份事件在两个接收端**要么都留、要么都丢**，
+     * 不会出现"录制说没有、内存说有"的分叉。
+     */
+    private final List<Event> recorded = new ArrayList<>();
+    private final Object recordedLock = new Object();
+    private long recordedDropped;
     private final ComponentManager manager = new ComponentManager();
     /** 注入事件经 bus 汇流（与内存流/录制共用单一订阅路径，T21）。 */
     private final ScenarioRuntime runtime = new ScenarioRuntime(bus::publish);
@@ -61,6 +76,22 @@ public final class ScenarioEngine implements AutoCloseable {
     /** 输入信任档（默认＝本机文件/classpath 配置）。 */
     private InputPolicy inputPolicy = InputPolicy.CONFIG;
     private final EventRecorder recorder;
+    /**
+     * 录制世代号（控住 {@code build/scenarios/<name>/events.jsonl} 的覆盖权限）。
+     *
+     * <p>同名场景重跑时，新旧引擎写**同一个文件**；控制面顶替旧引擎是异步收摊的（H-4），
+     * 若旧引擎的 flush 落在新的之后，就会把新录制整份覆盖成旧的。故引擎保留
+     * {@link java.util.function.LongSupplier}（由宿主提供"当前活动世代"），写入前比对，
+     * 过期即放弃落盘并告警。默认供应器恒返回 {@link #epoch} ⇒ 单引擎场景行为不变。
+     */
+    private java.util.function.LongSupplier epochGuard = this::currentEpoch;
+    private final long epoch = EPOCHS.incrementAndGet();
+    private static final java.util.concurrent.atomic.AtomicLong EPOCHS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    private long currentEpoch() {
+        return epoch;
+    }
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
@@ -68,8 +99,43 @@ public final class ScenarioEngine implements AutoCloseable {
         // 录制与内存流同一订阅点（构造即订阅）：保证两条流事件数一致（T21）
         this.recorder = EventRecorder.to(java.nio.file.Path.of("build", "scenarios",
                 scenario.name(), "events.jsonl"));
-        bus.subscribe(recorded::add);
+        bus.subscribe(this::recordEvent);
         bus.subscribe(recorder::onEvent);
+    }
+
+    /** 本引擎的录制世代号（宿主用它做"现任/历史"判定）。 */
+    public long epoch() {
+        return epoch;
+    }
+
+    /**
+     * 绑定宿主的活动世代供应器（控制面用）：返回的号 ≠ {@link #epoch()} 时，本引擎已不是
+     * 现任场景，不再拥有覆盖录制文件的权限。
+     */
+    public ScenarioEngine withEpochGuard(java.util.function.LongSupplier activeEpoch) {
+        this.epochGuard = java.util.Objects.requireNonNull(activeEpoch, "activeEpoch");
+        return this;
+    }
+
+    /**
+     * 内存事件流追加（唯一写入口）。达到 {@link EventRecorder#MAX_BUFFERED_EVENTS} 后停止累积
+     * 并计数——静默丢事件会让 {@code /events} 与断言评估看到的事件流"缺一块却不说话"。
+     */
+    private void recordEvent(Event e) {
+        synchronized (recordedLock) {
+            if (recorded.size() >= EventRecorder.MAX_BUFFERED_EVENTS) {
+                recordedDropped++;
+                return;
+            }
+            recorded.add(e);
+        }
+    }
+
+    /** 因内存流上限而被丢弃的事件数（0 ＝ 未溢出）。 */
+    public long droppedEvents() {
+        synchronized (recordedLock) {
+            return recordedDropped;
+        }
     }
 
     /**
@@ -513,7 +579,16 @@ public final class ScenarioEngine implements AutoCloseable {
     }
 
     public List<Event> events() {
-        return List.copyOf(recorded);
+        synchronized (recordedLock) {
+            return List.copyOf(recorded);
+        }
+    }
+
+    /** 事件数（免整表拷贝的自省入口；{@code /status} 的 {@code events} 用它）。 */
+    public int eventCount() {
+        synchronized (recordedLock) {
+            return recorded.size();
+        }
     }
 
     public List<String> warnings() {
@@ -580,8 +655,24 @@ public final class ScenarioEngine implements AutoCloseable {
         }
         bus.publish(Event.sim("sim.scenario-finished", scenario.name(), Map.of()));
         started = false;
+        long memoryDropped = droppedEvents();
+        if (memoryDropped > 0) {
+            // 内存流与录制缓冲同一道闸门：这里溢出说明事件流被截断，必须说出来（§12）
+            String hint = "in-memory event stream limit reached: " + memoryDropped
+                    + " events dropped (same limit as " + EventRecorder.MAX_BUFFERED_EVENTS
+                    + "; /events and assertion review see a truncated stream)";
+            warnings.add(hint);
+            result.recordWarning(hint);
+        }
         if (recorder != null) {
-            recorder.flush(); // T21：录制落盘（审查材料）
+            // 录制的覆盖权限归"现任"引擎：过期引擎放弃写盘，避免抹掉新场景的录制（H-4 复核）
+            if (!recorder.flushIfCurrent(epochGuard, epoch)) {
+                String hint = "event recording not written: this scenario was superseded by a "
+                        + "newer one running with the same name (build/scenarios/"
+                        + scenario.name() + "/events.jsonl belongs to the current run)";
+                warnings.add(hint);
+                result.recordWarning(hint);
+            }
             if (recorder.droppedEvents() > 0) {
                 // 有界缓冲的可见代价（审计 H-4 / §12）：丢了多少必须说出来，不静默
                 String hint = "event recording buffer limit reached: "
@@ -612,13 +703,17 @@ public final class ScenarioEngine implements AutoCloseable {
             result.recordAssertion("<parse>", false, e.getMessage());
             return;
         }
-        List<Event> snapshot = List.copyOf(recorded);
+        List<Event> snapshot = events();
         for (var a : assertions) {
             var outcome = a.evaluate(snapshot);
             result.recordAssertion(outcome.name(), outcome.passed(), outcome.detail());
         }
     }
 
+    /**
+     * 关闭引擎。契约：{@link #stop()} 幂等，{@link #close()} 亦幂等——控制面在场景启动前失败
+     * 或宿主被关闭时会重复调用（安全审计 2026-09-20 复核 H-4：旧引擎必须能安全收摊）。
+     */
     @Override
     public void close() {
         stop();

@@ -2,6 +2,8 @@ package io.duo.sim.examples.acceptance;
 
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.rest.RestControlServer;
+import io.duo.sim.kernel.api.CapabilityMetadata;
+import io.duo.sim.scenario.ScenarioValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -160,6 +162,112 @@ class SecurityRemediationAcceptanceTest {
         try (var s = Files.list(Path.of(dir))) {
             return s.filter(p -> ScenarioHost.TEMP_FILE_PREFIXES.stream()
                     .anyMatch(prefix -> p.getFileName().toString().startsWith(prefix))).count();
+        }
+    }
+
+    // ---- 2026-09-20 独立复核后的补充验收（H-4 / M-2 / M-6）----
+
+    /**
+     * **H-4**：反复启动/停止不得留下未收摊的引擎。
+     *
+     * <p>复核发现整改台账把 H-4 记在了 {@code MetricsCollector} 的类型基数上，而原始问题
+     * ——{@code ScenarioHost.start()} 直接覆写 {@code engine} 引用、旧引擎没人 {@code close()}
+     * ——一字未改。这条用例走**真实的替换路径**（POST → DELETE → POST）：每次成功启动都会
+     * 顶替掉上一个引擎，断言的是**可观测的收摊计数**，而不是"引用换没换"。
+     */
+    @Test
+    void repeatedScenarioStartsRetireThePreviousEngine(@TempDir Path tmp) throws Exception {
+        String yaml = Files.readString(Path.of(getClass()
+                .getResource("/scenarios/m3-inject-demo.yaml").toURI()), StandardCharsets.UTF_8);
+        try (ScenarioHost host = new ScenarioHost();
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN,
+                     io.duo.sim.control.rest.TestTokens.TOKEN)) {
+            int actual = server.start(0);
+            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+
+            for (int i = 0; i < 3; i++) {
+                var start = http.send(io.duo.sim.control.rest.TestTokens
+                                .request("http://127.0.0.1:" + actual + "/scenario")
+                                .header("Content-Type", "text/yaml")
+                                .POST(HttpRequest.BodyPublishers.ofString(yaml)).build(),
+                        HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, start.statusCode(), start.body());
+                http.send(io.duo.sim.control.rest.TestTokens
+                                .request("http://127.0.0.1:" + actual + "/scenario")
+                                .DELETE().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                Thread.sleep(200); // 停止在后台虚拟线程里做（stopWithoutAwait 语义）
+            }
+            // 第 2、3 次启动各自顶替掉一个未收摊的引擎；收摊也在后台线程里，给它一个窗口
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (System.currentTimeMillis() < deadline && host.retiredEnginesClosed() < 2) {
+                Thread.sleep(100);
+            }
+            assertTrue(host.retiredEnginesClosed() >= 2,
+                    () -> "被顶替的旧引擎没有被收摊（H-4 泄漏路径仍在）: "
+                            + host.retiredEnginesClosed());
+        }
+    }
+
+    /**
+     * **M-2**：{@code CapabilityMetadata.trustedConfigKeys} 必须**真的**生效。
+     *
+     * <p>复核的原始结论是"全仓零实现、D11 是空承诺"。这条用例把承诺变成契约：
+     * 组件在注册期声明的键，外部输入档下必须被接受。纯函数级（不启进程、不连网），
+     * 因此不依赖任何环境。
+     */
+    @Test
+    void componentDeclaredConfigKeysAreAcceptedForExternalInput() {
+        var meta = CapabilityMetadata.inProcessDirect(java.util.Set.of())
+                .withTrustedConfigKeys(java.util.Set.of("custom.tuning", "custom.batchSize"));
+        assertTrue(ScenarioValidator.isTrustedConfigKey("custom.tuning", meta),
+                "组件声明的可信键必须真的被校验器接受（否则 D11 是空承诺）");
+        // 静态白名单里的键照旧生效
+        assertTrue(ScenarioValidator.isTrustedConfigKey("ready.type", meta));
+        // 未声明的键仍然被拒（逃生舱不是"全放行"）
+        assertFalse(ScenarioValidator.isTrustedConfigKey("etc.passwd", meta));
+        assertFalse(ScenarioValidator.isTrustedConfigKey("custom.tuning", null),
+                "没有组件声明时，额外键不得凭空可信");
+    }
+
+    /**
+     * **C-1 / H-2**：请求体上限必须走**流式截断**，而不是"先声明、再 readAllBytes"。
+     *
+     * <p>审计期 {@code readAllBytes()} 无上限。这里不看代码看行为：声明 1 MiB 之上必须被拒；
+     * 而谎报小 {@code Content-Length} 的 chunked 上传也必须被**读侧**截断（否则守卫只是
+     * 装饰——攻击者自己写长度即可）。后者用 413 与实际耗时/内存表现共同证明。
+     */
+    @Test
+    void oversizedUploadsAreRejectedByDeclaredAndActualSize() throws Exception {
+        try (ScenarioHost host = new ScenarioHost();
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN,
+                     io.duo.sim.control.rest.TestTokens.TOKEN)) {
+            int actual = server.start(0);
+            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            String url = "http://127.0.0.1:" + actual + "/scenario";
+
+            // ① 声明超限：早失败（连体都不读）
+            byte[] huge = new byte[RestControlServer.MAX_BODY_BYTES + 1];
+            java.util.Arrays.fill(huge, (byte) 'a');
+            var declared = http.send(io.duo.sim.control.rest.TestTokens.request(url)
+                            .header("Content-Type", "text/yaml")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(huge)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(413, declared.statusCode(),
+                    () -> "声明超限必须 413: " + declared.statusCode() + " " + declared.body());
+
+            // ② 谎报长度 + chunked：读侧必须截断（HTTP/2 无 Content-Length 时走这条）
+            var chunked = http.send(io.duo.sim.control.rest.TestTokens.request(url)
+                            .header("Content-Type", "text/yaml")
+                            .POST(HttpRequest.BodyPublishers.ofInputStream(() ->
+                                    new java.io.ByteArrayInputStream(huge))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(413, chunked.statusCode(),
+                    () -> "无界流式上传必须被读侧截断: " + chunked.statusCode() + " "
+                            + chunked.body());
+            assertEquals("IDLE", host.status().get("state"), "超限上传不得启动任何场景");
         }
     }
 

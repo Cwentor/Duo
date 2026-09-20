@@ -136,14 +136,100 @@ public final class ExternalSutLauncher implements AutoCloseable {
             process = pb.start();
         } catch (IOException e) {
             throw new ComponentException("cannot start external SUT process: "
-                    + String.join(" ", command), e);
+                    + redactedCommand(), e);
         }
         eventSink.accept(Event.sim("sim.external-process-started", sutId,
-                Map.of("pid", process.pid(), "command", String.join(" ", command))));
+                Map.of("pid", process.pid(), "command", redactedCommand())));
         Thread pump = Thread.ofVirtual().name("duo-external-stdout-" + sutId)
                 .start(this::pumpStdout);
         pumpThreads.add(pump);
         Thread.ofVirtual().name("duo-external-exit-" + sutId).start(this::watchExit);
+    }
+
+    /** 事件载荷里 argv 的回显上限（安全审计 2026-09-20 复核 M-7）。 */
+    public static final int MAX_ECHOED_ARGV_CHARS = 200;
+
+    /**
+     * 可安全回显的命令行（安全审计 2026-09-20 复核 M-7）。
+     *
+     * <p>审计期把**完整 argv**（{@code String.join(" ", command)}）写进
+     * {@code sim.external-process-started} ⇒ 事件流 ⇒ {@code events.jsonl} ⇒ CI artifact：
+     * 场景 YAML 里常见的 {@code --password=…}、{@code --token=…}、JDBC 连接串会整条外泄，
+     * 而事件流是被上传、被回读、被 diff 的审查材料。
+     *
+     * <p>口径（"谁持有谁收摊"的同类推理）：**进程自己知道完整命令行，事件流不必要**。
+     * 故只保留「可执行文件 + 参数个数 + 每个参数的安全摘要」：可执行文件按 basename 保留
+     * （诊断上真正有用的是"起了什么"），参数一律不回显字面值，凭据形状的参数额外标注。
+     */
+    private String redactedCommand() {
+        return commandForEvent(command);
+    }
+
+    /**
+     * 命令行 → 可安全回显的摘要（{@code sim.external-process-started} 的载荷口径）。
+     *
+     * <p>包级可见是为了让回归用例**不启动进程**也能锁住这条口径——审计 M-7 的问题正是
+     * "载荷里有什么"，不是"进程起没起"。
+     */
+    static String commandForEvent(List<String> command) {
+        if (command.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(basename(command.get(0))).append(" +")
+                .append(command.size() - 1).append(" args");
+        for (int i = 1; i < command.size(); i++) {
+            sb.append(" | ").append(i).append(':').append(argDigest(command.get(i)));
+        }
+        String out = sb.toString();
+        return out.length() > MAX_ECHOED_ARGV_CHARS
+                ? out.substring(0, MAX_ECHOED_ARGV_CHARS) + "…" : out;
+    }
+
+    /** 单个参数的可回显形态：名字段保留、值段不回显；不像键值对的一律只给长度与指纹。 */
+    private static String argDigest(String arg) {
+        if (arg == null || arg.isEmpty()) {
+            return "<empty>";
+        }
+        boolean looksLikeFlag = arg.startsWith("-");
+        int eq = arg.indexOf('=');
+        if (looksLikeFlag && eq > 0) {
+            String name = arg.substring(0, eq);
+            return isSecretName(name)
+                    ? name + "=<redacted>" : name + "=<" + arg.length() + " chars>";
+        }
+        if (looksLikeFlag) {
+            return arg; // 纯开关（--verbose 之类）不含值，回显本身不泄露
+        }
+        return "<" + arg.length() + " chars, fp " + fingerprint(arg) + ">";
+    }
+
+    /** 参数名是否指示凭据（命中即整值掩码，不回显长度/指纹）。 */
+    private static boolean isSecretName(String name) {
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        return n.contains("pass") || n.contains("secret") || n.contains("token")
+                || n.contains("key") || n.contains("credential") || n.contains("pwd");
+    }
+
+    /** 非凭据参数的内容指纹（同一参数值 ⇒ 同一指纹，可跨运行比对而不泄露内容）。 */
+    private static String fingerprint(String value) {
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(8);
+            for (int i = 0; i < 4; i++) {
+                sb.append(String.format("%02x", hash[i]));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return "?"; // SHA-256 是 JDK 必备算法；真缺失时宁可标注未知，也不回显原文
+        }
+    }
+
+    private static String basename(String path) {
+        String p = path.replace('\\', '/');
+        int slash = p.lastIndexOf('/');
+        return slash < 0 ? p : p.substring(slash + 1);
     }
 
     /** stdout 兜底途径：逐行找行首的 {@code duo.endpoint.<contract>=<endpoint>}（容忍首尾空白）。 */

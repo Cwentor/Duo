@@ -304,6 +304,52 @@ class ExternalSutLauncherTest {
         assertEquals(expected[1], actual[1]);
     }
 
+    /**
+     * 安全审计 2026-09-20 **复核** M-7：{@code sim.external-process-started} 不得回显完整命令行。
+     *
+     * <p>事件流会被落盘成 {@code events.jsonl} 并作为 CI artifact 上传、被回读、被 diff：
+     * 审计期把整个 argv（含 {@code --password=…}、{@code --token=…}、JDBC 连接串）原样写进去，
+     * 等于把凭据发布到构建产物里。这里用**不启动进程**的方式直接验载荷口径。
+     */
+    @Test
+    void processStartedEventNeverEchoesRawArgv() {
+        String password = "s3cr3t-p@ss";
+        String token = "tok_live_deadbeef";
+        String dsn = "jdbc:postgresql://db.internal:5432/app?user=duo&password=" + password;
+        List<String> cmd = List.of("java", "-jar", "-Dduo.sut=/opt/duo/secret-sut.jar",
+                "--password=" + password,
+                "--token=" + token,
+                "--spring.datasource.url=" + dsn,
+                "--config=/opt/duo/secret-config.yaml",
+                "positional-arg");
+
+        String echoed = ExternalSutLauncher.commandForEvent(cmd);
+
+        for (String secret : List.of(password, token, dsn, "/opt/duo/secret-config.yaml",
+                "positional-arg")) {
+            assertFalse(echoed.contains(secret),
+                    () -> "事件载荷回显了命令行内容 '" + secret + "': " + echoed);
+        }
+        // 可执行文件与参数**个数**保留（诊断上真正有用的是"起了什么、几个参数"）
+        assertTrue(echoed.startsWith("java +7 args"), () -> "命令摘要: " + echoed);
+        // 不含值的开关原样保留（不泄露任何东西，且是诊断信息）
+        assertTrue(echoed.contains("1:-jar"), () -> "命令摘要: " + echoed);
+        // 参数键名保留：审查者要能看出"这里本来有个口令"
+        assertTrue(echoed.contains("3:--password=<redacted>"), () -> "命令摘要: " + echoed);
+        assertTrue(echoed.contains("4:--token=<redacted>"), () -> "命令摘要: " + echoed);
+        // 非凭据参数的路径值不回显，但给出长度与指纹（同类值可跨运行比对）
+        assertTrue(echoed.contains("6:--config=<36 chars>"), () -> "命令摘要: " + echoed);
+        assertTrue(echoed.matches(".*7:<14 chars, fp [0-9a-f]{8}>.*"), () -> "命令摘要: " + echoed);
+        assertTrue(ExternalSutLauncher.commandForEvent(cmd).equals(echoed),
+                "同一命令行的摘要必须可重复（指纹稳定）");
+    }
+
+    /** 空命令行不得抛异常（构造期参数缺失时的兜底）。 */
+    @Test
+    void emptyCommandRedactionIsSafe() {
+        assertEquals("", ExternalSutLauncher.commandForEvent(List.of()));
+    }
+
     private static String types(List<Event> events) {
         return events.stream().map(Event::type).distinct().toList().toString();
     }

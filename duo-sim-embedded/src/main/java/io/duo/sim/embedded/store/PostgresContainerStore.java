@@ -1,5 +1,6 @@
 package io.duo.sim.embedded.store;
 
+import io.duo.sim.kernel.api.CapabilityMetadata;
 import io.duo.sim.kernel.api.ComponentContext;
 import io.duo.sim.kernel.api.ComponentException;
 import io.duo.sim.kernel.api.ComponentId;
@@ -171,8 +172,11 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
                 }
             }
             running = true;
+            // 安全审计 2026-09-20 复核 M-5：事件流是跨模块公开面（→ JSONL → CI artifact），
+            // 完整连接串（含 user/password）不得进事件载荷。结构保留、凭据值掩码。
             fire(Event.sim("sim.store-started", id.value(),
-                    Map.of("jdbcUrl", jdbcUrl, "kind", KIND_CONTAINER, "image", image)));
+                    Map.of("jdbcUrl", CapabilityMetadata.redactUrlCredentials(jdbcUrl),
+                            "kind", KIND_CONTAINER, "image", image)));
         } catch (Exception e) {
             // 启动失败不留半开容器（与 ZookeeperContainerRegistry.stopBackend 的尽力而为一致）
             stopContainerQuietly();

@@ -566,20 +566,20 @@ CI 的 `upload-artifact`（`.github/workflows/ci.yml:52-54`、`106-108`）就会
 | H-1 | HIGH | **已修复** | 令牌在自定义头（跨站"简单请求"无法携带）＋ `Origin`/`Referer` 必须回环 ＋ `Host` 必须回环字面量（原始 socket 用例验证） | `crossSiteOriginAndForeignHostAreForbidden` |
 | H-2 | HIGH | **已修复** | `Content-Length` 上限 1 MiB ＋ 按 `MAX+1` 流式截断（防谎报/chunked）→ 413；外部输入档拓扑/实例/时间线/断言上限 | `oversizedBodyIsRejectedWith413`、`externalInputCannotLaunchProcessOrReachOutsidePaths`（规模分支） |
 | H-3 | HIGH | **已修复** | 同 C-1：外部输入档禁止派生进程（SSRF/命令执行跳板）；`config` 值拒绝 URL scheme 与绝对路径 | 同上 |
-| H-4 | HIGH | **已修复** | `MetricsCollector` 类型基数上限 256 ＋ 超长键截断 ＋ `__other__` 溢出桶（总量恒等） | `MetricsEndpointAcceptanceTest` 既有断言不变；上限逻辑集中在 `countByType`（单点可测） |
-| H-5 | HIGH | **已修复** | `ScenarioHost.stopWithoutAwait()`（`DELETE /scenario` 不再阻塞在 SUT 收尾上）；`RestControlServer.close()` 关闭 executor | `RestControlServerTest.healthAndFullLifecycleRoundTrip`（DELETE 立即 200） |
+| H-4 | HIGH | **已修复（第二轮；第一轮台账串号，见 §7.2）** | `ScenarioHost.start()` 顶替旧引擎时**先收摊再赋值**：引用立即摘除（后续请求不再看到旧引擎），`close()` 在后台虚拟线程 `duo-host-retire` 里执行，收摊计数 `retiredEnginesClosed()` 可观测；收摊失败/超 30 s 均上抛告警（§12 不静默） | `duo-sim-examples`：`SecurityRemediationAcceptanceTest.repeatedScenarioStartsRetireThePreviousEngine`（POST/DELETE 三轮后计数 ≥2）。第一轮落在 `MetricsCollector` 基数上限上的那条**仍然保留**，但它治的是另一个问题（事件类型基数，见 §7.2） |
+| H-5 | HIGH | **已修复（第二轮；第一轮台账串号，见 §7.2）** | `ScenarioEngine.recorded` 由无界 `CopyOnWriteArrayList` 改为**有锁 ArrayList + 上限**（与 `EventRecorder.MAX_BUFFERED_EVENTS` 同一个 50 万），追加 O(1)；溢出**计数** `droppedEvents()` 并在 `stop()` 上抛告警；写侧单点 `recordEvent(Event)`；`events()` 返回同步快照 | `EventRecorderTest.bufferIsBoundedAndOverflowIsCounted`（录制侧）、`ScenarioEngineCommandTest` 既有用例。审计期 `:46/:71/:516` 的三行已全部改掉 |
 | M-1 | MEDIUM | **已修复** | 外部输入档 config 键白名单（未知键校验期失败）+ 配置值禁绝对路径/URL | `externalInputCannotLaunchProcessOrReachOutsidePaths`（unknown key 分支） |
-| M-2 | MEDIUM | **已修复** | 同上：外部输入不得把本机变成任意路径/任意后端的跳板（`jdbc:`/`file:` 等 scheme 直接拒绝） | 同上 |
+| M-2 | MEDIUM | **已修复（第二轮补完）** | 值禁 `jdbc:`/`file:`/`http:` 等 scheme 与绝对路径（第一轮成果）**之外**，D11 承诺的"组件可扩展逃生舱"`CapabilityMetadata.trustedConfigKeys` 从**空承诺**变成真契约：`ScenarioValidator.effectiveTrustedConfigKeys(meta)` 取「静态白名单 ∪ 组件声明」并集，`isTrustedConfigKey` 用同一并集判定（声明的键真的被接受，未声明的仍被拒） | `SecurityRemediationAcceptanceTest.componentDeclaredConfigKeysAreAcceptedForExternalInput`、`externalInputCannotLaunchProcessOrReachOutsidePaths`（scheme/绝对路径分支） |
 | M-3 | MEDIUM | **已修复** | `HookRegistry.emit` 只接受 `sim.` / `sut.` 前缀（与 `Event` 既有不变式一致），`duo.` 与任意类型在校验期失败 | `duo-sim-scenario` 单测（见验收记录 §2） |
-| M-4 | MEDIUM | **已修复** | 结果伪造面随认证一并关闭（未认证无法 `POST /scenario`、无法 `DELETE`、无法读 `/assertions`） | `everyEndpointRequiresTheBearerToken` |
-| M-5 | MEDIUM | **已修复** | 报错脱敏：`sanitizeReason` 掩码本机绝对路径/临时随机路径；令牌只进请求头，`serve` 不回显令牌 | `RestControlServerTest`（错误体不含路径）；验收记录 §2 |
-| M-6 | MEDIUM | **已修复** | 启动失败即删除临时 YAML；`startFromResource` 用后即删；已启动场景的临时文件与 `configOut` 在 `ScenarioHost.close()` 清理 | 验收记录 §2（临时文件计数断言） |
-| M-7 | MEDIUM | **已修复** | SUT 进程输出改有界环形缓冲（不再无界堆积）；`close()` 对**代起**形态 `destroy()` ＋ 释放 stdin/stdout/stderr，对 **attach** 形态不动用户进程 | `duo-sim-kernel` 单测（见验收记录 §2）；死锁机理与口径见 §7.1 / D12 |
-| M-8 | MEDIUM | **已修复** | 诊断/异常回显按同 M-5 口径收敛（500 只回根因摘要，不回内部路径） | 同上 |
+| M-4 | MEDIUM | **降级（非缺陷，已文档化）** | 复核推翻第一轮的"已修复"判定：`scrape()` 确实带副作用（读取即推进），但**锁方向单一**（`MetricsCollector → Host`），不存在死锁环；重复 `scrape()` 得到的是单调累计量，不丢数。真正的口径写在 `docs/METRICS.md` §4 | `docs/METRICS.md` §4；第一轮"结果伪造面随认证关闭"仍然成立，但它答的不是 M-4 的字面问题 |
+| M-5 | MEDIUM | **已修复（第二轮；第一轮台账串号，见 §7.2）** | 两档都收口：`PostgresContainerStore` 与 `H2Store` 的 `sim.store-started` 载荷经 `CapabilityMetadata.redactUrlCredentials(...)` 掩码（`password=…`/`user=…` → `<redacted>`，并额外按字面值替换）；**SUT 连接用的 `jdbcUrlWithCredentials` 保持不变**（掩码只作用于事件流口径）。`sanitizeReason` 继续负责 HTTP 错误体 | `duo-sim-embedded`：`H2StoreTest.storeStartedEventNeverEchoesCredentials`、`PostgresContainerStoreGuardTest.eventPayloadUrlIsMaskedWhileEndpointKeepsCredentials`（纯字符串，无需 Docker） |
+| M-6 | MEDIUM | **已修复（第二轮；第一轮台账串号，见 §7.2）** | 三条回读路径都收口：①`/events` 读取失败 → 500 + `sanitizeReason` 摘要（不再静默 200 空流）；②`FaultDiagnostics` 对非 `sim.`/`sut.` 命名空间的事件**降级为诊断事实**（`sim.diagnostics-unrecognized-event`），不再让内核前缀校验把 `IllegalArgumentException` 冒到 CLI；③启动失败路径删临时 YAML 仍然保留 | `duo-sim-examples`：`FaultDiagnosticsAcceptanceTest.malformedEventStreamIsReportedNotThrown`、`SecurityRemediationAcceptanceTest.controlPlaneTempScenarioFileIsRemovedAfterFinish` |
+| M-7 | MEDIUM | **已修复（第二轮；第一轮台账串号，见 §7.2）** | `sim.external-process-started` 的 `command` 字段不再回显完整 argv：改为**可诊断的摘要**（basename + `+N args` + 每参 `i:键=<redacted>`／`i:<N chars, fp xxxxxxxx>`），`--password`/`--token`/`--secret` 等键名保留、值一律掩码；异常路径同口径。`close()` 的句柄收摊口径（第一轮成果）继续保留 | `duo-sim-kernel`：`ExternalSutLauncherTest.processStartedEventNeverEchoesRawArgv`、`emptyCommandRedactionIsSafe`、`closeDestroysSpawnedProcessAndReleasesPipes` |
+| M-8 | MEDIUM | **已修复（第二轮）** | CI 的两处 `upload-artifact` 的 `path:` 里删掉了 `**/build/scenarios/**/events.jsonl`（第 56 行与第 110 行）——录制物是**内容敏感**的运行产物，不该随 artifact 归档；诊断/异常回显按 M-5 口径收敛这一条继续保留 | `.github/workflows/ci.yml` 复核（`git grep "events.jsonl" .github/` 无 artifact 路径命中） |
 | L-1 | LOW | **已修复** | 临时文件 `finally` 删除（`duo-rest-*.yaml` 的失败路径与正常结束路径都清） | 验收记录 §2 |
 | L-2 | LOW | **已修复** | `ReadyProbe` 复用静态 `HttpClient`（原先每次探测泄漏一个连接选择器 FD） | `duo-sim-kernel` 单测（见验收记录 §2） |
 | L-3 | LOW | **已修复（口径修正）** | 报告字面建议是"10s 宽限后 `destroyForcibly`"。复核后**部分不照字面实现**：该处线程/进程归用户 SUT，内核强行格杀会破坏 §7.3「生命周期归用户」；但内核**自己持有**的资源已强制回收（M-7：代起形态 `destroy()` + 释放管道 + 场景结束时 `ExternalSutLauncher.close()`）。另报告指出的 `:123-141` 内 `if (stopHandler != null)` 使迟到的 `onStop` 注册永不生效——属真实缺陷，改法是把"SUT 已退出"显式记为终态并让迟到注册立即执行一次停止回调 | `SutLauncherTest` 既有用例；理由见 §7.1 / D12 |
-| L-4 | LOW | **已修复（部分，含取舍）** | `VirtualScheduler` 的"注册后静默"仍不设读超时——`:293 setSoTimeout(0)` 是长连接 worker 的设计前提，设超时会误杀正常空闲 worker（该取舍写入 D12）。**确定性泄漏的那几处已全部堵死**：`ReadyProbe` 每次探测新建 `HttpClient`（连接选择器 FD）→ 复用静态客户端；`ExternalSutLauncher.close()` 空实现（SUT 管道 FD）→ 见 M-7；`HttpServer` 外部 executor 不关 → `RestControlServer.close()` 显式 shutdown。工作区踩到过的"长跑 JVM FD 单调增长"即来自这三处 | `ReadyProbe`/`ExternalSutLauncher`/`RestControlServerTest`；`docs/DECISIONS.md` D12 |
+| L-4 | LOW | **已修复（部分，含取舍）** | `VirtualScheduler` 的"注册后静默"仍不设读超时——`:293 setSoTimeout(0)` 是长连接 worker 的设计前提，设超时会误杀正常空闲 worker（该取舍写入 D12）。**确定性泄漏的那几处已全部堵死**：`ReadyProbe` 每次探测新建 `HttpClient`（连接选择器 FD）→ 复用静态客户端；`ExternalSutLauncher.close()` 空实现（SUT 管道 FD）→ 见 M-7；`HttpServer` 外部 executor 不关 → `RestControlServer.close()` 显式 shutdown。工作区踩到过的"长跑 JVM FD 单调增长"即来自这三处。**第二轮补正：报告只点了 worker 侧，实际还有第三处同构代码在 SUT 侧**——`VirtualEngine.java:357-360`（首帧 10s 限时 → `setSoTimeout(0)` → 无限期 `conn.read()`），与 worker 侧同一取舍、同一理由，故同样**不设读超时**，但必须进台账（见 §7.2） | `ReadyProbe`/`ExternalSutLauncher`/`RestControlServerTest`；`docs/DECISIONS.md` D12 |
 | L-5 | LOW | **已修复** | 文档/验收记录里的本机路径改为占位符（`$env:JAVA_HOME`）；`docs/DECISIONS.md` 的**历史决策原文**予以保留并就地加注（台账不改史） | `git grep` 无本机 JDK 路径（见验收记录 §2） |
 | L-6 | LOW | **已修复** | CI 三个 action 全部 pin 到 commit SHA（`ci.yml`） | `ci.yml` 复核 |
 | INFO-1 | INFO | **已修复** | 工作区残留物清理（同 L-3）：`hs_err_pid*.log` / `replay_pid*.log` 全数删除并在 `.gitignore` 封口 | `git status --porcelain` 无残留物 |
@@ -610,4 +610,95 @@ H-3/M-7 一审只看到"`close()` 故意为空 ⇒ 句柄不释放"。整改时�
 `attachModeCloseLeavesUserProcessAlone`（后者用真实 `ServerSocket` 证明 attach 形态下
 `close()` 不关用户进程）。这条同时解释了 L-3 的"10s 宽限"为何不该照字面加 `destroyForcibly`
 ——该处线程归用户进程，不是内核自留的资源。
+
+---
+
+### 7.2 第二轮整改（2026-09-20 独立复核之后）
+
+**触发**：仓库所有者对 §7 台账做了独立复核（记录见 `docs/security-audit-2026-09-20-recheck.md`）。
+20 条里 16 条确认、3 条部分确认、1 条（L-4）事实成立但漏点。**最重要的一条是台账自身的可信度**：
+
+#### (1) 7 行编号与主题不对应，其中 5 条的原始问题一字未改
+
+复核逐行读源码（`e8ea3cc` 对照整改后 HEAD）后指出：`H-4 / H-5 / M-5 / M-6 / M-7` 的**原始问题在
+整改后代码里原样存在**，台账却把相邻的、同期做的另一件事记成了它们的落地点：
+
+| 编号 | 审计原文指向 | 第一轮台账写成 | 第二轮实测 |
+|---|---|---|---|
+| H-5 | `ScenarioEngine.recorded` 无界 `CopyOnWriteArrayList`（`:46/:71/:516`） | `EventRecorder` 有界缓冲 | 三行与 `e8ea3cc` **完全一致** ⇒ 现已改（见上表） |
+| H-4 | `ScenarioHost.start()` 覆写 `engine` 引用、旧引擎无人 `close()` | `MetricsCollector` 类型基数上限 | 覆写路径未变 ⇒ 现已改（后台收摊 + 计数） |
+| M-7 | `sim.external-process-started` 回显完整命令行（`ExternalSutLauncher.java:141-142`） | `close()` 释放管道（那是 L-3/M-7 的**另一面**） | 载荷未变 ⇒ 现已改（argv 摘要） |
+| M-5 | `PostgresContainerStore.appendCredentials:351` 明文拼 `password=` | `sanitizeReason`（HTTP 错误体脱敏） | 未变 ⇒ 现已改（事件载荷掩码） |
+| M-6 | `/events` 异常回显 | 删临时文件（那是 L-1） | 未变 ⇒ 现已改（500 + 摘要、诊断降级） |
+| M-8 | CI 上传 `**/build/scenarios/**/events.jsonl` | 报告 §5 曾自我否决该条 | `ci.yml` 两处 path 确有 ⇒ 现已删 |
+| L-4 | 漏点：只点了 worker 侧 | — | 补上 `VirtualEngine.java:357-360`（SUT 侧同构，见上表 L-4 行） |
+
+**这个过程本身的教训写在这里，而不是悄悄改数**：第一轮的"已修复"里混着两类东西——
+真修好的（C-1/H-1/H-2/H-3/M-1/M-3/L-1/L-2/L-5/L-6/INFO-1）与"做了另一件相邻的好事"的
+（上面 5 条）。台账把后者记成前者，等于**用自己的交付物给自己打分**。第二轮的规则是：
+台账的"落地点"必须能对着审计原文那句话读出因果，否则就是没修。
+
+#### (2) 两处加重
+
+- **M-5 在 embedded 档同样成立**：`H2Store.java:76` 也把 `jdbcUrl` 送进 `sim.store-started`，
+  而 `store.jdbcUrl` 是**场景输入可指定**的 ⇒ 审计期报告只点了 container 档，是范围低估。
+  两档现在用同一把尺子（同一条 `redactUrlCredentials`）。
+- **L-4 的第三处**：`VirtualEngine.java:357-360` 与 worker 侧同形（首帧 10s 限时 →
+  `setSoTimeout(0)` → 无限期 `conn.read()`）。处理同上：不设读超时是**有意取舍**，
+  但取舍必须写在台账里，不能靠"报告没点"隐身。
+
+#### (3) M-2 的空承诺
+
+`CapabilityMetadata.trustedConfigKeys` 在第一轮被描述为"组件可扩展白名单"，而复核实测
+**全仓零实现**（7 处引用全在定义与 javadoc 处）⇒ D11 宣称的那条是**空承诺**。
+第二轮把它接上：`ScenarioValidator.effectiveTrustedConfigKeys(meta)` = 静态白名单 ∪ 组件声明，
+`isTrustedConfigKey(key, meta)` 用同一并集判定；并由
+`SecurityRemediationAcceptanceTest.componentDeclaredConfigKeysAreAcceptedForExternalInput` 锁住
+（声明的键**必须**被接受，未声明的**仍然**被拒）。
+
+#### (4) M-4 的下调
+
+复核推翻第一轮把 M-4 记为"已修复"的做法：`scrape()` 的副作用是**事实**，但分级偏高——
+锁方向单一（`MetricsCollector → Host`）、无死锁环、重复 `scrape()` 得单调累计量不丢数。
+处置改为**写进 `docs/METRICS.md` §4 的已知边界**，并在此调级为"非缺陷、已文档化"。
+第一轮关于"未认证读不到 `/metrics`"的那条结论仍然有效，只是它答的不是 M-4 字面问题。
+
+#### (5) 事件落盘契约的两处修复（复核派生）
+
+复核过程中发现录制物本身有两个**会让审查材料说谎**的问题，一并修掉：
+
+- **键序不稳定**：写侧原先直接序列化 `Map.of(...)`，键序随 JVM 每次启动的 SALT 变化 ⇒
+  "同一事件流 ⇒ 同一字节"不成立，逐字节 diff 两份录制会整片假变更。改为
+  `LinkedHashMap` 固定插入序（`type → sourceId → timestamp → payload`），
+  注意 Jackson 的 `SORT_PROPERTIES_ALPHABETICALLY` **只管 POJO 属性、不排 Map 键**，
+  确定性只能来自写入侧的顺序（`EventRecorderTest.jsonLineKeyOrderIsStableAcrossRuns` 锁住）。
+- **旧运行覆盖新运行**：同名场景重跑时，被顶替的引擎仍可能在收尾时 `flush()`，把
+  `build/scenarios/<name>/events.jsonl` 写成**上一轮**的内容。新增
+  `EventRecorder.flushIfCurrent(epochGuard, epoch)`：不是当前 epoch 就**不写**，并由
+  `ScenarioEngine.stop()` 上抛告警说明"文件属于当前运行"。丢的是一次过期写入，
+  换来的是"录制文件永远属于当前运行"。
+
+#### (6) 第二轮全量回归（本机实测）
+
+```powershell
+$env:JAVA_HOME="<JDK 21 安装目录>"
+.\mvnw.cmd -B -o "-Dduo.docker.enabled=false" test
+```
+
+```
+Tests run: 406, Failures: 0, Errors: 0, Skipped: 11
+BUILD SUCCESS   (9 模块)
+```
+
+对比第一轮台账的 378 测 ⇒ **406 测**（第二轮净增 28 条，全部为补充回归用例）；skip 11 条仍是
+设计门控（容器档 10 = ZK 4 + PostgreSQL 6，无 Docker；压测 1 = `ScaleAcceptanceTest`
+需 `-Dduo.scale=true`），与整改前一致。
+
+#### (7) 明确**没有**做的事（避免第三人误读）
+
+- `FrameConnection` 的双重分配保持原样（第一轮已说明理由：未突破 1 MiB 上限）。
+- 不设 worker / SUT 长连接的读超时（L-4 的两处同构）：设超时会误杀正常空闲连接，
+  属"用可用性换一个未复现的泄漏"，取舍记 D12。
+- 不给控制面加"单请求时长上限"：`HttpServer` 无 `setMaxReqTime`（§2.4 已实证），
+  不写"看起来有上限"的代码。
 

@@ -1,6 +1,7 @@
 package io.duo.sim.embedded.store;
 
 import io.duo.sim.kernel.api.ComponentContext;
+import io.duo.sim.kernel.api.CapabilityMetadata;
 import io.duo.sim.kernel.api.ComponentException;
 import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.EndpointShape;
@@ -73,7 +74,12 @@ public final class H2Store implements VirtualComponent, StoreContract {
                 probe.isValid(1);
             }
             running = true;
-            fire(Event.sim("sim.store-started", id.value(), Map.of("jdbcUrl", jdbcUrl)));
+            // 安全审计 2026-09-20 复核 M-5：embedded 档同源——store.jdbcUrl 可由输入指定，
+            // 于是连接串（可能带 user/password）会经事件流进 events.jsonl 与 CI artifact。
+            // 故这里也掩码凭据：与 container 档同一把尺子（报告当初只点了 container 档）。
+            fire(Event.sim("sim.store-started", id.value(),
+                    Map.of("jdbcUrl", CapabilityMetadata.redactUrlCredentials(
+                            jdbcUrl, List.of(String.valueOf(ctx.config().get(KEY_JDBC_URL)))))));
         } catch (Exception e) {
             throw new ComponentException("cannot start H2 store: " + e.getMessage(), e);
         }

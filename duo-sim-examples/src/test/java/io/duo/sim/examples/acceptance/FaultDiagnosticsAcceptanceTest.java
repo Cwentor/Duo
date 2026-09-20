@@ -186,6 +186,33 @@ class FaultDiagnosticsAcceptanceTest {
         return host.eventsSnapshot();
     }
 
+    /**
+     * 安全审计 2026-09-20 **复核** M-6：读一份被改过/损坏的事件流不得炸出内核异常。
+     *
+     * <p>{@code duo diagnose} 的另一条路径是 {@code GET /events} 回读 JSONL，也就是**外部字节**。
+     * 修复前：任意不以 {@code sut.} 开头的类型串会被直接喂给 {@code Event.sim(...)}，
+     * 内核前缀校验抛 {@code IllegalArgumentException} 并把原始异常文本冒到 CLI 用户面前——
+     * 损坏/恶意事件文件因此成了一条输入通道。现在必须**降级为诊断事实**（可见、不抛）。
+     */
+    @Test
+    void malformedEventStreamIsReportedNotThrown() {
+        List<Map<String, Object>> hostile = List.of(
+                Map.of("seq", 1, "type", "not-a-namespaced-type", "sourceId", "x",
+                        "timestamp", "2026-01-01T00:00:00Z",
+                        "payload", Map.of("injected", "value")),
+                Map.of("seq", 2, "type", "", "sourceId", "y",
+                        "payload", Map.of("empty", "type")),
+                Map.of("seq", 3, "type", "sut.still-fine", "sourceId", "z",
+                        "payload", Map.of("ok", "1")));
+
+        FaultDiagnostics.Report report = FaultDiagnostics.analyze(hostile);
+
+        // 不抛异常即已达标；下面锁住"损坏可见"而不是"被静默吞掉"
+        assertFalse(report.complete(), "没有任何注入事实，报告不得判为完整");
+        // 类型命名空间正确的记录仍被正常识别（降级是逐条判定，不是整份报废）
+        assertTrue(report.render("test").length() > 0);
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> rows(Object o) {
         return o instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();

@@ -83,7 +83,26 @@ public final class ScenarioHost implements AutoCloseable {
     /** 本轮场景由控制面落地的临时 YAML（外部输入隔离副本）；无则为 null（审计 M-6/L-1）。 */
     private String currentTempName;
 
-    /** 告警累积（审计：有界缓冲/清理失败等"跳过了什么"必须可见，§12）。 */
+    /**
+     * 被 {@link #start} 顶替掉的旧引擎（安全审计 2026-09-20 复核 H-4）。
+     *
+     * <p>审计期 {@code start()} 直接 {@code engine = ...} 覆写引用，旧引擎从此不可达：它的
+     * 组件/时间线/录制器没人收摊，控制面反复 {@code POST /scenario} 就是一条稳定的句柄泄漏路径。
+     * 这里把旧引用保留到能安全收摊为止（见 {@link #retireEngine}）。
+     */
+    private ScenarioEngine retired;
+    private long retiredAtMillis;
+    /** 当前活动录制世代（＝现任引擎的 epoch）；旧引擎据此判断自己是否还被允许写盘。 */
+    private volatile long activeEpoch;
+
+    /** 退场引擎的保留时长：先让客户端把已产生的事件/状态读完，再真正收摊。 */
+    public static final long RETIRED_ENGINE_GRACE_MILLIS = 30_000;
+
+    /** 收摊计数（测试/诊断：确认旧引擎确实被关过，而不是"记了个账"）。 */
+    private final java.util.concurrent.atomic.AtomicLong retiredEnginesClosed =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 收摊被延迟或失败时的可见记录（§12：跳过必须可见）。 */
     private final List<String> warnings = new ArrayList<>();
 
     /** 启动场景（同进程）。YAML 先经 {@code ScenarioEngine.validated} 校验（§8 快速失败）。 */
@@ -120,11 +139,17 @@ public final class ScenarioHost implements AutoCloseable {
         try {
             Scenario loaded = ScenarioLoader.load(yaml);
             var registry = ContractRegistry.loadFromServiceLoader();
-            engine = ScenarioEngine.validated(loaded, registry,
+            // 世代闸门：宿主顶替场景时递增，旧引擎因此失去覆盖录制文件（同名场景重跑）的权限
+            ScenarioEngine next = ScenarioEngine.validated(loaded, registry,
                     trust == Trust.EXTERNAL_INPUT
                             ? ScenarioEngine.InputPolicy.EXTERNAL_INPUT
                             : ScenarioEngine.InputPolicy.CONFIG)
                     .withHooks(hooks);
+            activeEpoch = next.epoch();
+            next.withEpochGuard(this::activeEpoch);
+            // 先校验/构造完成后才顶替旧引擎：构造失败不摧毁正在跑的场景（§8 快速失败）
+            retireEngine();
+            engine = next;
             scenario = loaded;
             engine.startSut();
             engine.startComponents();
@@ -139,6 +164,69 @@ public final class ScenarioHost implements AutoCloseable {
             lastError = String.valueOf(e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 顶替旧引擎：立即置零引用，收摊交给后台（安全审计 2026-09-20 复核 H-4）。
+     *
+     * <p>为什么不在这里同步 {@code close()}：{@code stop()} 会跑
+     * {@code ScenarioRuntime} 的资源回收，外部 SUT 收尾最长一整个
+     * {@code STOP_TIMEOUT_MS}（10s），同步等会阻塞 {@code POST /scenario}——而调用方真正
+     * 关心的是"起了没有/为什么没起"。故：**引用立即断开**（不会再有新事件写进旧引擎），
+     * **收摊在后台虚拟线程执行**，结果与耗时都对宿主可见（{@link #retiredEnginesClosed()} +
+     * {@link #warnings()}）。
+     *
+     * <p>旧引擎只被本地变量捕获一次，因此即使期间又发生一次 {@code start()} 也不会重复关。
+     */
+    private void retireEngine() {
+        ScenarioEngine old = engine;
+        if (old == null) {
+            return;
+        }
+        engine = null;
+        retired = old;
+        retiredAtMillis = System.currentTimeMillis();
+        Thread.ofVirtual().name("duo-host-retire").start(() -> retireEngineNow(old));
+    }
+
+    /** 实际收摊（幂等；{@code close()} 也会调一次，确保退出前不留半开引擎）。 */
+    private void retireEngineNow(ScenarioEngine old) {
+        long t0 = System.nanoTime();
+        try {
+            old.close();
+        } catch (RuntimeException e) {
+            // 收摊失败不得静默：旧引擎的句柄可能仍在（§12）
+            synchronized (this) {
+                warnings.add("retired engine close failed: " + e);
+            }
+        } finally {
+            retiredEnginesClosed.incrementAndGet();
+            long millis = (System.nanoTime() - t0) / 1_000_000;
+            synchronized (this) {
+                if (retired == old) {
+                    retired = null;
+                }
+                if (millis >= RETIRED_ENGINE_GRACE_MILLIS) {
+                    warnings.add("retired scenario took " + millis
+                            + " ms to settle down (external SUT teardown is bounded by its "
+                            + "stop timeout)");
+                }
+            }
+        }
+    }
+
+    /**
+     * 已被收摊的旧引擎数量（测试/诊断；启动失败路径不计入）。
+     *
+     * <p>公开 API：验收用例据此断言"顶替确实收摊了"，而不是只看引用有没有换。
+     */
+    public long retiredEnginesClosed() {
+        return retiredEnginesClosed.get();
+    }
+
+    /** 当前活动的录制世代（现任引擎的 epoch）。 */
+    private long activeEpoch() {
+        return activeEpoch;
     }
 
     /** 立即删除已登记的临时 YAML（启动失败路径）。 */
@@ -308,7 +396,7 @@ public final class ScenarioHost implements AutoCloseable {
             out.put("passed", engine.result().passed());
             var rec = engine.recordingPath();
             out.put("recording", rec == null ? null : rec.toString());
-            out.put("events", engine.events().size());
+            out.put("events", engine.eventCount());
         }
         if (lastError != null) {
             out.put("error", lastError);
@@ -452,6 +540,13 @@ public final class ScenarioHost implements AutoCloseable {
     public synchronized void close() {
         if (engine != null) {
             engine.close();
+            engine = null;
+        }
+        // 顶替掉的旧引擎也必须收摊：否则它持有的管道/时间线会活过宿主
+        ScenarioEngine old = retired;
+        retired = null;
+        if (old != null) {
+            retireEngineNow(old);
         }
     }
 }

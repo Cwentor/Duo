@@ -53,7 +53,6 @@ jobs:
           name: regression-surefire-reports
           path: |
             **/target/surefire-reports/*.txt
-            **/build/scenarios/**/events.jsonl
           if-no-files-found: warn
 
   container:
@@ -107,5 +106,4 @@ jobs:
           name: scale-artifacts
           path: |
             build/scale/*.json
-            **/build/scenarios/**/events.jsonl
           if-no-files-found: warn

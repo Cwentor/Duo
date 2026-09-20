@@ -165,4 +165,36 @@ class H2StoreTest {
         store.start();
         assertTrue(store.jdbcUrl().contains("custom-name"));
     }
+
+    /**
+     * 安全审计 2026-09-20 **复核** M-5（embedded 档）：{@code sim.store-started} 不得回显凭据。
+     *
+     * <p>复核指出报告只点了 container 档，而 {@code store.jdbcUrl} 是**可由场景输入指定**的，
+     * 于是 embedded 档同样能把 {@code user=...&password=...} 送进事件流 → {@code events.jsonl}
+     * → CI artifact。这条用例把两档拉到同一把尺子上。
+     */
+    @Test
+    void storeStartedEventNeverEchoesCredentials() {
+        var bus = new SimpleEventBus();
+        List<Event> events = new ArrayList<>();
+        bus.subscribe(events::add);
+        store = new H2Store();
+        store.init(new ComponentContext(new ComponentId("db"),
+                Map.of("store.jdbcUrl",
+                        "jdbc:h2:mem:duo;DB_CLOSE_DELAY=-1;user=duo&password=s3cr3t-p@ss"),
+                SimClock.real(), bus, Map.of(), Map.of()));
+        store.start();
+
+        Event started = events.stream()
+                .filter(e -> e.type().equals("sim.store-started")).findFirst()
+                .orElseThrow(() -> new AssertionError("no store-started event: " + events));
+        String url = String.valueOf(started.payload().get("jdbcUrl"));
+        assertFalse(url.contains("s3cr3t-p@ss"),
+                () -> "事件载荷泄露了口令（M-5 embedded 档）: " + url);
+        assertFalse(url.contains("password=s3cr3t"),
+                () -> "事件载荷泄露了口令（M-5 embedded 档）: " + url);
+        // 结构保留：诊断仍要能看出"哪个库、哪种凭据形态"
+        assertTrue(url.contains("jdbc:h2:mem:duo"), () -> "URL 结构必须保留: " + url);
+        assertTrue(url.contains("password=<redacted>"), () -> "凭据键必须可见: " + url);
+    }
 }

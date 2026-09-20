@@ -245,6 +245,36 @@ public final class FaultDiagnostics {
         if (type.startsWith(Event.SUT_PREFIX)) {
             return Event.sut(type, source, payload);
         }
-        return Event.sim(type, source, payload);
+        if (type.startsWith(Event.SIM_PREFIX)) {
+            return Event.sim(type, source, payload);
+        }
+        // 安全审计 2026-09-20 复核 M-6：`duo diagnose` 读的是 /events 回读的 JSONL，
+        // 也就是**外部字节**。此前对任意不以 `sut.` 开头的类型串直接走 `Event.sim(type, ...)`，
+        // 于是"读一份被改过的 events.jsonl"会得到内核校验器的原始异常（IllegalArgumentException）
+        // 并沿 CLI 冒到用户面前——恶意/损坏事件文件可以拿这个当输入通道。
+        // 事件流契约只有 sim./sut. 两个命名空间（Event.java 的既有不变式），
+        // 故这里**显式降级为诊断事实**：不构造 Event，只按不可识别类型登记一条，
+        // 再让调用方在报告里看见它（不静默、不抛、也不把异常文本当成产物）。
+        return unrecognized(type, source, payload);
     }
+
+    /**
+     * 不可识别事件类型（前缀既非 {@code sim.} 也非 {@code sut.}）的降级表示。
+     *
+     * <p>用 {@code sim.} 命名空间下的保留类型承载，使因果链分析照常走"sim.* 反应"分支，
+     * 同时在类型名与 payload 里都留下"这条是来源损坏/被改动"的证据（§12：跳过必须可见）。
+     */
+    private static Event unrecognized(String type, String source, Map<String, Object> payload) {
+        Map<String, Object> p = new TreeMap<>();
+        p.put("unrecognizedType", type);
+        p.put("sourceId", source == null ? "" : source);
+        p.put("payload", payload == null ? Map.of() : payload);
+        return Event.sim(UNRECOGNIZED_TYPE, source == null ? "?" : source, p);
+    }
+
+    /**
+     * 载入事件流（JSONL 回读）时，单条记录的最外层类型不是 {@code sim.*}/{@code sut.*}
+     * 时使用的保留类型名。诊断报告与回归用例据此断言"损坏没有被静默吞掉"。
+     */
+    public static final String UNRECOGNIZED_TYPE = "sim.diagnostics-unrecognized-event";
 }

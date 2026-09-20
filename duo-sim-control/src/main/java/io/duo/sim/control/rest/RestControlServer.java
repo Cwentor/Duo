@@ -237,7 +237,16 @@ public final class RestControlServer implements AutoCloseable {
                     }
                 }
             }
-            List<Map<String, Object>> events = host.eventsSince(since);
+            List<Map<String, Object>> events;
+            try {
+                events = host.eventsSince(since);
+            } catch (RuntimeException e) {
+                // 事件流本身坏了（如某组件发出未登记的类型）⇒ 客户端拿 500 + 根因摘要，
+                // 而不是一个空 200（"没有事件"与"读事件失败"必须可区分，§12）
+                respond(ex, 500, Map.of("error", "cannot read event stream: "
+                        + sanitizeReason(e.getMessage())));
+                return;
+            }
             respond(ex, 200, Map.of("since", since, "events", events));
         });
         server.createContext("/inject", ex -> {
