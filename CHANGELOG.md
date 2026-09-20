@@ -24,6 +24,14 @@
 
 ### 新增
 
+- **worker 侧真实 SUT（`RealWorkerSut`，第 32 轮）**：`duo-sim-examples` 交付完整档
+  worker 侧 `SutMain`——真连 master（显式 `scheduler.endpoint` / `master.list` 文件 /
+  registry 自注册三条发现路径）、周期心跳、领取→执行→回报任务、断连后重连自愈。
+  此前 `virtual` 档调度器只有 wire 级假 worker 的覆盖，**仓库里没有任何 worker 侧 `SutMain` 示例**；
+  这条把它补上了，且 master 侧仍复用内核同一份 `SchedulerStateMachine` + `DispatchSelector`
+  （两档不各写一套状态机）。配置读取统一走 `SutConfigs`（去 UTF-8 BOM 口径）：
+  首个键名被 BOM 污染时不再静默退回缺省值，而是把污染键名报进 `sut.worker-sut-started` 载荷；
+  同一键被写了干净+BOM 两份时**显式拒绝启动**（读取口径看不见歧义，只有问才有答案）。
 - **控制面安全整改（安全审计 2026-09-20，第 13 轮）**：`duo serve` 的令牌**由可选改为必填**
   （`--token` / `--token-file` / `DUO_TOKEN`；缺失即拒绝启动，除非显式 `--insecure-no-auth`）——
   **破坏性变更**，所有 REST/CLI 客户端需带 `--token` 或 `Authorization: Bearer`。除 `/health` 外
@@ -77,9 +85,16 @@
   `FaultDiagnosticsAcceptanceTest` 1），其中 1 例是**日志配置回归护栏**：
   禁止再引入 logback `<if>/<else>` 条件块（1.5.16 上会抛 `EmptyStackException`
   并让**全部日志静默丢失**，踩过一次）。
-- 全量回归 **378 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块）；
-  另有 `duo-sim-control` 的 30 条在 examples 步内执行。
-  较上一轮 366 测新增 36 条安全回归用例（含报告 §3.1 两条 PoC 的固化用例）。
+- `WorkerSutAcceptanceTest`（3 例，**worker 侧真实 SUT 的端到端验收**）：真连 master
+  （显式端点 / `master.list` / registry 自注册三条发现路径）、BOM 配置键必须仍被认到、
+  断连后自愈重连。夹具按真实协议走——注册/心跳/领取/回报全部经 `FrameConnection`，
+  不是进程内假装通过。
+- 全量回归 **396 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块），逐模块计数见
+  `docs/DEVELOPMENT.md` §3.2。**口径已简化**：`duo-sim-control` 的契约测试
+  （`ScenarioHostTest` 13 + `RestControlServerTest` 10）已在本模块 `src/test` 内执行，
+  不再需要"另有 30 条在 examples 步内执行"这种跨模块换算（旧文那份换算本身是错的）。
+- `-Dquality -DskipTests verify` 抓到并修掉一处真实依赖违规：控制面测试夹具讲了 19 处协议
+  却没声明 `duo-sim-protocol`，靠传递依赖白用——夹具"真的讲协议"正是它作为验收样本的意义。
 
 ### 已知限制（如实记录）
 

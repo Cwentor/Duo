@@ -97,43 +97,86 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
 > 否则会形成 `junit ↔ examples` 循环依赖。
 
-### 3.2 当前分布（2026-09-19 实测，第 11 轮质量门禁后）
+### 3.2 当前分布（2026-09-20 实测，worker 侧真实 SUT 落地后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
 | `duo-sim-protocol` | 12 | 0 |
-| `duo-sim-kernel` | 76 | 0 |
-| `duo-sim-scenario` | 51 | 0 |
+| `duo-sim-kernel` | 79 | 0 |
+| `duo-sim-scenario` | 55 | 0 |
 | `duo-sim-components` | 120 | 0 |
-| `duo-sim-embedded` | 55 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
+| `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
-| `duo-sim-control` | 0 | 0 |
-| `duo-sim-examples` | 52 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
-| **合计（reactor 内 8 模块）** | **366** | **11** |
+| `duo-sim-control` | 23 | 0 |
+| `duo-sim-examples` | 50 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
+| **合计（reactor 内 8 模块）** | **396** | **11** |
 
-> **口径说明**：`duo-sim-junit` / `duo-sim-control` 在 `mvnw test` 里显示为 0——
-> `duo-sim-junit` 确实没有测试类；`duo-sim-control` 则是**它的测试类不在自己模块里**
-> （`duo-sim-control` 没有 `src/test`），而在 examples 反应堆步里被执行：
-> `DuoCliTest` 10 / `RestControlServerTest` 6 / `ScenarioHostTest` 9，共 **25 条**。
-> **这 25 条不计入上表 examples 的 52 条**（它们是 `io.duo.sim.control.*` 包），
-> 所以两处口径合计 **366 + 25 = 391 条**。复算命令：
+> **口径说明（第 32 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
+> `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试
+> 不在自己模块里，所以 366 + 25 = 391"的换算——那段**已经过时且是错的**：`ScenarioHostTest`（10）
+> 与 `RestControlServerTest`（13）第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（10）
+> 留在 examples（它编排 `DemoScheduler` 场景，与示例强耦合）。三段合计仍然对得上，
+> 但**归属已经清楚**，无需再叠加口径；上表直接就是全量数字。
 >
-> ```bash
-> .\mvnw.cmd -o -B -pl duo-sim-examples -am "-Dtest=DuoCliTest,RestControlServerTest,ScenarioHostTest" `
->   "-Dsurefire.failIfNoSpecifiedTests=false" test
-> # 实测 25 测 / 0 失败 / 0 错误（20.46s + 0.477s + 10.38s）
-> ```
->
-> ⚠️ **已知的"存在但不显形"问题**：这 25 条在 `mvnw test` 输出里没有任何归属行，
-> 数字对不上却看不出来。彻底修法是给 `duo-sim-control` 建自己的 `src/test` 并搬迁
-> （需动依赖与反应堆顺序，收益仅是输出美观，风险不划算）——**记为待办而非本轮执行**。
+> ⚠️ **注意 `duo-sim-examples` 的 1 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
+> 带两个档（`scale-1k.yaml` / `scale-10k.yaml`），`@EnabledIfSystemProperty(duo.scale=true)`
+> 关闭时 JUnit 计 **1** 条 skip 而不是 2 条（参数化整体被禁用）。所以"skip=1"说的是
+> "压测门控关着"，不是"只跳了一个档"。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：366 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：396 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
 .\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：9 模块零未声明/零未使用（CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
+
+> **第 12–32 轮明细（366 → 396，净 +30）**：
+>
+> - **kernel 76 → 79（+3）**：`SutLauncherTest` 与 `ReadyProbeTest` 的 SUT 启动面补测
+>   （端点文件口径 / 未解析端点必须留警告而不是静默）。
+> - **scenario 51 → 55（+4）**：§8 校验补充（`sut: true` 必须声明 `launch`；
+>   SUT 先于 `startComponents()` 启动 ⇒ 端点冻结这条事实的守卫）。
+> - **embedded 55 → 57（+2）**、**components 120 → 120（净 0，内部重排）**。
+> - **control 0 → 23（+23）**：`ScenarioHostTest`（13）+ `RestControlServerTest`（10）
+>   第 14 轮迁入本模块 `src/test`（此前它们在 examples 反应堆步里执行、在本表里没有归属）。
+> - **examples 52 → 50（−2，同时移出 13 条 control 测试）**：本次净增 3 条
+>   （`WorkerSutAcceptanceTest`：真连 master / BOM 配置 / 断连自愈），另迁出 13 条 control 测试、
+>   以及若干为"编排解耦"而合并的重复用例。
+>
+> **worker 侧真实 SUT（`RealWorkerSut`，本次交付）**：`virtual` 档调度器原来只有 wire 级假 worker
+> 的覆盖，**仓库里没有任何 worker 侧 `SutMain` 示例**（§3.2 旧文已诚实记下这一点）。现在
+> `duo-sim-examples` 提供完整档实现——真连 master（显式端点 / `master.list` / registry 自注册三条
+> 发现路径）、心跳、领取/执行/回报、断连自愈——并由 `WorkerSutAcceptanceTest` 三条用例钉住。
+> **同一份调度语义**：master 侧仍是内核 `VirtualScheduler`（`SchedulerStateMachine` +
+> `DispatchSelector`），worker 侧是本示例，两档不各写一套状态机。
+>
+> **一条必须说清的事实（别把断言写成场景调度的镜像）**：`sut: true` 场景里
+> `sut.dag-terminal` / `sut.task-terminal state=FAILED` / `sut.task-retry` **结构上不可达**。
+> `ScenarioEngine.startSut()` 在 `startComponents()` 之前运行，SUT 会话一结束
+> `awaitSutExit` 立刻触发拆卸（`ScenarioEngine.stop()` → `manager.stopAll()`），于是
+> 调度器连接断开、在途任务被 `onInstanceLost` 重新入队、而实例已从 `DispatchSelector` 摘除
+> ⇒ 无处再派。实测：给 10s 窗口也等不到半条 `sut.task-retry`，事件表里只有
+> `sut.task-dispatched/status/terminal → sut.instance-lost → sut.worker-sut-finished → sut.exited`。
+> 因此验收断言只取**链路真的产生的事实**（SUT 自报的 `dispatches`、worker 归属的终态、
+> `sut.worker-sut-finished.heartbeats`）；DAG 终态那条路径由**不含 `sut` 节点**的场景覆盖。
+>
+> **本场景有一条预期告警，不是故障**：`node master exposes 'scheduler' but the SUT 'workers'
+> was already started when the endpoint was bound …`。它正是上面那条"端点冻结"的如实陈述，
+> 也是中继/注册表自注册这条正路存在的理由。验收断言写成"除这条以外没有别的告警"，
+> 而不是"一条告警都不许有"——后者等于要求引擎对已知事实闭嘴（§12 要的是说出来）。
+>
+> **`-Dquality verify` 抓到的一处真实依赖违规**：`duo-sim-control` 的测试夹具
+> `ControlFixtureSut` 讲了 19 处协议（`FrameConnection` / `RegisterRequest` / `HeartbeatReport`
+> / `SlotReport` / `TaskAck` …），却没在 `pom.xml` 声明 `duo-sim-protocol`，靠传递依赖白用。
+> 已补 `test` 范围声明。这条被抓住很有价值：夹具"真的讲协议"是它作为验收样本的全部意义，
+> 少了声明，夹具只能假装注册成功。
+>
+> **同一轮澄清的一处元数据误改**：工作区里 `VirtualSchedulerProvider.metadata()` 曾被改成
+> `duoPortWithDirect(...)`（即 `interfaceDirect=true`），想让 direct 槽好写。已回退成
+> `duoPort(false, …)`：`interfaceDirect` 只说"同进程能不能直接拿到接口对象"，而 worker SUT
+> 在另一条线上只能拨号——声明成 true 会让"真实 worker 侧"验收退化成进程内直调，
+> 不再证明线协议可用。两个字段独立（设计 §7.5 v2），消费路径由 `WiringResolver` 逐槽解析，
+> 同进程消费者在槽上显式写 `path: direct` 即可，与这个字段无关。
 
 > 上表是**实测值**（Windows，JAVA_HOME 指向 JDK 21）。容器档那 10 条 skip 的原因是**本机无 Docker**，
 > 不是设计上应当跳过——CI `container` job（Docker + `--fail-on-skip`）才是它们必须跑通的地方。
@@ -186,9 +229,15 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > `regression` ✅ 342/0/0/11、`container` ✅ 15/15 skip=0。
 >
 > **尚未闭环（诚实记录）**：M5 交付物 6（金标准场景集，G4：每个契约一正例 + 一故障例）仍开放；
-> virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
-> 其自身覆盖是 wire 级 `VirtualSchedulerTest`；容器档 PostgreSQL 的 6 条用例**已在 CI 上取证为绿**
-> （本机无 Docker，只能 skip）——**已在 CI container job 取证为绿**（run 35341365256：PG 6/6、ZK 4/4、skip=0 门禁通过）。
+> 容器档 PostgreSQL 的 6 条用例**已在 CI 上取证为绿**（本机无 Docker，只能 skip）——run
+> [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)：PG 6/6、ZK 4/4、skip=0 门禁通过。
+>
+> ~~virtual scheduler 的「worker 侧 SUT」用途尚无真实 `SutMain` 示例（仓库仍无 worker SUT），
+> 其自身覆盖是 wire 级 `VirtualSchedulerTest`~~ ——**本条已于第 32 轮闭环**：
+> `duo-sim-examples` 交付完整档 `RealWorkerSut`（注册/心跳/领取执行回报/断连自愈）与
+> `WorkerSutAcceptanceTest` 三条验收用例（真连 master / BOM 配置 / 断连自愈），
+> 场景 YAML 见 `duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml`。
+> 「尚无 worker SUT」这句话从今天起不再成立，保留删除线是为了让读到这里的人知道它被**证伪**过。
 
 ### 3.3 三条明文门控
 
@@ -321,7 +370,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 366 测 / 11 skip（无 Docker）」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 396 测 / 11 skip（无 Docker）」）。
 
 ---
 

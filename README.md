@@ -3,12 +3,17 @@
 > 用一份 YAML 在**单 JVM** 里搭出大数据/分布式系统的整条链路（注册中心、存储、资源管理、Worker、调度器），
 > 把真正要测的那一个节点换成你的真实实现（SUT），然后在秒级反馈回路里对它注入故障、观察自愈、用断言判成败。
 
-- 版本：`0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`）
-- 技术栈：Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers
-- 阶段状态：**M0 内核骨架 / M1 场景与注入 / M2 嵌入中间件 / M3 控制面 / M4 规模与桥接 / M5 契约与档位补全 / M6 external SUT / M7 工程化与 CI / M8 观测面 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）
-- 最近一次全量回归（2026-09-19，第 11 轮质量门禁后）：`.\mvnw.cmd -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip**（10 条容器档需 Docker、1 条压测未开开关；逐模块实测分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)）
-- 质量门禁：`.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（CI `regression` job 已接入）
-- 设计依据：[设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)
+| 项目 | 说明 |
+| --- | --- |
+| 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
+| 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
+| 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件） |
+| 最近全量回归 | 2026-09-20 · `.\mvnw.cmd -o -B test` → **396 测 / 0 失败 / 0 错误 / 11 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)） |
+| 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
+| 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
+
+**里程碑进度**：`M0` 内核骨架 ✅ · `M1` 场景与注入 ✅ · `M2` 嵌入中间件 ✅ · `M3` 控制面 ✅ ·
+`M4` 规模与桥接 ✅ · `M5` 契约与档位补全 ✅ · `M6` external SUT ✅ · `M7` 工程化与 CI ✅ · `M8` 观测面 ✅
 
 ---
 
@@ -41,20 +46,32 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 ## 3. 总体架构
 
 ```
-场景 YAML ──► 场景引擎（校验/编排/时间线） ──► 仿真内核（SPI + 组件管理器 + 事件总线）
-                                                  │
-                     ┌────────────────────────────┼────────────────────────────┐
-                     ▼                            ▼                            ▼
-               虚拟组件库                    嵌入式/容器替身库                 real 档节点
-      VirtualWorker / VirtualRegistry /  ZK(Curator) / H2 / K8s /   真实实现（其一是 SUT）：
-      VirtualScheduler / VirtualEngine / PostgreSQL(容器) /         kernel-hosted 或 external
-      VirtualFilestore / VirtualMessageBroker / Testcontainers 桥   （demo-scheduler 为前者）
-      VirtualResourceManager / TaskStub
-                     │                            │                            ▲
-                     └──── 真实协议 / Duo 协议 / 状态事件 ──── 接线 ────────────┘
-                                                  │
-                                                  ▼
-                                   观测面（事件流/录制/断言）◄── 控制面（REST/CLI 热注入）
+                   场景 YAML
+                       │
+                       ▼
+   ┌───────────────────────────────────┐        ┌──────────────────────────────┐
+   │ 场景引擎                           │        │ 控制面                        │
+   │ 校验 / 编排 / 时间线 / 录制 / 钩子  │        │ REST（`duo serve`）+ CLI      │
+   └────────────────┬──────────────────┘        │ 热注入 · 状态 · 事件 · 拓扑    │
+                    │                            └───────────────┬──────────────┘
+                    ▼                                            │
+   ┌───────────────────────────────────┐                        │
+   │ 仿真内核                           │◄───────────────────────┘
+   │ SPI · 契约注册表 · 组件管理器 · 事件总线 · wiring 解析        │
+   └────────────────┬──────────────────┘
+                    │
+     ┌──────────────┼──────────────────────────┬─────────────────────┐
+     ▼              ▼                          ▼                     ▼
+ 虚拟组件库     嵌入式替身库              容器档替身              real 档节点
+ VirtualWorker  Curator ZK (真协议)      Testcontainers ZK      真实实现（其一是 SUT）：
+ VirtualRegistry H2 (真 JDBC)            PostgreSQL 16          kernel-hosted 或 external
+ VirtualScheduler Fabric8 K8s Mock                             例：DemoScheduler（master 侧）
+ VirtualEngine  ...                                            RealWorkerSut（worker 侧）
+     │              │                          │                     │
+     └──────────────┴──── 真实协议 / Duo 线协议 / 状态事件 ──────────┘
+                    │
+                    ▼
+        观测面：事件流（唯一事实来源）· 日志（因果链）· 指标（/metrics）· 断言
 ```
 
 ## 4. 模块地图
@@ -70,10 +87,19 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 | [`duo-sim-embedded`](duo-sim-embedded/README.md) | embedded/container 档：Curator TestingServer、H2、Fabric8 K8s Mock、Testcontainers ZK/PostgreSQL | `CuratorRegistry` `H2Store` `PostgresContainerStore` `Fabric8K8sMock` `ZookeeperContainerRegistry` |
 | [`duo-sim-junit`](duo-sim-junit/README.md) | JUnit5 扩展 `@VirtualCluster` + 编程式断言 `DuoAssertions` | `VirtualCluster` `VirtualClusterExtension` `DuoAssertions` |
 | [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI 控制面（热注入、状态、事件、断言、拓扑） | `ScenarioHost` `RestControlServer` `DuoCli` |
-| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、金标准场景与全部验收测试 | `DemoScheduler` `DemoRealWorker` |
+| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、**worker 侧真实 SUT `RealWorkerSut`**（注册/心跳/领取执行回报/断连自愈）、金标准场景与全部验收测试 | `DemoScheduler` `DemoRealWorker` `RealWorkerSut` |
 
-模块依赖方向（**无环**）：`protocol` ← `components`/`examples`；`kernel` ← `scenario`/`junit`/`control`/`embedded`/`components`；
-`examples` 聚合全部（`junit`/`control` 的集成测试落在 `examples`，避免模块循环依赖）。
+模块依赖方向（**无环**）：
+
+```
+protocol ← components / examples
+kernel   ← scenario / junit / control / embedded / components
+examples ← 聚合全部（junit / control 的集成测试落在 examples，避免模块循环依赖）
+```
+
+> 测试归属口径：`duo-sim-control` 的契约测试（`ScenarioHostTest` / `RestControlServerTest`）在**本模块**
+> `src/test` 内执行；与示例强耦合的编排用例 `DuoCliTest` 留在 `examples`。三段各自归属清楚，
+> 不需要任何跨模块换算（详见 [开发指南 §3.2](docs/DEVELOPMENT.md)）。
 
 ## 5. 快速开始
 
@@ -102,14 +128,29 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 342 测（11 条设计门控 skip：容器档 10 + 压测 1）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 396 测（11 条设计门控 skip：容器档 10 + 压测 1）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
 ```
 
-CI（`.github/workflows/ci.yml`）：`regression`（无 Docker）/ `container`（有 Docker，断言 skip=0）/
-`scale`（nightly，产物留档）三个 job。M5 第 4 轮后最终取证：run [35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887) `regression` ✅ **342/0/0/11**、`container` ✅（真 PostgreSQL 6/6 + 真 ZK 4/4，skip=0 门禁通过）。
+CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）分三个 job：
+
+| job | 触发 | 内容 |
+| --- | --- | --- |
+| `regression` | push / PR | 无 Docker 全量回归 + 依赖门禁（`-Dquality`）+ skip 清单可见 |
+| `container` | push / PR | 有 Docker，跑容器档并断言 **skip=0**（真 PostgreSQL 6/6 + 真 ZK 4/4） |
+| `scale` | nightly / 手动 | 千/万 Worker 心跳压测，产物留档 |
+
+容器档已在 CI 上**四次取证为绿**：runs
+[35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)、
+[35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887)、
+[35417427531](https://github.com/Cwentor/Duo/actions/runs/35417427531)、
+[35420349133](https://github.com/Cwentor/Duo/actions/runs/35420349133)。
+
+> **两件必须分清的事**：① 本机无 Docker，这 10 条只能 skip——所以「本机绿」与「容器档绿」不是同一件事，
+> 别互相代替；② 本地 `master` 领先 `origin/master` 若干提交，这些提交**没有 CI 运行**，
+> 引用取证时只能引用上面这些已跑过的版本。
 
 ### 5.3 跑一个场景（CLI 控制面）
 
@@ -207,7 +248,7 @@ class MyScenarioTest {
 | 契约 | 类型 | virtual | embedded | container | real |
 | --- | --- | --- | --- | --- | --- |
 | `registry` | 标准协议 | `VirtualRegistry`（进程内状态机，端点 NONE，支持 `registry-flap`） | `CuratorRegistry`（真实 ZK 端口 + 同进程门面，支持 `registry-flap`） | `ZookeeperContainerRegistry`（Testcontainers ZK，**不支持 flap/restart**） | — |
-| `worker` | 交互型 | `VirtualWorker`（Duo 协议端口，实例级控制，支持 `task-kill`/`freeze`/`slow`/`resource-exhaust`） | —（交互型无此形态） | — | `DemoRealWorker`（参考实现，kernel-hosted） |
+| `worker` | 交互型 | `VirtualWorker`（Duo 协议端口，实例级控制，支持 `task-kill`/`freeze`/`slow`/`resource-exhaust`） | —（交互型无此形态） | — | `DemoRealWorker`（kernel-hosted 参考实现）、**`RealWorkerSut`（worker 侧 SUT：真拨号 + 注册/心跳/领取/回报/断连自愈）** |
 | `scheduler` | 交互型 | `VirtualScheduler`（Duo 协议端口 + 注册 `/duo/endpoints/scheduler`，支持 `freeze`；需 **DIRECT** registry 接线） | — | — | `DemoScheduler`（**参考 SUT**） |
 | `engine` | 交互型 | `VirtualEngine`（DUO_PORT 服务端：首帧 `task-dispatch` 后 `task-cancel`；另有进程内 `EngineContract.submit`，支持 `freeze`/`slow`/`resource-exhaust`） | — | — | — |
 | `store` | 标准协议 | — | `H2Store`（真实 H2 内存库 + JDBC URL） | `PostgresContainerStore`（Testcontainers `postgres:16-alpine`，**不支持 `restart()`**，显式拒绝 `store.jdbcUrl`） | — |
@@ -219,6 +260,14 @@ class MyScenarioTest {
 > `duo-sim-components`（M5 第 4 轮由 `duo-sim-examples` 迁入，18 条测试随实现迁移）。
 > 故障动作支持矩阵：`freeze` = worker + engine + scheduler；`slow` = worker + engine；
 > `resource-exhaust` = worker + engine + resource（见 [架构说明](docs/ARCHITECTURE.md) §5.4）。
+
+**换档矩阵**（同一条链路，谁是 SUT 可以换）：
+
+| 组合 | 场景 / 用例 | 覆盖了什么 |
+| --- | --- | --- |
+| virtual × virtual | `m0-acceptance-virtual-workers.yaml` | SUT = `DemoScheduler`（master 侧） |
+| real × real | `m0-acceptance-real-workers.yaml` | SUT = `DemoScheduler`，worker 为 `DemoRealWorker` |
+| **real 档 worker SUT × virtual 档 master** | `m0-acceptance-real-worker-sut.yaml` + `WorkerSutAcceptanceTest` | **SUT = `RealWorkerSut`（worker 侧）**：真发现 → 拨号 → 注册 → 心跳 → 领取/执行/回报 → 断连自愈 |
 
 档位缺口与补全计划见 [路线图 M5](docs/ROADMAP.md#m5--契约与档位补全广度)。
 
@@ -268,21 +317,30 @@ assertions:
 
 字段全集、校验规则与断言语义：[`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md)。
 
+> **换到 worker 侧**：把 `sut: true` 从 `master` 移到 `workers` 节点（`tier: real`、
+> `launch.main: io.duo.sim.examples.worker.RealWorkerSut`），master 改回 `tier: virtual` 即可——
+> SUT 变成被调度方，其余 YAML 结构不变。完整例子见
+> [`m0-acceptance-real-worker-sut.yaml`](duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml)。
+
 ## 8. 现状与差距（一页速览）
 
 | 原始目标（设计 §2） | 现状 | 证据 / 缺口 |
 | --- | --- | --- |
 | 1 可组装（YAML 描述拓扑） | ✅ 已达成 | `ScenarioLoader` + `WiringResolver` 拓扑排序启动 |
-| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process 与 **external（M6：零依赖第三方进程端到端验收）** 均已闭环；8 个契约**都已有替身实现**（M5 第 4 轮补齐 `scheduler`/`engine`/`message`/`filestore` 的 virtual 档与 `store` 的 container 档）；缺口＝金标准场景集（G4：每契约一正例 + 一故障例）仍开放，且仓库仍无 worker 侧真实 `SutMain` 示例 |
+| 2 任意项可测（SUT + 替身） | 🟡 部分 | in-process 与 **external（M6：零依赖第三方进程端到端验收）** 均已闭环；8 个契约**都已有替身实现**；**worker 侧真实 SUT 已落地**（`RealWorkerSut` + `WorkerSutAcceptanceTest` 三条端到端用例，master 侧复用内核同一份状态机）；缺口＝金标准场景集（G4：每契约一正例 + 一故障例）仍开放 |
 | 3 可替换（换档零改动） | 🟡 部分 | M0 `TierSwapAcceptanceTest` 通过；`registry`（三档）、`store`/`resource`/`worker`/`scheduler`（各两档）已有多档实现；`scheduler` 两档同源（`SchedulerStateMachine`） |
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
-| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议；container 档另有真 PostgreSQL（本机无 Docker 时 6 条用例 skip，**该档在 CI `container` job 上尚未观测到绿**） |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
+| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 四次取证为绿**（本机无 Docker 时 10 条容器用例按设计 skip） |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **396 测 / 0 失败 / 0 错误 / 11 skip**（10 条容器档因本机无 Docker、1 条未开压测开关；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
 | — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
 
-完整差距分析与后续阶段（M5–M8）见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
+**一句话总结**：1/4/5/6/7/8 与观测面已达成；2/3 剩的是**广度**而非能力——
+缺口清单（G1–G11）已全部闭合，唯一登记在案的保留项是 M8 交付物 4「加速时钟评估」
+（触发条件「小时级长稳场景 + virtual 档」尚未出现，`SimClock` 接口已预留，无返工成本）。
+
+完整差距分析与阶段计划见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
 ## 9. 文档索引
 
@@ -293,12 +351,21 @@ assertions:
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
 | [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（19 个指标族的语义、刷新时机与已知边界） |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 开发指南：环境、构建、测试分层、扩展点、约定、已知工程债 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单、M5–M8 阶段计划与验收口径 |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：D1–D9 拍板（决定/理由/触发条件/落点）与修订记录 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单 G1–G11、阶段计划与验收口径 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：拍板记录（决定/理由/触发条件/落点）与修订记录 |
 | [`docs/superpowers/specs/`](docs/superpowers/specs) | 设计文档 v1.0（冻结，唯一依据） |
-| [`docs/superpowers/plans/`](docs/superpowers/plans) | M0–M4 实施计划 |
-| [`docs/superpowers/acceptance/`](docs/superpowers/acceptance) | M3/M4 验收记录、万级压测报告、独立复验记录 |
+| [`docs/superpowers/plans/`](docs/superpowers/plans) | 各阶段实施计划 |
+| [`docs/superpowers/acceptance/`](docs/superpowers/acceptance) | 验收记录、万级压测报告、独立复验记录 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 版本策略与未发布/已发布变更 |
 
 ## 10. 许可
 
 **Apache-2.0**（设计文档 §15 选定，大数据生态惯例）——完整许可文本见仓库根目录 [`LICENSE`](LICENSE)。
+
+---
+
+<div align="center">
+
+**Duo** · 用一份 YAML，把大数据链路的故障演练压进秒级反馈回路
+
+</div>
