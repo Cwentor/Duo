@@ -10,6 +10,7 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,9 @@ public final class ExternalSutLauncher implements AutoCloseable {
     private final ReadyProbe.Spec ready;
     private final Map<String, String> discovered = new ConcurrentHashMap<>();
     private final CountDownLatch exited = new CountDownLatch(1);
+    /** stdout 读取线程（close() 需要先把它们从阻塞读里叫出来，见 close() 注释）。 */
+    private final List<Thread> pumpThreads =
+            java.util.Collections.synchronizedList(new ArrayList<>());
     private volatile Process process;
     private volatile boolean readyConfirmed;
     private volatile Integer exitCode;
@@ -136,14 +140,20 @@ public final class ExternalSutLauncher implements AutoCloseable {
         }
         eventSink.accept(Event.sim("sim.external-process-started", sutId,
                 Map.of("pid", process.pid(), "command", String.join(" ", command))));
-        Thread.ofVirtual().name("duo-external-stdout-" + sutId).start(this::pumpStdout);
+        Thread pump = Thread.ofVirtual().name("duo-external-stdout-" + sutId)
+                .start(this::pumpStdout);
+        pumpThreads.add(pump);
         Thread.ofVirtual().name("duo-external-exit-" + sutId).start(this::watchExit);
     }
 
     /** stdout 兜底途径：逐行找行首的 {@code duo.endpoint.<contract>=<endpoint>}（容忍首尾空白）。 */
     private void pumpStdout() {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                process.getInputStream(), StandardCharsets.UTF_8))) {
+        // 刻意**不**用 try-with-resources：句柄的释放归 close()（M-7），读线程只负责读。
+        // 若这里也持有且在退出时关流，就会与 close() 抢同一把读锁——Windows 上阻塞读不响应
+        // close()，两个线程会互相等到天荒地老（实测死锁）。一个 owner 管释放，这里只管读。
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    process.getInputStream(), StandardCharsets.UTF_8));
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] parsed = parseEndpointLine(line);
@@ -314,9 +324,41 @@ public final class ExternalSutLauncher implements AutoCloseable {
         return new LinkedHashMap<>(endpoints);
     }
 
-    /** 关闭＝不杀（设计 §7.3）；需要强制终止时调用方用 {@link #process()} 自行处置。 */
+    /**
+     * 释放本次运行持有的资源。
+     *
+     * <p>{@code command} 非空（代起形态，D7 ①）时**销毁子进程**并关掉本侧的 stdin/stdout/stderr；
+     * 进程生命周期随"持有句柄的一方"走——场景/宿主跑完必须由我们收摊，不能把 JVM 留在机器上。
+     *
+     * <p>attach 形态（{@code command} 为空，D7 ②）本进程从未持有子进程，这里**不动任何进程**，
+     * 只做无操作返回：进程归用户（§7.3）。
+     */
     @Override
     public void close() {
-        // 故意为空：external SUT 生命周期归用户
+        Process p = process;
+        if (p == null || command.isEmpty()) {
+            return; // attach：内核不拥有进程，没得可释放
+        }
+        // 顺序不能反：Windows 上阻塞在管道读里的 `readLine()` 是同步 ReadFile，既不被
+        // `Thread.interrupt()` 打断，也不被 `close()` 打断——而 `close()` 要拿的正是读线程
+        // 握着的那把流锁，先关流会**永久卡在 FileDescriptor.close0**（实测 jstack：主线程停在
+        // 该 native 帧，pump 线程仍停在 readBytes）。
+        // 先 destroy()：管道对端消失，读线程自行返回，随后关流不再有竞争。
+        p.destroy();
+        closeQuietly(p.getOutputStream());
+        closeQuietly(p.getInputStream());
+        closeQuietly(p.getErrorStream());
+    }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c == null) {
+            return;
+        }
+        try {
+            c.close();
+        } catch (IOException e) {
+            // 进程已退出时管道关闭会抛 IOException：属正常收尾，不是错误（§12 不静默的是
+            // "被隐藏的失败结论"，不是"关闭已关闭的流"）
+        }
     }
 }

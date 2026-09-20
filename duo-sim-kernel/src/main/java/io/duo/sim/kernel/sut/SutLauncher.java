@@ -129,7 +129,9 @@ public final class SutLauncher implements AutoCloseable {
                 eventSink.accept(Event.sut("sut.stop-handler-error", sutId,
                         Map.of("error", String.valueOf(e))));
             }
-        } else if (runner != null) {
+        } else if (stopDone.getCount() > 0 && runner != null) {
+            // 仅在 SUT 仍在运行时中断；已退出（stopDone 已放行）的 runner 是死线程，
+            // interrupt 它既无意义也会掩盖"根本没停住"的事实（审计 L-3）
             runner.interrupt();
         }
         try {
@@ -222,6 +224,18 @@ public final class SutLauncher implements AutoCloseable {
         @Override
         public void onStop(Runnable handler) {
             owner.stopHandler = handler;
+            // 安全审计 2026-09-20 L-3：SUT 可能在**注册之前**就已经跑完并退出（短任务 SUT ：
+            // main 先返回，onStop 在 finally 里补注册）。此时停止请求早就在途，若不再补一次，
+            // 这个回调就永远不会被调用——runner 已是死线程，"等到下次 stop()" 不存在。
+            // 补一次是安全的：runAndWatch 结束到 stop() 最终停下的路径本来就允许重复触发。
+            if (owner.stopRequested.get()) {
+                try {
+                    handler.run();
+                } catch (RuntimeException e) {
+                    owner.eventSink.accept(Event.sut("sut.stop-handler-error", owner.sutId,
+                            Map.of("error", String.valueOf(e))));
+                }
+            }
         }
 
         @Override

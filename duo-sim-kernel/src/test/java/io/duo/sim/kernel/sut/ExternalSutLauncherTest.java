@@ -235,18 +235,45 @@ class ExternalSutLauncherTest {
     }
 
     @Test
-    void closeDoesNotKillRunningProcess(@org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+    void closeDestroysSpawnedProcessAndReleasesPipes(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws Exception {
+        // 安全审计 2026-09-20 M-7 + INFO-1：代起形态由内核持有句柄 ⇒ 收尾必须销毁进程并释放
+        // stdin/stdout/stderr。此前 close() 是空实现，进程与三个 FD 都会留在机器上。
         int port = freePort();
         List<Event> events = new CopyOnWriteArrayList<>();
         var l = launcher("master", command("hold", port),
                 Map.of("ready.type", "tcp", "ready.port", String.valueOf(port),
                         "ready.timeout", "30s"), Map.of(), events, tmp.resolve("sut.properties"), 0);
+        l.start();
         try {
-            l.start();
-            l.close(); // 设计 §7.3：生命周期归用户，close 不杀
-            assertTrue(l.leftRunning(), "close() 不得杀 external 进程（§7.3）");
+            assertTrue(l.leftRunning(), "ready 后进程须存活");
+            l.close(); // 代起形态：句柄归内核，收尾即销毁
+            assertTrue(l.awaitExit(20_000), "close() 必须终止代起的子进程，不得留孤儿 JVM");
+            assertFalse(l.leftRunning(), "close() 后不得再报存活");
+            assertFalse(l.process().isAlive());
+            // 关流不得抛异常、也不得卡住：Windows 上若先关流会永久卡在 FileDescriptor.close0
+            l.close(); // 幂等
         } finally {
             kill(l);
+        }
+    }
+
+    @Test
+    void attachModeCloseLeavesUserProcessAlone(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws Exception {
+        // §7.3 的真正落点：attach 形态内核从未持有进程，close() 更不能碰用户进程。
+        List<Event> events = new CopyOnWriteArrayList<>();
+        try (ServerSocket userProcess = new ServerSocket(0)) {
+            int port = userProcess.getLocalPort();
+            var l = launcher("master", List.of(),
+                    Map.of("ready.type", "tcp", "ready.port", String.valueOf(port),
+                            "ready.timeout", "10s"), Map.of(), events,
+                    tmp.resolve("sut.properties"), 0);
+            l.start();
+            l.close();
+            assertNull(l.process(), "attach 形态没有内核持有的进程句柄");
+            assertTrue(userProcess.isBound() && !userProcess.isClosed(),
+                    "close() 不得关闭用户自行启动的进程（§7.3）");
         }
     }
 
@@ -285,6 +312,9 @@ class ExternalSutLauncherTest {
     private static void kill(ExternalSutLauncher l) {
         Process p = l.process();
         if (p != null && p.isAlive()) {
+            // 先释放本进程持有的管道句柄（审计 M-7 后 close() 会关流），再强杀：
+            // destroyForcibly() 之后立刻 exitValue() 会因管道未排空而阻塞——句柄先关掉就没有这个问题。
+            l.close();
             p.destroyForcibly();
         }
     }
