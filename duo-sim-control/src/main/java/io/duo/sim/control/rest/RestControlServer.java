@@ -128,7 +128,19 @@ public final class RestControlServer implements AutoCloseable {
      */
     public static final Duration REQUEST_TIME_BUDGET = Duration.ofSeconds(60);
 
-    /** 启动（port 0 = 自动分配）。返回实际端口。 */
+    /**
+     * 后台等待 SUT 退出的上限（每个已受理的场景一份）。远超正常场景的时长，只为让
+     * "SUT 永不退出"这类病态场景不至于把等待线程永久挂住；到点未退出则状态保持 RUNNING，
+     * 由调用方用 {@code DELETE /scenario} 显式停止——这是可见的，不是静默的。
+     */
+    public static final Duration SCENARIO_FINISH_TIMEOUT = Duration.ofHours(1);
+
+    /**
+     * 启动（port 0 = 自动分配）。返回实际端口。
+     *
+     * <p>注意这里**不**启动后台等待者：它的生命周期跟着"一次 start 请求"走，见
+     * {@code /scenario} 的 POST 分支。放在服务启动时是错的——那时还没有任何场景。
+     */
     public int start(int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -196,8 +208,11 @@ public final class RestControlServer implements AutoCloseable {
                         respond(ex, 200, host.start(tmp, ScenarioHost.Trust.EXTERNAL_INPUT,
                                 tmp.getFileName().toString()));
                         started = true;
-                    } catch (IllegalArgumentException
-                            | com.fasterxml.jackson.core.JacksonException e) {
+                    } catch (com.fasterxml.jackson.core.JacksonException
+                            | IllegalArgumentException e) {
+                        // IllegalArgumentException 覆盖 Jackson 2.13 起改为继承 IOException 的
+                        // MismatchedInputException（缺字段/类型不符在绑定阶段抛它）——漏掉这一支，
+                        // 这类"调用方输入不合法"就会落到下面的 Exception → 500（审计口径：500 是我们的 bug）。
                         respond(ex, 400, Map.of("error", sanitizeReason(e.getMessage())));
                     } catch (IllegalStateException e) {
                         respond(ex, 409, Map.of("error", sanitizeReason(e.getMessage())));
@@ -209,6 +224,13 @@ public final class RestControlServer implements AutoCloseable {
                         if (!started && tmp != null) {
                             deleteQuietly(tmp);
                         }
+                    }
+                    // serve 语义的一部分：此后由**后台**等待 SUT 退出并固化结果（评估断言 → 终态）。
+                    // 少了这一步，SUT 自行退出后 /scenario/status 会永远停在 RUNNING，
+                    // 而调用方看到的"还在跑"与"已经跑完"完全无法区分——那是静默的错误答案，
+                    // 不是"没实现"。放在启动成功之后：等待者是为这个场景而起的。
+                    if (started) {
+                        host.awaitFinishInBackground(SCENARIO_FINISH_TIMEOUT.toMillis());
                     }
                 }
                 case "DELETE" -> respond(ex, 200, host.stopWithoutAwait());
@@ -275,9 +297,15 @@ public final class RestControlServer implements AutoCloseable {
                 }
             } catch (BodyTooLargeException e) {
                 respond(ex, 413, Map.of("error", e.getMessage()));
-            } catch (com.fasterxml.jackson.core.JacksonException
-                    | IllegalArgumentException e) {
+            } catch (com.fasterxml.jackson.core.JacksonException | IllegalArgumentException e) {
                 respond(ex, 400, Map.of("error", String.valueOf(e.getMessage())));
+            } catch (NullPointerException e) {
+                // 结构上缺 target 的 FaultAction 能通过 JSON 绑定，却在**下游**抛 NPE
+                // （`FaultAction.target()` 为 null → 取 componentId()）。这仍然是"调用方输入
+                // 不合法"，不是我们的 bug：按审计口径必须是 400，而不是让它落进兜底 500。
+                respond(ex, 400, Map.of("error",
+                        "fault action is missing a required field: "
+                                + sanitizeReason(e.getMessage())));
             } catch (Exception e) {
                 respond(ex, 500, Map.of("error", sanitizeReason(e.getMessage())));
             }

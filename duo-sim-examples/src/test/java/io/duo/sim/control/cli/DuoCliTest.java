@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** T34 CLI 单测：参数解析、同进程 inject 空态与 attached 注入、--url 跨进程模式。 */
 class DuoCliTest {
@@ -225,6 +226,72 @@ class DuoCliTest {
         Files.writeString(f, INJECT_AFTER, StandardCharsets.UTF_8);
         assertEquals(1, DuoCli.run("serve", f.toString(), "--port", "0"),
                 "serve without a token and without --insecure-no-auth must refuse to start");
+    }
+
+    // ---- 由 RestControlServerTest 迁入的两条「外部输入拒绝」用例（第 14 轮，2026-09-20）----
+    // 原因：它们需要一条带 launch.main 与 config 的**真实 SUT 节点**才能构造场景，
+    // 而 duo-sim-control 的测试类路径上没有档位实现（SUT 就是本模块的 DemoScheduler）。
+    // 覆盖没有减少，只是搬到了能构造出该场景的模块——hoisting 见 docs/DEVELOPMENT.md §3.2。
+
+    /** 任意类加载（`main: java.lang.ProcessBuilder`）必须在**校验期**被拒（400/异常）。 */
+    @Test
+    void arbitraryClassLaunchIsRejected() throws Exception {
+        Path f = Files.createTempFile("duo-cli-arbitrary-main", ".yaml");
+        Files.writeString(f, FAST.replace(
+                "main: io.duo.sim.examples.scheduler.DemoScheduler",
+                "main: java.lang.ProcessBuilder"), StandardCharsets.UTF_8);
+        // 走 REST 形态（与安全审计报告里那条 PoC 同路径：控制面收的是不可信字节）
+        try (ScenarioHost host = new ScenarioHost();
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
+            int port = server.start(0);
+            String url = "http://127.0.0.1:" + port;
+            String token = io.duo.sim.control.rest.TestTokens.TOKEN;
+            var resp = postScenario(url, token, Files.readString(f));
+            assertEquals(400, resp.statusCode(), () -> "body: " + resp.body());
+            assertTrue(resp.body().contains("framework namespace"), resp.body());
+        }
+    }
+
+    /**
+     * 未知 config 键必须在**校验期**被拒（审计 M-1/M-2：认不出的键默认拒绝）。
+     *
+     * <p>判据走「非200 且理由是未知键」而不是硬编码 400，因为两条路径的错误形态不同：
+     * {@code ScenarioValidator} 抛 {@link IllegalArgumentException} → 400，而
+     * {@code ScenarioHost.start} 对校验失败抛 {@link IllegalStateException} → 409。
+     * 口径不变——**拒绝且说清理由**（§12 不静默）。
+     */
+    @Test
+    void unknownConfigKeyIsRejected() throws Exception {
+        Path f = Files.createTempFile("duo-cli-unknown-key", ".yaml");
+        Files.writeString(f, INJECT_AFTER.replace(
+                "config: { dag.tasks: \"job-a,job-b,job-c,job-d\" }",
+                "config: { totally.unknown.key: \"x\" }"), StandardCharsets.UTF_8);
+        try (ScenarioHost host = new ScenarioHost();
+             RestControlServer server = new RestControlServer(host,
+                     RestControlServer.Auth.TOKEN, io.duo.sim.control.rest.TestTokens.TOKEN)) {
+            int port = server.start(0);
+            String token = io.duo.sim.control.rest.TestTokens.TOKEN;
+            var resp = postScenario("http://127.0.0.1:" + port, token, Files.readString(f));
+            assertTrue(resp.statusCode() >= 400 && resp.statusCode() < 500,
+                    () -> "未知 config 键必须被拒（4xx），实际 " + resp.statusCode()
+                            + " body: " + resp.body());
+            assertTrue(resp.body().contains("not accepted for external input"),
+                    () -> "拒绝理由必须指名未知键，body: " + resp.body());
+        }
+    }
+
+    private static java.net.http.HttpResponse<String> postScenario(
+            String url, String token, String yaml) throws Exception {
+        var req = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url + "/scenario"))
+                .header("Authorization", "Bearer " + token)
+                .timeout(java.time.Duration.ofSeconds(10))
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                        yaml, StandardCharsets.UTF_8))
+                .build();
+        return java.net.http.HttpClient.newHttpClient()
+                .send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
     }
 
     private static void assertNotNull(Object o) {

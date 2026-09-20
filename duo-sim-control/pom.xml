@@ -29,5 +29,26 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
+        <!-- 控制面契约测试（ScenarioHost / RestControlServer）需要断言库；junit-jupiter 聚合件
+             由根 POM 统一继承（其余 7 个模块同款），此处不重复声明。 -->
+        <!-- 测试范围：控制面驱动的场景要有一份**真实**的档位实现才跑得起来（§8 校验「必须且
+             只能有一个 sut: true」，且每个节点都要有已注册实现）。不引 examples——那会与
+             examples→control 构成模块循环——改用 components 的 virtual 档：本模块测试只消费
+             契约、不消费示例，依赖方向因此是单向的（第 14 轮口径修正，docs/DEVELOPMENT.md §3.2）。 -->
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-components</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- 测试范围：档位夹具（ControlFixtureSut）要**真的讲协议**——注册/心跳/回报都走
+             FrameConnection + 消息对象，而不是假装通过。少了这条，夹具只能"假装注册成功"，
+             验收就退回"进程内直接调接口"，不再证明线协议可用（compiler 会以
+             "used undeclared dependency" 把这件事拦在构建期，见 -Dquality verify）。
+             protocol 是 kernel 的上游，依赖方向不构成环。 -->
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-protocol</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

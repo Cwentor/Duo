@@ -1,6 +1,10 @@
 package io.duo.sim.control;
 
-// 由 duo-sim-control 迁入（T33：examples test 依赖 control，避免模块循环）
+// 由 duo-sim-examples 迁回本模块（第 14 轮口径修正，2026-09-20）：
+// ScenarioHost 是控制面类，它的契约测试**不需要任何档位实现**——本文件的场景不声明
+// SUT/external 节点，也就不用 DemoScheduler（本模块测试类路径上没有 examples）。
+// 依赖 DemoScheduler 的编排层用例（DuoCliTest）留在 examples 步内按模块归属执行，
+// 见 docs/DEVELOPMENT.md §3.2。
 
 import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.FaultAction;
@@ -22,7 +26,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** T32 单测：控制面适配层（零内核改动前提下驱动既有引擎 API）。 */
 class ScenarioHostTest {
 
-    /** 快速收敛的场景（短时长，便于测试）。 */
+    /**
+     * 快速收敛的场景（短时长，便于测试）。
+     *
+     * <p>第 14 轮迁回本模块后 SUT 改用 {@code VirtualScheduler}（components 的 virtual 档真实
+     * 实现，本模块以 test 作用域依赖它）：控制面契约测试要的是「有一份真实档位实现能跑通全链路」，
+     * 不需要 examples 的演示 SUT——依赖方向因此保持单向（examples → control）。
+     */
     private static final String FAST_SCENARIO = """
             name: control-host-smoke
             topology:
@@ -31,10 +41,10 @@ class ScenarioHostTest {
                 tier: virtual
               - id: master
                 contract: scheduler
-                tier: real
+                tier: virtual
                 sut: true
-                launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
-                config: { dag.tasks: "a,b" }
+                launch: { mode: in-process, main: io.duo.sim.control.testfixture.ControlFixtureSut }
+                config: { dag.tasks: "a,b", fixture.expectedWorkers: "2" }
                 exposes: [{ contract: scheduler, port: 0 }]
                 wiring:
                   registry: { node: zk, contract: registry }
@@ -62,6 +72,28 @@ class ScenarioHostTest {
         return f;
     }
 
+    /**
+     * 先自证「virtual 档实现确实在本模块测试类路径上」。
+     *
+     * <p>理由：契约测试最容易的坏死法是「因为找不到实现而变成一条不测任何东西的用例」
+     * ——这里用一条显式断言把前置条件钉住，失败信息直接指向依赖声明（§12 不静默）。
+     */
+    @Test
+    void virtualProvidersVisibleOnThisModuleTestClasspath() {
+        var registry = io.duo.sim.kernel.core.ContractRegistry.loadFromServiceLoader();
+        assertTrue(registry.hasImplementation(
+                        io.duo.sim.kernel.api.Contract.SCHEDULER, io.duo.sim.kernel.api.Tier.VIRTUAL),
+                "duo-sim-control 的测试需要 virtual 档实现（test 作用域依赖 duo-sim-components）");
+        assertTrue(registry.hasImplementation(
+                        io.duo.sim.kernel.api.Contract.WORKER, io.duo.sim.kernel.api.Tier.VIRTUAL),
+                "同上：worker 契约需要 virtual 档实现");
+    }
+
+    private static final long _60S = 60_000;
+
+    /** 夹具 SUT 自己退出的观察上限：夹具在第二个 worker 注册+心跳到达后即返回。 */
+    private static final long _15S = 15_000;
+
     @Test
     void startRunsScenarioAndReportsStatus(@TempDir Path tmp) throws Exception {
         Path f = writeScenario(tmp, FAST_SCENARIO);
@@ -71,7 +103,9 @@ class ScenarioHostTest {
             assertEquals("control-host-smoke", st.get("scenario"));
             assertTrue(host.isRunning());
 
-            var fin = host.awaitFinish(60_000);
+            // 夹具 SUT 收齐 2 个 worker 的注册与心跳后 run() 返回 → sut.exited → 场景终态。
+            // 这也是 §7.3 结束条件为「SUT 退出」的可执行证据：不是时间到，是 SUT 说了算。
+            var fin = host.awaitFinish(_15S);
             assertEquals("FINISHED", fin.get("state"),
                     () -> "assertion failures: " + fin.get("assertions"));
             assertEquals(Boolean.TRUE, fin.get("passed"));
@@ -91,7 +125,7 @@ class ScenarioHostTest {
             assertEquals(first.size(), lastSeq, "sequences must be 1..N contiguous");
 
             // since=lastSeq → 只有新增（可能为空，但不得重复历史）
-            host.awaitFinish(60_000);
+            host.awaitFinish(_60S);
             List<Map<String, Object>> delta = host.eventsSince(lastSeq);
             for (var e : delta) {
                 assertTrue((int) e.get("seq") > lastSeq, "delta must only contain new events");
@@ -190,7 +224,9 @@ class ScenarioHostTest {
         Path f = writeScenario(tmp, FAST_SCENARIO);
         try (var host = new ScenarioHost()) {
             host.start(f);
-            host.awaitFinish(60_000);
+            // 先等终态：跑到停机后再读断言，语义与「postmortem」一致——不等就可能读到空集，
+            // 让「断言为空」这条真实缺陷掩盖在竞态里（本轮就是这么被发现的）
+            host.awaitFinish(_60S);
             var a = host.assertions();
             assertEquals(Boolean.TRUE, a.get("passed"));
             assertFalse(((List<?>) a.get("assertions")).isEmpty());
@@ -199,7 +235,7 @@ class ScenarioHostTest {
 
     @Test
     void validationFailureIsReported(@TempDir Path tmp) throws Exception {
-        // 无 SUT 节点 → 校验失败（§8 快速失败）
+        // 认不出的契约 → 校验失败（§8 快速失败）
         String bad = """
                 name: bad
                 topology:

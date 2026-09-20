@@ -32,6 +32,9 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-embedded</artifactId>
         </dependency>
+        <!-- 第 14 轮口径修正：DuoCliTest 是**编排层**用例——它加载的场景里 SUT 就是本模块的
+             DemoScheduler（launch.main 指向本模块类），故它属于本模块的测试，留在本模块
+             src/test 里按模块归属执行（控制面自身的契约测试已回到 duo-sim-control）。 -->
         <dependency>
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-control</artifactId>
