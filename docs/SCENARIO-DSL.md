@@ -85,6 +85,7 @@ launch:
 | `main` | `in-process` 必填：`SutMain` 实现类的全限定名（反射实例化，需无参构造器） |
 | `command` | `external` 可选：内核代起的外部进程命令行（M6 决策 D7）。按空白切分、支持引号包裹；`${java}` / `${java.home}` 展开为**当前 JVM** 的 java 可执行文件/JDK 家目录，使场景文件不写死本机路径。**省略 `command` ＝ attach 形态**：进程由用户自行启动，内核只写端点配置 + 探针就绪（此时进程退出不可观测） |
 | `configOut` | `external` 必填：端点配置文件输出路径（§7.3 主途径；校验规则 4） |
+| `allowExternalProcess` | **（可选，缺省 `false`）** 显式声明"我知道这份场景会派生外部进程"。安全审计 2026-09-20 后，**外部输入档**（`POST /scenario` body）只要 `mode: external` 就要求 `command` 为空且本字段为 `false`；配置档不受影响。存在的意义是让"起进程"这件事在文件里**看得见**，而不是藏在 `command` 的缺失/存在里 |
 | `ready` | `external` 必填的探针声明；`ScenarioLoader` 把 `launch.ready.*` 展平为 `config["ready.<k>"]`，见 §1.4。**节点级 `ready:` 是等价别名**（M5 起），两者冲突（同键不同值）在**解析期报错**，不静默择一 |
 
 ### 1.4 `launch.ready`（就绪探针，M6）
@@ -123,6 +124,10 @@ launch:
   自身端点宣告——宣告行须由 SUT 显式打印。
 - **生命周期归用户**（§7.3）：场景结束**只拆接线、不杀进程**，发 `sim.external-process-left-running`
   事件 + 终态警告提示用户自行终止；句柄经 `ScenarioEngine.externalSut()` 暴露（`process()` 可自行终止）。
+- **谁持有句柄谁收摊**（安全审计 2026-09-20 M-7 / 决策 D12）：`ExternalSutLauncher.close()` 对
+  **代起形态**（`command` 非空）`destroy()` 子进程并释放 stdin/stdout/stderr；对 **attach 形态**
+  一根手指都不碰。理由见 `docs/security-audit-2026-09-20.md` §7.1——在 Windows 上"只关流不杀进程"
+  会**永久死锁**在 `FileDescriptor.close0`（阻塞读不响应 `close()`，而 `close()` 要等读锁）。
 - **启动失败即销毁**（决策 D9）：ready 超时或 ready 前退出时内核销毁子进程（未就绪的进程从未成为 SUT，
   留着必然泄漏）——与「场景结束不杀」不冲突。
 - **attach 形态**（省略 `command`）：进程由用户自行启动，内核只写端点配置 + 探针就绪；此时**进程退出
@@ -248,6 +253,9 @@ try (var engine = ScenarioEngine.validated(scenario, registry).withHooks(hooks))
 
 - hook 名取自 `params.hook`，其余 `params` 经 `ctx.params()` 透传；未注册的 hook 名 →
   **`injectionFailure`（§12 不静默）**，不假装成功。
+- `ctx.emit(type, payload)` 的 `type` **必须**以 `sim.` 或 `sut.` 开头（安全审计 2026-09-20 M-3）：
+  事件流是断言与指标的唯一事实源，允许 hook 发任意类型等于允许它伪装内核事实
+  （伪造成 `duo.*` 就能骗过断言与 `/metrics`），故越界类型直接抛 `IllegalArgumentException`。
 - 事件顺序：hook 自身 `ctx.emit(...)` 的事实在前，框架的 `sim.hook-executed {hook, target}` 在其后
   （断言写 `eventSequence: [<hook 事实>, sim.hook-executed]`）。
 - `target` 允许指向 SUT（§7.2 唯一豁免）——这正是「协作式外部干预」的用法。
@@ -268,9 +276,13 @@ try (var engine = ScenarioEngine.validated(scenario, registry).withHooks(hooks))
 
 ---
 
-## 4. 校验规则（规则 1–8）
+## 4. 校验规则（规则 1–11）
 
 启动前快速失败；除规则 8 的端口占用外，全部只读契约注册表的**静态能力元数据**（§6/§7.5）。
+
+规则 **1–8 对所有场景生效**；规则 **9–11 只对「外部输入档」生效**——即经控制面 `POST /scenario` body
+提交的场景（安全审计 2026-09-20 C-1/H-3）。本机 YAML 文件 / CLI / 测试 / classpath 资源属**配置档**，
+能力不缩水（详见 `docs/ARCHITECTURE.md` §12.1 与 `docs/DECISIONS.md` D11）。
 
 | # | 规则 | 失败表现 |
 | --- | --- | --- |
@@ -282,6 +294,9 @@ try (var engine = ScenarioEngine.validated(scenario, registry).withHooks(hooks))
 | 6 | 时间线：`target` 可解析；**不得为 SUT**（`custom-hook` 豁免）；下标 ∈ `[1,count]`；动作须在 `supportedFaults` 或属 `crash`/`restart`；带下标须有 `instanceControl` | `is SUT (§7.2; custom-hook excepted)` / `index out of [1,count]` / `unsupported by ... (§7.2 无降级)` / `requires instanceControl capability` |
 | 7 | 每个**具名** profile 至少一个绑定；绑定不得引用未知 profile（`default` 免绑定） | `behavior profile 'x' has no binding (rule 7)` |
 | 8 | `exposes` 声明的固定端口（非 0）未被占用 | `fixed port N is already in use` |
+| 9 | **（外部输入档）**不得派生进程：`launch.mode: external` 时禁 `launch.command` 与 `launch.allowExternalProcess: true` | `external process launch is not allowed for untrusted scenario input` |
+| 10 | **（外部输入档）**`sut.main` 必须在框架命名空间内（`io.duo.sim.` / `com.duo.`）——否则外部输入等于任意类加载＋静态初始化执行 | `sut.main must be in the framework namespace ...` |
+| 11 | **（外部输入档）**`config` 键必须在白名单内（各组件**真实读取**的键），且值不得含 URL scheme（`jdbc:`/`file:`/`http:` …）或绝对路径（`/…`、`X:\…`）；规模上限：节点 ≤ 256、实例总数 ≤ 4096、单节点实例 ≤ 1024、时间线 ≤ 1000、断言 ≤ 200 | `unknown config key ...` / `config value ... must not be a URL or an absolute path` / `too many nodes/instances/timeline entries` |
 
 额外校验：`assertions` 节在**校验期**即解析，未知断言名/形态错误＝启动前失败（不静默忽略）。
 

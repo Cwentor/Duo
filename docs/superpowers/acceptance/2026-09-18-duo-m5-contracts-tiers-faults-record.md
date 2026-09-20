@@ -143,7 +143,7 @@ run 35342550716 的 `regression` 红：`VirtualEngineTest.restartResetsStateAndR
 ## 5. 全量回归（本机实测）
 
 ```
-$env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
+$env:JAVA_HOME="<JDK 21 安装目录>"     # 验收当日的实测命令含开发者本机路径；安全审计 2026-09-20 L-5 后改为占位符（记录不改史）
 .\mvnw.cmd -o -B test
 ```
 

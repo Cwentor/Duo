@@ -11,7 +11,7 @@
 | Content-Type | `text/plain; version=0.0.4; charset=utf-8`（Prometheus 文本格式） |
 | 可抓取时机 | **始终可读**（场景 `IDLE`/`RUNNING`/`FINISHED`/`FAILED` 都返回 200）。与 `/scenario/status` 不同——后者在场景未启动时返回 `409`，会让 Prometheus target 反复掉线 |
 | 其它入口 | `duo metrics`（同进程直读）、`duo metrics --summary`（单行摘要，人读用） |
-| 认证 | 无（与其余控制面端点一致：面向本机/受控网络，生产部署需自行加前置代理） |
+| 认证 | **需要 `Authorization: Bearer <token>`**（安全审计 2026-09-20 起，与其余控制面端点一致；曾经的"`/metrics` 不鉴权"口径已作废）。Prometheus 侧用 `authorization: {credentials: <token>}` 或 `bearer_token_file` 配置即可 |
 
 ## 2. 设计原则
 
@@ -90,7 +90,11 @@
   （用事件流或 `duo diagnose` 做单场景归因）。
 - 指标只覆盖**事件流能观察到的事实**：进程内部态（如线程池队列深度）不在此列。
 - 无直方图：分位数需另行接入（§5）。
-- `/metrics` 无鉴权（与既有控制面一致）。
+- `/metrics` 需要令牌（安全审计 2026-09-20 整改；抓取方须配 `bearer_token`/`bearer_token_file`）。
+- **事件类型基数有界**：`duo_events_total` 的 `type` 维度上限 256，超出并入 `type="__other__"`
+  （安全审计 2026-09-20 H-4：外部 SUT 的 stdout 可凭空造出任意 `sut.*` 类型，无界 map ⇒
+  内存与 TSDB 基数双爆）。**总量恒等**：溢出后 `sum(duo_events_total)` 仍然精确等于事件总数，
+  只有"按类型看"的精度在超过 256 种后粗化。类型名超过 200 字符的按截断形式入桶。
 
 ## 5. 后续可扩充项（未做，非缺失）
 

@@ -157,8 +157,8 @@ ROADMAP 给它的**触发条件**是："出现「小时级长稳场景」且目�
 ## 7. 复现命令
 
 ```powershell
-# 依赖与环境
-$env:JAVA_HOME="C:\Users\cwt15\devtools\jdk-21.0.12.1+1"
+# 依赖与环境（占位符：验收当日实测命令含开发者本机路径，安全审计 2026-09-20 L-5 后改写）
+$env:JAVA_HOME="<JDK 21 安装目录>"
 
 # 全量回归
 .\mvnw.cmd -o -B test

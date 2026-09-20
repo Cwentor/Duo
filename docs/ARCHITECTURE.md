@@ -470,17 +470,38 @@ DuoCli ──┬── 同进程模式（run --keep 注册进程级 attach 表�
               ScenarioEngine（内核）
 ```
 
-REST 端点与错误映射：
+REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 外全部要求 `Authorization: Bearer <token>`，
+且 `Host`/`Origin` 必须回环——见下方「控制面信任模型」）：
 
 | 端点 | 方法 | 说明 | 错误 |
 | --- | --- | --- | --- |
-| `/health` | GET | 服务存活 | — |
-| `/scenario` | POST / DELETE | 启动（body＝YAML 文本）/ 停止 | 400 解析失败、409 已在运行 |
-| `/scenario/status` | GET | 状态/断言/注入失败 | 409 未启动 |
-| `/events?since=N` | GET | 事件增量 | 400 `since` 非整数 |
-| `/inject` | POST | body＝`FaultAction` JSON | 400 解析失败、404 未知 target、409 未运行、405 方法不符 |
-| `/assertions` | GET | 断言与注入失败明细 | 409 未启动 |
-| `/topology` | GET | 节点/契约/档位/实例/在线状态 | 409 未启动 |
+| `/health` | GET | 服务存活（**唯一免认证**端点，供探针使用） | — |
+| `/scenario` | POST / DELETE | 启动（body＝YAML 文本，**按外部输入档校验**）/ 停止（立即返回，不等 SUT 收尾） | 400 解析/校验失败、401 缺令牌、403 跨站/非回环 Host、409 已在运行、413 body 超限 |
+| `/scenario/status` | GET | 状态/断言/注入失败 | 401、409 未启动 |
+| `/events?since=N` | GET | 事件增量 | 400 `since` 非整数、401 |
+| `/inject` | POST | body＝`FaultAction` JSON | 400 解析失败、401、404 未知 target、409 未运行、405 方法不符 |
+| `/assertions` | GET | 断言与注入失败明细 | 401、409 未启动 |
+| `/topology` | GET | 节点/契约/档位/实例/在线状态 | 401、409 未启动 |
+| `/metrics` | GET | Prometheus 抓取 | 401 |
+
+### 12.1 控制面信任模型（安全审计 2026-09-20 C-1/H-1/H-2/M-4）
+
+信任边界**不画在「能不能连到 127.0.0.1:7788」上**——同机进程与浏览器里的任意网页都能连。
+边界画在**输入是谁给的**上（决策 D10/D11）：
+
+| 输入来源 | 信任档 | 能力 |
+| --- | --- | --- |
+| 本机 YAML 文件 / CLI / 测试 / classpath 资源 | 配置档（`Trust.CONFIG`，边界＝本机权限） | 与整改前一致：可起外部进程、可加载 SUT 主类 |
+| 控制面 `POST /scenario` body、任何远程/浏览器来源 | 外部输入档（`Trust.EXTERNAL_INPUT`） | 禁派生进程、禁框架外主类、`config` 键白名单、值禁绝对路径/URL scheme、规模上限 |
+
+三层防线，缺一层都不成立：
+
+1. **令牌必填**：`serve` 不给 `--token`/`--token-file`/`DUO_TOKEN` 就**拒绝启动**
+   （除非显式 `--insecure-no-auth`，用于纯本机调试）。令牌放**自定义头**，
+   跨站「简单请求」无法携带；比较用 `MessageDigest.isEqual`（定时安全）。
+2. **回环双校验**：`Host` 必须是回环字面量、`Origin`（存在时）必须是回环——挡 DNS-rebinding 与 CSRF。
+3. **输入收窄**：`Content-Length` 上限 1 MiB 且按 `MAX+1` 流式截断（防谎报/chunked）；
+   单请求处理上限 `setMaxReqTime(60s)`；外部输入档再过校验器规则 9–11。
 
 **事件序号语义（M3 D3）**：序号＝事件在 `engine.events()` 快照中的 **1-based 下标**。内核事件流是只追加的
 `CopyOnWriteArrayList`，故下标稳定、天然不重不漏，直接切片即 O(新增)；**跨快照的严格全序不承诺**。
@@ -525,6 +546,11 @@ HEADER_LENGTH = 9      MAX_PAYLOAD_LENGTH = 1 MiB      payload = UTF-8 JSON
    已下沉为实现层守卫（M4 独立验收 HIGH 整改）；`PostgresContainerStore` 同（M5 第 4 轮，
    映射端口只能来自容器，重建即换端口）。
 10. 内核不得新增仅控制面需要的符号；控制面改动**零内核改动**（§10）。
+11. **输入信任分层**：凡是在控制面/网络边界上解析出来的场景（`POST /scenario` body），一律按
+    `EXTERNAL_INPUT` 校验——禁 `launch.command`、禁框架外 `sut.main`、`config` 键白名单、值禁绝对路径与 URL
+    scheme；只有本机文件（CLI/测试/资源）才是配置档（§12.1、D11）。
+12. **谁持有句柄谁收摊**：内核代起的外部 SUT（`launch.command` 非空）必须由 `close()` 销毁进程并释放
+    管道；attach 形态（用户自己起的进程）内核一根手指都不碰（§12.1、D12）。
 
 ---
 

@@ -8,7 +8,7 @@
 # 用法：bash scripts/duo-inject-demo.sh [scenario.yaml]
 # 退出码：0 = 两个演示均通过（注入成功、断言通过、无任务丢失）。
 #
-# 前置：先构建一次（./mvnw -o install -DskipTests）。
+# 前置：先构建一次（./mvnw -o install -DskipTests），并显式设置 JAVA_HOME（缺失即报错，不回落到本机路径）。
 set -e
 
 cd "$(dirname "$0")/.."
@@ -17,8 +17,16 @@ SCENARIO="${1:-duo-sim-examples/src/main/resources/scenarios/m3-inject-demo.yaml
 PORT="${DUO_DEMO_PORT:-0}"   # 0 = 由内核分配空闲端口（避免与遗留进程撞端口）
 
 # JDK 21（与 ./mvnw 同一工具链；Git Bash 下 JAVA_HOME 须为 POSIX 路径）
-# 缺省回落到作者本机路径——其他机器请显式 `export JAVA_HOME=...`
-export JAVA_HOME="${JAVA_HOME:-/c/Users/cwt15/devtools/jdk-21.0.12.1+1}"
+# 安全审计 2026-09-20 L-5：**不**回落到作者本机路径（那是个人信息泄漏，也让脚本换台机器就"看起来能跑"却
+# 跑错 JDK）。JAVA_HOME 缺失即报错退出——宁可显式失败，不要静默用另一个 JDK（§12 不静默）。
+if [ -z "${JAVA_HOME:-}" ]; then
+    echo "错误：未设置 JAVA_HOME（本脚本需要 JDK 21；示例：export JAVA_HOME=/path/to/jdk-21）" >&2
+    exit 1
+fi
+if [ ! -x "$JAVA_HOME/bin/java" ]; then
+    echo "错误：JAVA_HOME 下找不到 bin/java：$JAVA_HOME" >&2
+    exit 1
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
 if ! command -v java >/dev/null 2>&1; then

@@ -116,6 +116,7 @@ CI（`.github/workflows/ci.yml`）：`regression`（无 Docker）/ `container`�
 ```bash
 # 单命令：启动 → 3s 后热注入 crash workers[2] → 等 SUT 退出 → 打印结果，退出码即结论
 ./mvnw -o install -DskipTests
+export JAVA_HOME=/path/to/jdk-21     # 脚本要求 JAVA_HOME 必填（安全审计 L-5：不再回落本机路径）
 bash scripts/duo-inject-demo.sh
 ```
 
@@ -126,15 +127,24 @@ bash scripts/duo-inject-demo.sh
 duo run duo-sim-examples/src/main/resources/scenarios/m3-inject-demo.yaml \
     --inject-after 3s "crash workers[2]" --wait      # 同进程模式
 
-duo serve <scenario.yaml> --port 0 &                 # 跨进程模式（服务端）
-duo status  --url http://127.0.0.1:<port>
-duo topology --url http://127.0.0.1:<port>
-duo inject crash workers[2] --url http://127.0.0.1:<port>
-duo events --since 0 --url http://127.0.0.1:<port>
-duo assert  --url http://127.0.0.1:<port>            # 退出码反映断言通过与否
-duo metrics --url http://127.0.0.1:<port>            # Prometheus 文本格式（可直接被 scrape）
-duo diagnose --url http://127.0.0.1:<port>           # 一次注入的完整因果链；断链退出码 1
+# 跨进程模式：serve 必须给令牌（或用 DUO_TOKEN / --token-file）；
+# 不给就拒绝启动——除非显式 --insecure-no-auth（仅供纯本机调试）
+duo serve <scenario.yaml> --port 0 --token dev-secret &
+duo status  --url http://127.0.0.1:<port> --token dev-secret
+duo topology --url http://127.0.0.1:<port> --token dev-secret
+duo inject crash workers[2] --url http://127.0.0.1:<port> --token dev-secret
+duo events --since 0 --url http://127.0.0.1:<port> --token dev-secret
+duo assert  --url http://127.0.0.1:<port> --token dev-secret    # 退出码反映断言通过与否
+duo metrics --url http://127.0.0.1:<port> --token dev-secret    # Prometheus 文本格式（可直接被 scrape）
+duo diagnose --url http://127.0.0.1:<port> --token dev-secret   # 一次注入的完整因果链；断链退出码 1
 ```
+
+> **控制面安全口径（安全审计 2026-09-20）**：控制面只监听 `127.0.0.1`，但「能连上端口」**不是**信任边界
+> ——同机进程与浏览器里的任意网页都连得上。因此：① 除 `/health` 外所有端点要求 Bearer 令牌；
+> ② `Host`/`Origin` 必须回环（挡 DNS-rebinding / CSRF）；③ 请求体上限 1 MiB。
+> 经 `POST /scenario` 提交的场景按**外部输入档**校验：禁 `launch.command`、禁框架外 `sut.main`、
+> `config` 键白名单、值禁绝对路径与 URL scheme。本机 YAML（CLI/测试）不受此限。
+> 细节见 `docs/ARCHITECTURE.md` §12.1 与 `docs/DECISIONS.md` D10/D11。
 
 ### 5.4 观测面：三条通道怎么用（M8）
 

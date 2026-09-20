@@ -15,3 +15,9 @@ out/
 .mimosa/
 logs/
 *.log
+
+# JVM 崩溃产物（安全审计 2026-09-20 L-3/INFO-1）：`*.log` 已覆盖，这两条是"显式封口"——
+# 它们含 USERNAME / JAVA_HOME / 完整 PATH，出现在工作区就应被当作本机信息泄漏处理。
+# 当前 `*.log` 已能拦住，这里写出来是为了让"为什么这些文件不该提交"有据可查。
+hs_err_pid*.log
+replay_pid*.log

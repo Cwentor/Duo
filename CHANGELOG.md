@@ -24,6 +24,17 @@
 
 ### 新增
 
+- **控制面安全整改（安全审计 2026-09-20，第 13 轮）**：`duo serve` 的令牌**由可选改为必填**
+  （`--token` / `--token-file` / `DUO_TOKEN`；缺失即拒绝启动，除非显式 `--insecure-no-auth`）——
+  **破坏性变更**，所有 REST/CLI 客户端需带 `--token` 或 `Authorization: Bearer`。除 `/health` 外
+  全部端点要求令牌；`Host`/`Origin` 必须回环；请求体上限 1 MiB。
+  场景校验分两档：**外部输入档**（`POST /scenario` body）禁 `launch.command`、
+  禁框架外 `sut.main`、`config` 键白名单、值禁绝对路径与 URL scheme、规模有界；
+  **配置档**（本机 YAML/CLI/测试/资源）能力与整改前完全一致。
+  另有：`MetricsCollector` 事件类型基数上限 256（`__other__` 溢出桶，总量恒等）、
+  `EventRecorder` 有界缓冲 50 万（溢出计数上抛告警）、`HookRegistry.emit` 只接受
+  `sim.`/`sut.` 前缀、`launch.allowExternalProcess` 显式声明、`ReadyProbe` 复用静态 `HttpClient`、
+  临时场景 YAML 与 SUT 端点配置在收尾时清理。决策见 `docs/DECISIONS.md` D10/D11/D12。
 - **依赖门禁（M7 交付物 4）**：根 POM 新增 `quality` profile，`-Dquality` 激活
   `maven-dependency-plugin:analyze-only`（绑 `verify`）且 `failOnWarning=true`；
   缺省不激活 ⇒ 常规 `mvnw test` 零额外开销。CI 的 `regression` job 已接入
@@ -43,6 +54,13 @@
 
 ### 修复
 
+- **安全审计 20 条发现全部闭合（第 13 轮）**：C-1（未认证即可 RCE / 任意文件写）、H-1..H-5
+  （跨站与 DNS-rebinding、body 无上限、进程派生跳板、指标基数、事件缓冲与收尾阻塞）、
+  M-1..M-8、L-1..L-6、INFO-1。两处**按实证修正报告字面**并如实记录：
+  ① `ExternalSutLauncher.close()` 不能"只关流不杀进程"——Windows 上会在
+  `FileDescriptor.close0` **永久死锁**（`jcmd` 线程转储取证），最终口径是"谁持有句柄谁收摊"；
+  ② 报告建议的单请求时长上限**无法实现**——`com.sun.net.httpserver.HttpServer` 没有
+  `setMaxReqTime`（`javap` 实证），故不写"看着在配、其实没生效"的假配置。
 - **G10：worker 拒绝派发后的槽位记账不再泄漏**——`DispatchSelector.onDispatchRolledBack`
   在收到 `TaskStatus.REJECTED` 时退还本地预留（以最近一次 `SlotReport` 为上界），
   被拒任务能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。修复前实例仅 1 格容量时
@@ -59,13 +77,21 @@
   `FaultDiagnosticsAcceptanceTest` 1），其中 1 例是**日志配置回归护栏**：
   禁止再引入 logback `<if>/<else>` 条件块（1.5.16 上会抛 `EmptyStackException`
   并让**全部日志静默丢失**，踩过一次）。
-- 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块）；
-  另有 `duo-sim-control` 的 25 条在 examples 步内执行。
+- 全量回归 **378 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块）；
+  另有 `duo-sim-control` 的 30 条在 examples 步内执行。
+  较上一轮 366 测新增 36 条安全回归用例（含报告 §3.1 两条 PoC 的固化用例）。
 
 ### 已知限制（如实记录）
 
 - `engine` 只有 `virtual` 档，无档可换；
 - Docker 相关的 container 档用例在本机跳过（共 10 条），由 CI 的 `container` job 承担；
+- **`FrameConnection` 帧的两段式分配保留**（`new byte[9+len]` + `readFully(len)`，峰值 2×）。
+  审计列为 L-2；未突破 1 MiB 上限，改动要动线协议读写路径，属"没有失败证据的重构"，**有意不做**；
+- **内核不对用户的 SUT 线程/进程做 `destroyForcibly`**（审计 L-3 的字面建议）。协作式停止
+  （§7.3）要求生命周期归用户；内核改为强制回收**自己持有**的资源（代起进程 + 管道）。
+  代价：用户 SUT 忽略停止回调时会留下一个存活线程/进程，由用户负责；
+- **不给长连接 worker 设读超时**（审计 L-4）：空闲 worker 与卡死 worker 在 socket 上无法区分，
+  设超时会误杀正常空闲实例。取舍见 `docs/DECISIONS.md` D12；
 - 观测面只做 counter/gauge，**没有直方图**（任务时延等分桶口径未定，不为凑指标拍脑袋）；
   指标为进程级累计值，场景重启不归零（口径见 `docs/METRICS.md`）；
 - `duo diagnose` 只读事件流，日志侧入口（`io.duo.sim.fault` + `grep FAULT`）已设计未实现；

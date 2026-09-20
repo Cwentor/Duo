@@ -1,12 +1,14 @@
 # Duo 发展规划 —— 如何达成最初的目标
 
-- 日期：2026-09-19（**第 12 轮更新**；原始基线 2026-09-18）
-- 基线：`0.1.0-SNAPSHOT`；**M0–M8 均已完成并验收，差距清单 G1–G11 全部闭合**；
-  全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（无 Docker 档，11 条 skip 逐条可解释）；
+- 日期：2026-09-20（**第 13 轮更新**；原始基线 2026-09-18）
+- 基线：`0.1.0-SNAPSHOT`；**M0–M8 均已完成并验收，差距清单 G1–G12 全部闭合**；
+  全量回归 **378 测 / 0 失败 / 0 错误 / 11 skip**（无 Docker 档，11 条 skip 逐条可解释）；
   依赖门禁 9 模块零告警（第 11 轮，已进 CI）
-- 唯一保留项：M8 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现）
-- 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）
-- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D9 已全部拍板，无悬空决策）
+- 唯一保留项：M8 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现）；
+  两处**有意不做**并已如实标注：`FrameConnection` 双重分配、对用户 SUT 的强杀（L-3）
+- 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）；
+  安全审计 [`security-audit-2026-09-20.md`](security-audit-2026-09-20.md)（第 13 轮全部闭合）
+- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D12 已全部拍板，无悬空决策）
 
 ---
 
@@ -43,13 +45,14 @@
 | T4 | 行为可控 | ✅ **达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配；**行为模型已由 worker 与 engine 两侧消费（M5 第 4 轮 `VirtualEngine` 复用 `BehaviorResolver`）** | — |
 | T5 | 故障可注入 | ✅ **达成** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；`custom-hook` 已闭环；**`freeze`/`slow`/`resource-exhaust` 已落地（M5 第 4 轮）**：三者幂等且对未声明者显式拒绝 | 「动作 × 档位」成对场景集已在各 Provider 用例中成对落地（G5 已闭合） |
 | T6 | 真实反馈 | ✅ **达成** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档真 ZooKeeper 与真 PostgreSQL（M5 第 4 轮，CI container job 取证 skip=0） | 适配器未做（§17 决策：按需立专项，是非目标而非缺口） |
-| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（第 11 轮实测）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
+| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **378 测 / 0 失败 / 0 错误 / 11 skip**（第 13 轮实测，较第 11 轮的 366 测新增 36 条安全回归用例）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | ✅ **达成** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；标准 Wrapper + LICENSE + 发布产物 + **依赖门禁（第 11 轮）** + CI 三 job 远端全绿 | — |
 
-**一句话结论（第 12 轮更新）**：**T1–T8 全部达成**，差距清单 **G1–G11 全部闭合**
-（G3 的"剩余"已按设计边界收口）。唯一保留项是 M8 交付物 4「加速时钟评估」
-（触发条件"小时级长稳 + virtual 档"未出现，评估无输入）。上表即为现状口径，
-逐条可复现取证见 [§8 判定清单](#8-最初目标达成的判定清单)。
+**一句话结论（第 13 轮更新）**：**T1–T8 全部达成**，差距清单 **G1–G11 全部闭合**
+（G3 的"剩余"已按设计边界收口），**新增 G12（安全审计整改）亦已闭合**。
+唯一保留项是 M8 交付物 4「加速时钟评估」（触发条件"小时级长稳 + virtual 档"未出现，
+评估无输入）与两处**有意不做**（`FrameConnection` 双重分配、L-3 对用户 SUT 的强杀）。
+上表即为现状口径，逐条可复现取证见 [§8 判定清单](#8-最初目标达成的判定清单)。
 
 ---
 
@@ -68,6 +71,7 @@
 | **G9** | ~~**派发通路可静默丢弃 → 间歇性挂起**~~（M7 CI 首跑暴露，**第 4 轮已修复**）：调度侧槽位视图滞后于实例真实状态时把重派任务发给已满实例，`VirtualWorker.handleDispatch` 在 `freeSlots<=0` 时**静默 return**，调度侧仍视任务为 RUNNING → DAG 永不终态。修复＝显式拒绝（`TaskStatus.REJECTED`）+ 调度侧回滚重排 + 拒绝上限兜底 + 槽位计数原子化 + 槽位变更即时上报 | CI run 35326005487 失败现场（`job-c` 派发 2 次、无第二次回报）+ 代码定位 | ~~CI 门禁低概率假红~~；违反 §12「不静默」 | ✅ **已闭合** |
 | **G10** | ✅ **已闭合（第 6 轮）**：worker 回报 `REJECTED` 时，`DispatchSelector` 现在会**退还** `onDispatched` 记下的本地递减（新增 `onDispatchRolledBack`，以最近一次 `SlotReport` 的槽位数为上界，防凭空加账）⇒ 被拒任务能继续被重派，受状态机 `MAX_REJECTIONS` 兜底。修复前症状：实例仅 1 格容量时最后一格被永久占用、任务停在 PENDING、DAG 永不收敛 | `VirtualSchedulerTest.rejectedTaskIsRedispatchedAfterLocalSlotRollback`（缺口用例**已翻转**为修复守卫：派发事实 ≥2、worker 侧收到次数一致、`attempt` 恒为 1、无 `sut.task-retry`）+ `DispatchSelector.onDispatchRolledBack` | 「G9 已闭合」此前只覆盖**同进程**通路，线协议通路会把任务卡死（违反 §12 的完整语义） | ~~P1~~ 已完成 |
 | **G11** | ✅ **已闭合（第 8 轮）**：① `Scenario.NodeSpec` 新增 `autoStart`（缺省 `true`，11 字段兼容构造器保住既有场景零改动），`ScenarioEngine.startComponents` 的启动判据加 `!n.autoStart()` ⇒「声明但不启动」可表达；② **未知节点键显式报错**（`ScenarioLoader` 的 `NODE_KEYS` 白名单 + 列出受支持键），拼错的键不再被静默忽略；③ 校验层补边界：SUT 与 external 节点由 `startSut()` 单独启动，在它们身上写 `autoStart: false` 是**看似生效实则无效**的陷阱，`ScenarioValidator` 显式报错（§12） | `ScenarioLoaderTest.autoStartDefaultsToTrueAndCanBeTurnedOff` / `unknownNodeKeyIsRejectedNeverSilentlyIgnored`；`ScenarioValidatorTest.autoStartFalseOnOrdinaryNodeIsAccepted` / `autoStartFalseOnSutOrExternalNodeIsRejectedLoudly` | 此前「只验某契约、不要 worker 一起跑」无法表达，且写错的键不报错（与 §12 冲突） | ✅ 已闭合 |
+| **G12** | ✅ **已闭合（第 13 轮）**：安全审计 `docs/security-audit-2026-09-20.md` 的 20 条发现（C-1 + H-1..H-5 + M-1..M-8 + L-1..L-6 + INFO-1）。整改主线＝信任边界从"能不能连到端口"移回**输入来源**：令牌必填 + 回环双校验 + 外部输入档收窄（规则 9–11）+ 基数与缓冲有界 + 临时产物清理 + 卫生（CI SHA pin / 身份脱敏 / 崩溃残留封口） | 决策 D10/D11/D12；验收记录 [`2026-09-20-duo-security-remediation-record.md`](superpowers/acceptance/2026-09-20-duo-security-remediation-record.md)；报告 §7 台账 + §7.1（两处实证反转） | — | ✅ 已闭合 |
 
 ---
 
@@ -485,6 +489,22 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 > 建议等真实长稳需求出现再做，避免为评估而评估；
 > ③ CI 已接入依赖门禁（`regression` job 里 `-Dquality -DskipTests verify`），
 > 后续任何"顺手引依赖"都会被拦住。
+
+### 2026-09-20（第 13 轮）：安全整改——审计 20 条发现全部闭合（G12 新增）
+
+| 项 | 结果 |
+| --- | --- |
+| 触发 | `docs/security-audit-2026-09-20.md` 的静态审计报告（C-1 CRITICAL 1 条、HIGH 5、MEDIUM 8、LOW 6、INFO 1） |
+| 核心判断（采纳） | 报告指出「信任边界不该画在『能连到 127.0.0.1:7788』上」——同机进程与浏览器里的任意网页都连得上。整改把边界画回**输入来源**：配置档（本机 YAML/CLI/测试/资源，能力不缩水）vs 外部输入档（`POST /scenario` body：禁派生进程、禁框架外 `main`、config 键白名单、值禁绝对路径与 URL scheme、规模有界）。决策 D10/D11 |
+| C-1/H-1/H-2（认证与跨站） | `serve` 令牌**必填**（`--token`/`--token-file`/`DUO_TOKEN`，缺失即拒绝启动，除非显式 `--insecure-no-auth`）；除 `/health` 外全端点 401 + `WWW-Authenticate`；`Host`/`Origin` 必须回环（挡 DNS-rebinding / CSRF）；body 上限 1 MiB（按 `MAX+1` 截断，防谎报/chunked）→ 413 |
+| H-3/H-4/H-5（资源） | 外部输入档禁 `launch.command`/`allowExternalProcess`；`MetricsCollector` 事件类型基数上限 256 + `__other__` 溢出桶（**总量恒等**）；`EventRecorder` 有界缓冲 50 万 + 丢弃计数上抛告警；`DELETE /scenario` 改 `stopWithoutAwait()`（不再阻塞在 SUT 收尾上）；`close()` 关 executor |
+| M-7 的实证反转（本轮最有价值的一条） | 报告要求 `close()` "释放 stdin/stdout 句柄"；照做后 `ExternalSutLauncherTest` **挂死**。`jcmd` 线程转储定位：Windows 上管道读是同步 `ReadFile`，`Thread.interrupt()` 与 `close()` **都打不断**，而 `close()` 要等的正是读线程握着的流锁 ⇒ 死锁在 `FileDescriptor.close0`。最终口径＝**谁持有句柄谁收摊**（D12）：代起形态先 `destroy()` 再关流；attach 形态无操作返回。报告 §7.1 记录了完整证据 |
+| M-4 的另一处反转 | 报告建议给单请求加时长上限；`javap` 实证 `com.sun.net.httpserver.HttpServer` **没有** `setMaxReqTime`（那是包私有 `ServerImpl` 才有）。故**不实现**该上限，并把常量注释写明"这是预算不是强制"——不留"看着在配、其实没生效"的假配置（与第 11 轮 `ignoreNonCompileDirectives` 同一条纪律） |
+| 口径修正（不按报告字面做） | L-3：内核不对**用户的** SUT 线程/进程做 `destroyForcibly`（破坏 §7.3 协作式停止），改为"内核自己的资源强制回收"，并修掉报告指出的"迟到的 `onStop` 注册永不生效"真实缺陷；L-4：不给长连接 worker 设读超时（会误杀正常空闲 worker），改为堵死**确定性**的三处 FD 泄漏（`ReadyProbe` 静态客户端 / `ExternalSutLauncher.close` / `HttpServer` executor）；L-2 前半段（`FrameConnection` 双重分配）**明确不做**并如实标注——它未突破任何上限，改它属"没有失败证据的重构" |
+| 卫生（L-5/L-6/INFO-1） | 4 个已跟踪文件的开发者本机路径/用户名改占位符；`scripts/duo-inject-demo.sh` 的 `JAVA_HOME` 改**必填**；CI 三个 action 全部 pin 到 commit SHA（9 处）；`hs_err_pid*.log`/`replay_pid*.log` 清理并在 `.gitignore` 显式封口 |
+| 测试 | 全量回归 **378 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（protocol 12、kernel 77、scenario 53、components 120、embedded 55+10 skip、examples 61+1 skip）。较整改前 342 测 **新增 36 条安全回归用例**（`RestControlServerTest` 11、`DuoCliTest` 11、`SecurityRemediationAcceptanceTest` 3、`ScenarioValidatorTest` 20→ 含规则 9–11、`EventRecorderTest` 5、`HookRegistryTest` 7、`ExternalSutLauncherTest` 11、`ReadyProbeTest` 8） |
+| 验收记录 | [`docs/superpowers/acceptance/2026-09-20-duo-security-remediation-record.md`](superpowers/acceptance/2026-09-20-duo-security-remediation-record.md)（逐条处置 + 可复现证据 + 两处"实证推翻报告字面"的记录） |
+| 未做（下一轮） | ① `FrameConnection` 双重分配（有意不做，理由见上）；② M8 交付物 4「加速时钟评估」（触发条件仍未出现）；③ examples 的 real worker `SutMain` 示例（唯一诚实的实现缺口，非阻塞） |
 
 ### 2026-09-19（第 12 轮）：文档口径收口——T1–T8 全部达成、G1–G11 全部闭合
 
