@@ -161,6 +161,13 @@ public final class SutLauncher implements AutoCloseable {
             }
             try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(configOut,
                     StandardCharsets.UTF_8))) {
+                // 空的端点表也必须留证据：零字节文件与"有人写了但没内容"不可区分，
+                // 而"端点表为什么是空的"恰恰是启动排障的第一问（§12）。
+                if (endpoints.isEmpty()) {
+                    pw.println("# no endpoints resolved at SUT start: the SUT was launched"
+                            + " before kernel-hosted components bound their ports;"
+                            + " a peer node's exposes becomes visible only to later-started SUTs");
+                }
                 endpoints.forEach((contract, addr) ->
                         pw.println("duo.endpoint." + contract + "=" + addr));
             }

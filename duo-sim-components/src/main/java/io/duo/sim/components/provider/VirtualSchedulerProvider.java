@@ -45,6 +45,11 @@ public final class VirtualSchedulerProvider implements ComponentProvider {
 
     @Override
     public CapabilityMetadata metadata() {
+        // endpointShape=DUO_PORT（worker 拨号进来）+ interfaceDirect=false：两个字段互不影响。
+        // 后者说明的是「同进程能不能直接拿到 SchedulerContract 接口对象」——worker SUT 在另一个进程/
+        // 另一条线上，只能拨号，拿不到接口；这条"只能拨号"的形态正是「真实 worker 侧」验收要验证的，
+        // 所以这里如实声明 false，而不是为了让 direct 槽好写就改口（改口会让验收失去意义）。
+        // 同进程消费者要走门面时，在槽上写 path: direct 由 wiring 逐槽解析（§6），与本字段无关。
         return CapabilityMetadata.duoPort(false, Set.of(FaultAction.FREEZE)).withDefault(true);
     }
 

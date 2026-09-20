@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -462,6 +463,10 @@ class VirtualSchedulerTest {
         assertTrue(p.isDefault());
         assertEquals(EndpointShape.DUO_PORT, p.metadata().endpointShape());
         assertEquals(java.util.Set.of(FaultAction.FREEZE), p.metadata().supportedFaults());
-        assertTrue(!p.metadata().interfaceDirect(), "DUO_PORT ⇒ 非 interface-direct");
+        // §7.5：两个字段独立。这里钉住的是**真实形态**——virtual 档只暴露线协议端点，没有同进程门面，
+        // 于是 worker SUT 只能拨号、拿不到接口对象。这条事实正是「真实 worker 侧」验收的意义所在：
+        // 若把它改成 interfaceDirect=true 图方便，验收就退回"进程内直接调接口"，不再证明线协议可用。
+        assertFalse(p.metadata().interfaceDirect(),
+                "virtual-scheduler 不提供同进程门面（interfaceDirect=false）");
     }
 }

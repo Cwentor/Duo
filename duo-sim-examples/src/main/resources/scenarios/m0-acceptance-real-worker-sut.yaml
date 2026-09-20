@@ -1,0 +1,66 @@
+# worker 侧 SUT（ROADMAP 长期未闭合项：「SUT 落在 worker 侧」）。
+#
+# 与 m0-acceptance-*.yaml 的**分工反转**：那里 SUT 是 master（DemoScheduler，real 档调度器），
+# worker 由内核组件承担；这里 SUT 是被调度方——master 反而是内核的 VirtualScheduler（virtual 档，
+# 自己绑端口并注册进 registry），SUT 经 registry 发现它、拨号、注册、心跳、领取/执行/回报任务。
+#
+# 换档矩阵因此补齐第三格：
+#   virtual×virtual（m0-acceptance-virtual-workers）
+#   real×real      （m0-acceptance-real-workers）
+#   **real 档 worker SUT × virtual 档 master**（本文件）
+name: worker-sut-real-master-virtual
+topology:
+  - id: workers
+    contract: worker
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.worker.RealWorkerSut }
+    config:
+      instances: "3"
+      # 3 槽 × 3 实例 = 9 槽；5 个任务的 DAG 里只有 unstable-task 是"慢任务"（duration 60）。
+      # 槽位必须够把**除慢任务外**的 4 个任务一次性铺开：否则 load-orders 这批占满槽位、
+      # 慢任务排在后面等槽，重试窗口就被挤到很晚，甚至永远等不到（这是实测踩到的坑，不是理论担忧）。
+      capacity.slots: "4"
+      heartbeat.interval.ms: "50"
+      # 发现期等对端启动：SUT 由 startSut() 先起，master 在其后的 startComponents() 才绑端口。
+      # 真实（分离 JVM）部署里这个窗口更长——把等待显式化，而不是靠"重试次数 × 间隔"碰运气。
+      discover.settle.ms: "3000"
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: virtual
+    # exposes 只是对外声明"我会绑一个 scheduler 端口"（内核可观测的事实：health/拓扑）。
+    # 它**不是**本场景的发现通路：SUT 由 startSut() 先起，那时 master 端口还没绑，端点表是空的
+    # （build/duo-sut-workers.properties 里就是那条 "no endpoints resolved at SUT start"）。
+    # 测试里由 KernelSchedulerRelay 把"测试侧已知端口"接给 SUT（scheduler.endpoint），
+    # 对应真实部署里编排器先给 worker 一个地址的那种编排。
+    exposes:
+      - { contract: scheduler, port: 0 }
+    config:
+      # DAG 里只有 unstable-task 走失败剧本（behaviors 的 unstable 档）。它是唯一会产生
+      # sut.task-retry 的路径——把计划里最深的 aggregate-report 挂上"一定会失败的任务"，
+      # 重试窗口就永远不来，用例会变成永远等不到的断言。所以让 aggregate-report 只依赖
+      # 会成功的 build-features，unstable-task 作为叶子任务自己失败、自己重试。
+      dag.tasks: "load-orders,clean-orders,build-features,unstable-task,aggregate-report"
+      dag.deps.clean-orders: "load-orders"
+      dag.deps.build-features: "load-orders"
+      dag.deps.unstable-task: "clean-orders"
+      dag.deps.aggregate-report: "build-features"
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 100, jitter: 0.1, successRate: 1.0 }
+    unstable: { duration: 60, successRate: 0.0, exception: "java.lang.RuntimeException" }
+  bindings:
+    - node: workers
+      profile: default
+    - node: workers
+      match: { taskName: "unstable-task" }
+      profile: unstable
+timeline: []
+assertions: []

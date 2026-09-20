@@ -9,6 +9,13 @@ import java.util.Set;
  * {@code instanceControl=true} 必须实现 InstanceControl；{@code supportedFaults} 非空
  * 必须实现 FaultInjectable。由 ContractRegistry 强制。
  *
+ * <p><b>两个字段互相独立</b>（设计 §7.5 原文：「v2：两字段独立」）：{@code interfaceDirect} 只说明
+ * 「同进程能不能直接拿到接口对象」，{@code endpointShape} 只说明「有没有可拨号的端点」。两者都成立的
+ * 实现是合法的，而且真实存在——{@code VirtualScheduler} 既暴露 DUO_PORT 供 worker 拨号，又实现
+ * {@code SchedulerContract} 供同进程的 SUT 用门面调用。消费路径是**逐槽**解析的（{@code WiringResolver}）：
+ * 槽上写了 {@code path: direct} 就走门面，写了 {@code path: wire} 或没写而目标有端点就走线协议；
+ * 两者互不影响，因为每条槽各自选一条路。
+ *
  * <p>{@code trustedConfigKeys}（安全审计 2026-09-20 规则 11 的配套）：控制面收的是**不可信
  * 字节**，{@code config} 里认不出的键默认拒绝——实现若要支持额外的外部可传键，必须在此
  * **显式声明**，而不是靠"没人知道它"获得安全。默认空集 ⇒ 既有实现零改动、向后兼容。
@@ -42,6 +49,21 @@ public record CapabilityMetadata(EndpointShape endpointShape,
 
     public static CapabilityMetadata duoPort(boolean instanceControl, Set<String> supportedFaults) {
         return new CapabilityMetadata(EndpointShape.DUO_PORT, false, instanceControl,
+                supportedFaults, false);
+    }
+
+    /**
+     * Duo 线协议端口 **且** 提供进程内 Java 接口（{@code interfaceDirect=true}）。
+     *
+     * <p>两个字段独立（设计 §7.5 v2），这条组合对「既暴露可拨号端点、又实现契约接口」的实现是合法的
+     * （消费路径由 {@code WiringResolver} 逐槽解析：写了 {@code path: direct} 就走门面）。**但用之前
+     * 先问一句"接口真的在吗"**：本方法只写元数据，不校验契约接口是否存在，声明了却没有实现＝把一个
+     * 校验期错误推迟成运行期错误。示例：{@code VirtualScheduler} 实现了 {@code SchedulerContract}，
+     * 它若需要同进程门面就可以用这条；而当前它只被 worker 拨号，所以如实声明 {@code duoPort}。
+     */
+    public static CapabilityMetadata duoPortWithDirect(boolean instanceControl,
+                                                       Set<String> supportedFaults) {
+        return new CapabilityMetadata(EndpointShape.DUO_PORT, true, instanceControl,
                 supportedFaults, false);
     }
 

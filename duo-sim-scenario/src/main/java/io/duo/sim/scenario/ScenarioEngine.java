@@ -64,6 +64,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private final ScenarioRuntime runtime = new ScenarioRuntime(bus::publish);
     private final ScenarioResult result = ScenarioResult.create();
     private final Map<String, VirtualComponent> byId = new ConcurrentHashMap<>();
+    /** 启动期节点索引（T31(a) 端点解析用；{@link #startSut()} 时建立）。 */
+    private Map<String, Scenario.NodeSpec> specById = Map.of();
     private final List<String> warnings = new ArrayList<>();
     private final CountDownLatch sutExit = new CountDownLatch(1);
     private volatile boolean started;
@@ -280,6 +282,7 @@ public final class ScenarioEngine implements AutoCloseable {
                 .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
         Map<String, Scenario.NodeSpec> specById = new LinkedHashMap<>();
         scenario.nodes().forEach(n -> specById.put(n.id(), n));
+        this.specById = specById;
         startDirectDependencies(spec, specById);
         Map<String, String> sutEndpoints = sutEndpoints(spec, specById);
 
@@ -301,6 +304,7 @@ public final class ScenarioEngine implements AutoCloseable {
                     java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"),
                     readyTimeoutMs(spec.config()));
             launcher.start();
+            warnIfSutMissedEndpoints(spec, sutEndpoints); // ready 已确认：SUT 看到的就是这张表
             registerSutStopper(launcher::stop);
             return new SutLauncherHandle(spec, launcher);
         } catch (ReflectiveOperationException e) {
@@ -337,8 +341,47 @@ public final class ScenarioEngine implements AutoCloseable {
     }
 
     /**
-     * SUT 端点清单（T31(a)）：按 SUT 的 wiring 槽解析目标节点的实际端点
-     * （wire 槽 → 目标 endpoints() 地址；如 embedded registry 的 ZK 端口）。
+     * 登记 SUT 可见的对端端点，并在**拿到 SUT 的登记结果**时如实告警：
+     * 对端声明了 {@code exposes}、端点也真的绑上了，但 SUT 拿到的是空表或没含这个契约
+     * —— 这说明"SUT 先起、对端后绑"的启动序吃掉了这条发现路径（§12 不静默）。
+     *
+     * <p>为什么告警放在这里：{@link io.duo.sim.kernel.sut.SutLauncher#start()} 会阻塞到
+     * {@code ctx.ready()} 之后，SUT 的端点表**此刻已经写定**，读到的就是它真正看到的东西；
+     * 等 {@code startComponents()} 之后再检查，只会得到"后来者可见"这种与 SUT 无关的结论。
+     *
+     * @param sut spec {@link Scenario.NodeSpec#exposes()}：SUT 侧（通常为空）
+     * @param sutEndpoints 交给 SUT 的端点表
+     */
+    private void warnIfSutMissedEndpoints(Scenario.NodeSpec sut, Map<String, String> sutEndpoints) {
+        for (var node : scenario.nodes()) {
+            if (node.sut() || node.exposes().isEmpty() || node.id().equals(sut.id())) {
+                continue;
+            }
+            for (var expose : node.exposes()) {
+                String contract = expose.contract();
+                if (contract != null && !sutEndpoints.containsKey(contract.toLowerCase())) {
+                    warnings.add("node " + node.id() + " exposes '" + contract + "' but the SUT '"
+                            + sut.id() + "' was already started when the endpoint was bound,"
+                            + " so SutContext.endpointByContract() cannot carry it"
+                            + " (wiring is resolved at SUT start; use it, or let the peer register"
+                            + " itself in a registry the SUT watches)");
+                }
+            }
+        }
+    }
+
+    /**
+     * SUT 端点清单（T31(a)）：解析 SUT **能看到哪些端点**，两条来源，先到先得（同契约不覆盖）：
+     * <ol>
+     *   <li>自己 wiring 槽指向的目标节点（既有语义：wire 槽 → 目标 endpoints() 地址，
+     *       如 embedded registry 的 ZK 端口）；</li>
+     *   <li>自己 {@code exposes} 声明、且对应契约节点**已启动**时的实际端点。</li>
+     * </ol>
+     *
+     * <p>注意此处**不可能**包含"SUT 启动之后才对端绑好的端点"：{@code SutLauncher} 在
+     * {@code start()} 里就把本表写进 {@code SutContext} 并落成端点配置文件，此后不再变。
+     * 「SUT 先起、对端后起」的关系必须由**其它通道**闭合——对端把自己注册进 registry，
+     * SUT 侧轮询发现（如 {@code VirtualScheduler} 的约定名 {@code scheduler}）。
      */
     private Map<String, String> sutEndpoints(Scenario.NodeSpec spec,
                                              Map<String, Scenario.NodeSpec> specById) {
@@ -357,10 +400,36 @@ public final class ScenarioEngine implements AutoCloseable {
             }
             var eps = target.endpoints();
             if (!eps.isEmpty()) {
-                out.put(contract.toLowerCase(), eps.get(0).address());
+                out.putIfAbsent(contract.toLowerCase(), eps.get(0).address());
             }
         }
+        addExposedEndpoints(out, spec);
         return out;
+    }
+
+    /** 把 {@code spec} 自己 exposes 的、对端已启动的端点并入 {@code out}（同契约不覆盖）。 */
+    private void addExposedEndpoints(Map<String, String> out, Scenario.NodeSpec spec) {
+        // exposes 是"本节点对外暴露什么"，不是"本节点要连谁"：SUT 声明 exposes 时，
+        // 按契约找**当前已启动**的同类节点取端点；没有则留空（由调用方如实告警）。
+        for (var expose : spec.exposes()) {
+            String contract = expose.contract() == null ? null : expose.contract();
+            if (contract == null) {
+                continue;
+            }
+            for (var target : specById.values()) {
+                if (target.sut()) {
+                    continue;
+                }
+                VirtualComponent c = byId.get(target.id());
+                if (c == null || c.endpoints().isEmpty()) {
+                    continue;
+                }
+                if (target.contract().equalsIgnoreCase(contract)) {
+                    out.putIfAbsent(contract.toLowerCase(), c.endpoints().get(0).address());
+                    break;
+                }
+            }
+        }
     }
 
     /**
