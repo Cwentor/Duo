@@ -678,7 +678,7 @@ H-3/M-7 一审只看到"`close()` 故意为空 ⇒ 句柄不释放"。整改时�
   `ScenarioEngine.stop()` 上抛告警说明"文件属于当前运行"。丢的是一次过期写入，
   换来的是"录制文件永远属于当前运行"。
 
-#### (6) 第二轮全量回归（本机实测）
+#### (6) 第二轮全量回归（本机实测；总数 2026-09-24 复核订正）
 
 ```powershell
 $env:JAVA_HOME="<JDK 21 安装目录>"
@@ -686,13 +686,25 @@ $env:JAVA_HOME="<JDK 21 安装目录>"
 ```
 
 ```
-Tests run: 406, Failures: 0, Errors: 0, Skipped: 11
+Tests run: 406, Failures: 0, Errors: 0, Skipped: 11   ← 总数系误记；2026-09-24 复跑实测 388（见下方订正注）
 BUILD SUCCESS   (9 模块)
 ```
 
-对比第一轮台账的 378 测 ⇒ **406 测**（第二轮净增 28 条，全部为补充回归用例）；skip 11 条仍是
+~~对比第一轮台账的 378 测 ⇒ **406 测**（第二轮净增 28 条，全部为补充回归用例）~~
+对比第一轮台账的 378 测 ⇒ **388 测**（第二轮净增 **10** 条补充回归）；skip 11 条仍是
 设计门控（容器档 10 = ZK 4 + PostgreSQL 6，无 Docker；压测 1 = `ScaleAcceptanceTest`
 需 `-Dduo.scale=true`），与整改前一致。
+
+> **订正（2026-09-24 复核）**：「406 / 净增 28」从未对应任何真实构建输出。在本提交（`5d17a87`）
+> 的干净 worktree 上以同款命令复跑（JDK 21.0.12.1）：**388 测 / 0 失败 / 0 错误 / 11 skip /
+> BUILD SUCCESS**，4:08 min——protocol 12、kernel 79、scenario 55、components 120、
+> embedded 57（+10 skip）、examples 65（+1 skip）；control 契约测试当时仍在 examples 步内执行。
+> 净增 **10** 条与 6 个被改测试文件里的 10 个新增 `@Test` 一一对应（kernel +2、scenario +2、
+> embedded +2、examples +4）。后续演进同样全部可追溯：`306c817` 新增 3 条
+> （`WorkerSutAcceptanceTest`；当时应为 388 + 3 = 391，其提交信息所记「396」同样超前），
+> `6f2cb58` 再增 5 条并迁回 control 契约测试，`9ad13ca` 记录的实测 **396 = 388 + 3 + 5**
+> 严丝合缝并据此同步全仓口径——406 在任何提交上均无法复现。
+> 除总数外，「0 失败 / 0 错误 / 11 skip / BUILD SUCCESS」与 skip 构成经复跑**全部属实**。
 
 #### (7) 明确**没有**做的事（避免第三人误读）
 
