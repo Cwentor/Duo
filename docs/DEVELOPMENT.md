@@ -94,10 +94,11 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | 集成/验收测试 | `duo-sim-examples/src/test/java/.../acceptance/` | 端到端场景：档位切换（M0）、故障转移（M1）、重选主（M2）、控制面热注入（M3）、规模压测（M4）、**external 第三方 SUT（M6）** |
 | JUnit 扩展测试 | `examples`（用 `@VirtualCluster`） | 注解生命周期、引擎参数注入、断言评估、录制路径 |
 
-> `duo-sim-junit` / `duo-sim-control` 自身**不带测试**——它们的集成测试必须放 `examples`，
-> 否则会形成 `junit ↔ examples` 循环依赖。
+> `duo-sim-junit` 自身**不带测试**——它的集成测试必须放 `examples`，
+> 否则会形成 `junit ↔ examples` 循环依赖。`duo-sim-control` 第 14 轮起**自带契约测试**
+> （test 作用域依赖 `duo-sim-components`，依赖方向仍单向），不再受此约束。
 
-### 3.2 当前分布（2026-09-20 实测，worker 侧真实 SUT 落地后）
+### 3.2 当前分布（2026-09-20 实测，第 33 轮后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
@@ -107,14 +108,14 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | `duo-sim-components` | 120 | 0 |
 | `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
-| `duo-sim-control` | 23 | 0 |
+| `duo-sim-control` | 22 | 0 |
 | `duo-sim-examples` | 50 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
-| **合计（reactor 内 8 模块）** | **396** | **11** |
+| **合计（reactor 内 8 模块）** | **395** | **11** |
 
-> **口径说明（第 32 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
+> **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
 > `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试
-> 不在自己模块里，所以 366 + 25 = 391"的换算——那段**已经过时且是错的**：`ScenarioHostTest`（10）
-> 与 `RestControlServerTest`（13）第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（10）
+> 不在自己模块里，所以 366 + 25 = 391"的换算——那段**已经过时且是错的**：`ScenarioHostTest`
+> 与 `RestControlServerTest` 第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（10）
 > 留在 examples（它编排 `DemoScheduler` 场景，与示例强耦合）。三段合计仍然对得上，
 > 但**归属已经清楚**，无需再叠加口径；上表直接就是全量数字。
 >
@@ -124,21 +125,23 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > "压测门控关着"，不是"只跳了一个档"。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：396 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：395 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
 .\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：9 模块零未声明/零未使用（CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
 
-> **第 12–32 轮明细（366 → 396，净 +30）**：
+> **第 12–33 轮明细（366 → 395，净 +29）**：
 >
 > - **kernel 76 → 79（+3）**：`SutLauncherTest` 与 `ReadyProbeTest` 的 SUT 启动面补测
 >   （端点文件口径 / 未解析端点必须留警告而不是静默）。
 > - **scenario 51 → 55（+4）**：§8 校验补充（`sut: true` 必须声明 `launch`；
 >   SUT 先于 `startComponents()` 启动 ⇒ 端点冻结这条事实的守卫）。
 > - **embedded 55 → 57（+2）**、**components 120 → 120（净 0，内部重排）**。
-> - **control 0 → 23（+23）**：`ScenarioHostTest`（13）+ `RestControlServerTest`（10）
->   第 14 轮迁入本模块 `src/test`（此前它们在 examples 反应堆步里执行、在本表里没有归属）。
+> - **control 0 → 22（+22）**：`ScenarioHostTest`（10）+ `RestControlServerTest`
+>   （迁入时 13）第 14 轮进本模块 `src/test`（此前在 examples 反应堆步里执行、在本表里
+>   没有归属）；第 33 轮删掉其中 1 条**恒真用例**（探针恒 `return true`，不构成任何检查，
+>   归属事实改由类 Javadoc 与 examples `pom.xml` 注释承载），余 12。
 > - **examples 52 → 50（−2，同时移出 13 条 control 测试）**：本次净增 3 条
 >   （`WorkerSutAcceptanceTest`：真连 master / BOM 配置 / 断连自愈），另迁出 13 条 control 测试、
 >   以及若干为"编排解耦"而合并的重复用例。

@@ -62,6 +62,16 @@
 
 ### 修复
 
+- **控制面测试夹具的退出规则不再依赖自定义 config 键（第 33 轮）**：`ControlFixtureSut`
+  原按「收齐 `fixture.expectedWorkers` 个注册后退出」收敛，但 REST 层测试经
+  `POST /scenario` 走**外部输入档**——`ScenarioValidator` 的 config 键白名单根本不收
+  `fixture.*`，于是场景被 400 拒掉、后续断言全数落空。改为**注册静默期**判据：
+  首个注册到达后一段时间无新注册即视为收齐，再维持可配观察窗后返回（任何路径都封顶，
+  场景不会假 RUNNING）。这样同一个夹具在两个信任档下都可用，无需为测试放宽外部输入边界。
+- **REST 档「事后审查」用例恢复停止收尾语义**：`topologyReadableAfterFinishForPostmortem`
+  曾试图等 SUT 自退后读拓扑——但 REST 层下「结束」只有 `DELETE /scenario`
+  （＝`host.stop()`，断言评估与终态固化都在那里）才对外可见，SUT 线程自行返回后
+  `/scenario/status` 仍报 RUNNING。用例改回 DELETE 后读取，与产品行为一致。
 - **安全审计 20 条发现全部闭合（第 13 轮）**：C-1（未认证即可 RCE / 任意文件写）、H-1..H-5
   （跨站与 DNS-rebinding、body 无上限、进程派生跳板、指标基数、事件缓冲与收尾阻塞）、
   M-1..M-8、L-1..L-6、INFO-1。两处**按实证修正报告字面**并如实记录：
@@ -89,10 +99,13 @@
   （显式端点 / `master.list` / registry 自注册三条发现路径）、BOM 配置键必须仍被认到、
   断连后自愈重连。夹具按真实协议走——注册/心跳/领取/回报全部经 `FrameConnection`，
   不是进程内假装通过。
-- 全量回归 **396 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块），逐模块计数见
+- 全量回归 **395 测 / 0 失败 / 0 错误 / 11 skip**（reactor 内 8 模块），逐模块计数见
   `docs/DEVELOPMENT.md` §3.2。**口径已简化**：`duo-sim-control` 的契约测试
-  （`ScenarioHostTest` 13 + `RestControlServerTest` 10）已在本模块 `src/test` 内执行，
+  （`ScenarioHostTest` 10 + `RestControlServerTest` 12）已在本模块 `src/test` 内执行，
   不再需要"另有 30 条在 examples 步内执行"这种跨模块换算（旧文那份换算本身是错的）。
+  第 33 轮删掉 `RestControlServerTest` 里 1 条**恒真用例**（探针 `return true` +
+  `assertTrue`，不构成任何检查）——「用例归属」的事实由类 Javadoc 与
+  `duo-sim-examples/pom.xml` 的注释承载，不需要一条假测试来记。
 - `-Dquality -DskipTests verify` 抓到并修掉一处真实依赖违规：控制面测试夹具讲了 19 处协议
   却没声明 `duo-sim-protocol`，靠传递依赖白用——夹具"真的讲协议"正是它作为验收样本的意义。
 

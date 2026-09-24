@@ -42,12 +42,12 @@
 | # | 目标 | 达成度 | 证据 | 缺口 |
 | --- | --- | --- | --- | --- |
 | T1 | 可组装 | ✅ **达成** | `ScenarioLoader` + `ScenarioValidator` 规则 1–8 + `WiringResolver` 拓扑排序启动 | 契约种类 8 种（G1 已闭合，覆盖设计文档 §5 的全部契约） |
-| T2 | 任意项可测 | ✅ **达成** | in-process SUT 全链路闭环（`SutMain`/`SutContext`/`SutLauncher`）；**external SUT 已闭环（M6：零依赖第三方进程端到端验收）**；替身覆盖 8/8 契约（M5 第 4 轮补齐 scheduler/engine/message/filestore/resource） | 无 real worker 的 `SutMain` 示例（已在 §8 记为诚实缺口，不阻塞判据） |
+| T2 | 任意项可测 | ✅ **达成** | in-process SUT 全链路闭环（`SutMain`/`SutContext`/`SutLauncher`）；**external SUT 已闭环（M6：零依赖第三方进程端到端验收）**；替身覆盖 8/8 契约（M5 第 4 轮补齐 scheduler/engine/message/filestore/resource）；**worker 侧 `SutMain` 已交付（第 32 轮 `RealWorkerSut` + `WorkerSutAcceptanceTest` 三例）** | — |
 | T3 | 可替换 | ✅ **达成** | M0 `TierSwapAcceptanceTest`：同一拓扑 `workers` 在 `virtual ↔ real` 间切换、测试代码零改动；**两档调度器共用同一份 `SchedulerStateMachine`（M5 第 4 轮移入 components）**；`ZkSchedulerDiscoveryTest` 钉住跨档位发现 | `engine`/`message`/`filestore`/`resource` 单档——这些契约**本身只有一种档位语义**，属设计边界而非缺口（G3 已按边界收口） |
 | T4 | 行为可控 | ✅ **达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配；**行为模型已由 worker 与 engine 两侧消费（M5 第 4 轮 `VirtualEngine` 复用 `BehaviorResolver`）** | — |
 | T5 | 故障可注入 | ✅ **达成** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；`custom-hook` 已闭环；**`freeze`/`slow`/`resource-exhaust` 已落地（M5 第 4 轮）**：三者幂等且对未声明者显式拒绝 | 「动作 × 档位」成对场景集已在各 Provider 用例中成对落地（G5 已闭合） |
 | T6 | 真实反馈 | ✅ **达成** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档真 ZooKeeper 与真 PostgreSQL（M5 第 4 轮，CI container job 取证 skip=0） | 适配器未做（§17 决策：按需立专项，是非目标而非缺口） |
-| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **406 测 / 0 失败 / 0 错误 / 11 skip**（第二轮补充整改后实测；第一轮为 378 测）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
+| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **395 测 / 0 失败 / 0 错误 / 11 skip**（第 33 轮实测：control 契约测试归属本模块后、删 1 条恒真用例；中间值 406 是第 13 轮整改口径、396 是第 32 轮口径）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | ✅ **达成** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；标准 Wrapper + LICENSE + 发布产物 + **依赖门禁（第 11 轮）** + CI 三 job 远端全绿 | — |
 
 **一句话结论（第 13 轮更新）**：**T1–T8 全部达成**，差距清单 **G1–G11 全部闭合**
@@ -235,8 +235,10 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
   以代际 `AtomicLong` 隔离 + 可证伪守卫用例）；
   最终取证 run [35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887)
   `regression` ✅ **342/0/0/11**、`container` ✅ 15/15 skip=0（本机同 HEAD 342/0/11 一致）
-- 剩余一处未闭合：「SUT 落在 worker 侧」需要 examples 提供 real worker 的 `SutMain`（当前不存在），
-  故 virtual scheduler 的覆盖是**线协议级**（真实 DUO_PORT + 真实 registry + 假 worker）
+- ~~剩余一处未闭合：「SUT 落在 worker 侧」需要 examples 提供 real worker 的 `SutMain`~~
+  **已闭合（第 32 轮，提交 `306c817`）**：`RealWorkerSut` 交付完整档 worker 侧 `SutMain`
+  （真连 master / 心跳 / 领取执行回报 / 断连自愈），`WorkerSutAcceptanceTest` 三例钉住。
+  在此之前 virtual scheduler 的覆盖是**线协议级**（真实 DUO_PORT + 真实 registry + 假 worker）。
 
 **验收标准**
 
@@ -491,6 +493,18 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 > 建议等真实长稳需求出现再做，避免为评估而评估；
 > ③ CI 已接入依赖门禁（`regression` job 里 `-Dquality -DskipTests verify`），
 > 后续任何"顺手引依赖"都会被拦住。
+
+### 2026-09-20（第 33 轮）：控制面夹具静默期化 + 测试台账补记（32/14 轮落库）
+
+| 项 | 结果 |
+| --- | --- |
+| 补记（台账漏记的已提交工作） | ① **第 32 轮（提交 `306c817`）**：`RealWorkerSut` + `WorkerSutAcceptanceTest` 三例——「SUT 落在 worker 侧」这条长期诚实缺口闭合（见 M0 节更新），本表此前漏记；② **第 14 轮（提交 `6f2cb58`）**：`ScenarioHostTest`/`RestControlServerTest` 迁回 `duo-sim-control/src/test`（test 作用域依赖 components，依赖方向仍单向）；③ **文档口径（提交 `9ad13ca`）**：DEVELOPMENT/CHANGELOG/README 同步 396 测口径 |
+| 触发 | 第 32 轮把 `ControlFixtureSut` 迁进 control 后，REST 层测试经 `POST /scenario` 走**外部输入档**——config 键白名单不收 `fixture.*`，夹具按「收齐 `fixture.expectedWorkers` 个注册才退出」的规则在 REST 档下根本起不来（400 拒掉，后续断言全数落空）。这是「测试夹具在两个信任档下不同行为」的真实缺陷 |
+| 修复（夹具退出规则） | `ControlFixtureSut` 改为**注册静默期**判据：首个注册到达后 600ms 无新注册即视为收齐，再维持观察窗（缺省 2s；本机配置档可用 `fixture.holdMs` 覆盖）后返回；12s 封顶，任何路径不让场景假 RUNNING。**不依赖任何非白名单键**——同一个夹具在配置档与外部输入档下行为一致，无需为测试放宽输入边界 |
+| 修复（postmortem 用例语义） | `topologyReadableAfterFinishForPostmortem` 曾改成「等 SUT 自退后读拓扑」——但 REST 层下「结束」只有 `DELETE /scenario`（＝`host.stop()`，断言评估与终态固化都在那里）才对外可见，SUT 自退后 `/scenario/status` 仍报 RUNNING。用例改回 DELETE 后读取，与产品行为一致 |
+| 删除 | `RestControlServerTest.sutDependentRejectionsLiveInExamplesOrchestration`——探针恒 `return true` + `assertTrue`，**不构成任何检查**（用例里的断言对象不存在）。「编排层用例归属 examples」的事实由类 Javadoc 与 examples `pom.xml` 注释承载，不需要一条假测试来记 |
+| 测试 | 全量回归 **395 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（protocol 12、kernel 79、scenario 55、components 120、embedded 57+10 skip、control 22＝Host 10 + REST 12、examples 50+1 skip）。`wellFormedJsonWithBadTargetIs400` 首次真实执行并验证了 `/inject` 的 `NullPointerException → 400` 分支（第 13 轮整改落地，此前无绿测覆盖） |
+| 文档 | DEVELOPMENT §3.2（395 分布 + 修正写反的类构成 13+10→10+13 + §3.1 中 control「不带测试」的过时陈述）、CHANGELOG（395 口径 + 第 33 轮两条修复）、README（3 处 396→395）、ROADMAP §2 T2/T7 行 + M0 节缺口闭合标注 |
 
 ### 2026-09-20（第 13 轮）：安全整改——审计 20 条发现全部闭合（G12 新增）
 

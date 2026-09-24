@@ -23,12 +23,13 @@ import java.net.SocketTimeoutException;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 最小 SUT 夹具（测试源码，不是产品代码）：扮演 {@code scheduler} 的**端点 + 连接应答**。
  *
  * <p>它做四件事：绑定 Duo 端口 → <b>注册端点供 worker 发现</b> → {@code ready()} →
- * accept worker 拨号、应答注册并受理心跳/槽位/回报，**收齐期望数量后自行退出**。
+ * accept worker 拨号、应答注册并受理心跳/槽位/回报，<b>在注册静默期后自行退出</b>。
  *
  * <h2>为什么需要它</h2>
  * {@code ScenarioEngine.startSut()} 强制「SUT 节点必须声明 {@code launch}」，且 worker 侧组件
@@ -38,13 +39,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  * （{@code ComponentException: scheduler endpoint not discovered}）。
  *
  * <h2>为什么 run() 必须返回（本轮修掉的真实缺陷）</h2>
- * §7.3 的场景结束条件是 <b>SUT 退出</b>（{@code sut.exited → sutExit}</b>），不是时间到：
+ * §7.3 的场景结束条件是 <b>SUT 退出</b>（{@code sut.exited} → sutExit），不是时间到：
  * {@code duration} 是 worker 的剧本参数，与引擎结束无关。夹具若永不返回，
  * {@code ScenarioHost.awaitFinish()} 就永远等不到终态——宿主停在 {@code RUNNING}、
  * 断言表为空（{@code /assertions} 只见 {@code passed=true, assertions=[]}），
- * "等到了终态" 与 "根本没结束" 在调用方看来一模一样。因此这里显式收敛：
- * <b>收齐 {@code expectedWorkers} 个实例的注册 + 心跳，再让稳态维持
- * {@code SETTLE_MS}，然后返回</b>（确定性条件，非随机；见 {@code startSettleClock}）。
+ * "等到了终态" 与 "根本没结束" 在调用方看来一模一样。
+ *
+ * <h2>退出规则：注册静默期（不依赖任何 config 键）</h2>
+ * 本夹具被两个信任档共用：控制面 REST 测试走<b>外部输入档</b>，config 只接受框架白名单键
+ * （{@code ScenarioValidator.TRUSTED_CONFIG_KEYS}）；直连宿主的测试走<b>本机配置档</b>。
+ * 因此「该等几个 worker」不能靠自定义键传入——改为观察行为本身：
+ * <b>首个注册到达后，若 {@code REG_QUIET_MS} 内再无新注册，即认为该来的都来了</b>；
+ * 再维持 {@code holdMs} 的 RUNNING 观察窗后返回。整体由 {@code WAIT_CAP_MS} 封顶，
+ * 任何路径都不让场景假 RUNNING。
  *
  * <h2>职责边界</h2>
  * 只有存在性、可发现性、连接应答与**退出**，<b>没有调度语义</b>（不派发任务、不判 DAG 终态、
@@ -60,18 +67,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ControlFixtureSut implements SutMain {
 
     /**
-     * 稳态观察窗（缺省）：收齐全部实例的注册与心跳之后再跑这么久，让控制面在"运行中"
-     * 有一个**可预期**的窗口去做它的几步调用。
-     *
-     * <p>取值依据：本模块的控制面用例在 POST 之后还要走 status / topology / events /
-     * 双启动 / DELETE 若干次本机 HTTP 往返，几百毫秒的窗口在慢机上会恰好擦边。
-     * 3s 是"足够宽但不拖慢整轮测试"的量级——它不是等某个异步操作，而是明确宣告
-     * "场景会活这么久"。
+     * RUNNING 观察窗缺省值：静默期确认后场景还会活这么久，供控制面做它的几步调用
+     * （status / topology / events / 双启动 409 / 注入 / DELETE）。外部输入档不能传
+     * {@code fixture.holdMs}，用的就是它；本机配置档可用该键缩短（见 {@link #readHoldMs}）。
      */
-    private static final long HOLD_MS = 3_000;
-    /** 等待 worker 注册/心跳的封顶时间：到不了也退出，绝不让场景假 RUNNING。 */
-    private static final long WAIT_CAP_MS = 10_000;
-    /** worker 空闲一次不算断连：多久没有帧就认为该连接已死（只清理该连接）。 */
+    private static final long HOLD_MS = 2_000;
+    /** 注册静默期：首注册后这么久没有新注册 ⇒ 该来的 worker 都来了。 */
+    private static final long REG_QUIET_MS = 600;
+    /** 等注册的封顶时间：一个都没来也退出，绝不让场景假 RUNNING。 */
+    private static final long WAIT_CAP_MS = 12_000;
+    /** worker 空闲一次不算断连：单连接读超时（超时只回到循环，不断链）。 */
     private static final int READ_TIMEOUT_MS = 2_000;
     /**
      * 派发事实与终态事实之间的间隔：让控制面有一次以上的轮询机会观察到"任务在跑"。
@@ -80,12 +85,14 @@ public final class ControlFixtureSut implements SutMain {
      */
     private static final long TERMINAL_GAP_MS = 200;
 
-    /** 本次运行的观察窗（由节点 config {@code fixture.holdMs} 覆盖，见 {@link #awaitSettle}）。 */
+    /** 本次运行的观察窗（由节点 config {@code fixture.holdMs} 覆盖；仅本机配置档可达）。 */
     private volatile long holdMs = HOLD_MS;
 
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicInteger registered = new AtomicInteger();
     private final AtomicInteger heartbeats = new AtomicInteger();
+    /** 最近一次注册变化的时间戳：静默期计时的锚点（0 = 尚无注册）。 */
+    private final AtomicLong registeredChangeAt = new AtomicLong();
 
     private volatile ServerSocket server;
     private volatile Thread acceptor;
@@ -109,8 +116,7 @@ public final class ControlFixtureSut implements SutMain {
                 Map.of("endpoint", "127.0.0.1:" + server.getLocalPort()));
 
         acceptor = Thread.ofVirtual().name("fixture-sut-accept").start(this::acceptLoop);
-        int expected = expectedWorkers(ctx);
-        awaitSettle(expected);
+        awaitWorkersQuiet();
         // 收尾前用协议发一个真实的「任务派发 + 终态」事实对：noTaskLost 断言在**零派发**时判
         // 失败（"no task was dispatched"，见 Assertions.noTaskLost），而本夹具的职责边界是不做
         // 调度。两条事实只是"这个 taskId 有始有终"，让控制面能走到断言评估这一段——
@@ -127,19 +133,8 @@ public final class ControlFixtureSut implements SutMain {
                 Map.of("taskId", "fixture-task-1", "state", "SUCCESS",
                         "detail", "fixture SUT has no scheduler semantics", "source", "fixture"));
         ctx.events().publish("sut.fixture-finished",
-                Map.of("registered", registered.get(), "heartbeats", heartbeats.get(),
-                        "expectedWorkers", expected));
+                Map.of("registered", registered.get(), "heartbeats", heartbeats.get()));
         // run() 返回 ⇒ SutLauncher 发 sut.exited ⇒ 场景进入终态（§7.3）
-    }
-
-    /** 期望的 worker 实例数：由场景节点 {@code count} 经 config 传入，缺省按 1 处理。 */
-    private static int expectedWorkers(SutContext ctx) {
-        String raw = ctx.config().get("fixture.expectedWorkers");
-        try {
-            return raw == null || raw.isBlank() ? 1 : Math.max(1, Integer.parseInt(raw.trim()));
-        } catch (NumberFormatException e) {
-            return 1;
-        }
     }
 
     /** 观察窗：config {@code fixture.holdMs}（毫秒）覆盖缺省；解析不出就用缺省，不静默变成 0。 */
@@ -153,21 +148,14 @@ public final class ControlFixtureSut implements SutMain {
     }
 
     /**
-     * 等到「注册数达标 且 心跳数达标」后再观察 {@code holdMs}，然后返回。
-     *
-     * <p>为什么必须无条件返回：SUT 不退出，引擎就没有终态（§7.3 的结束条件是 SUT 退出，
-     * 不是 {@code duration} 到点），宿主会永远停在 RUNNING——调用方看到的是"一直在跑"，
-     * 而不是"卡住了"。所有路径都收敛，是这个夹具能被信赖的前提。
-     *
-     * <p>为什么观察窗是确定性的而不是 sleep 堆积：控制面用例在 POST 与随后几步 HTTP 调用
-     * 之间需要一个**稳定存在**的 RUNNING 窗口。窗口靠"齐了 N 个实例再退"这个可判定条件
-     * 打开，而不是靠碰运气。{@code fixture.holdMs} 可调，但只在**本机配置档**可用——
-     * 外部输入档只接受白名单键，夹具不会为此破坏那条边界。
+     * 注册静默期：等到「至少一个注册 且 距最近一次注册变化 ≥ {@code REG_QUIET_MS}」，
+     * 再维持 {@code holdMs} 后返回。所有路径都收敛（静默达标或封顶），否则场景会假 RUNNING。
      */
-    private void awaitSettle(int expected) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + holdMs + WAIT_CAP_MS;
+    private void awaitWorkersQuiet() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + WAIT_CAP_MS;
         while (running.get() && System.currentTimeMillis() < deadline) {
-            if (registered.get() >= expected && heartbeats.get() >= expected) {
+            long at = registeredChangeAt.get();
+            if (at > 0 && System.currentTimeMillis() - at >= REG_QUIET_MS) {
                 Thread.sleep(holdMs);
                 return;
             }
@@ -198,6 +186,7 @@ public final class ControlFixtureSut implements SutMain {
                 DuoMessage msg = decode(frame);
                 if (msg instanceof RegisterRequest) {
                     registered.incrementAndGet();
+                    registeredChangeAt.set(System.currentTimeMillis());
                     conn.write(new RegisterResponse(true, null));
                 } else if (msg instanceof HeartbeatReport) {
                     heartbeats.incrementAndGet();

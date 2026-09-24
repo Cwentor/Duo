@@ -29,9 +29,11 @@ class ScenarioHostTest {
     /**
      * 快速收敛的场景（短时长，便于测试）。
      *
-     * <p>第 14 轮迁回本模块后 SUT 改用 {@code VirtualScheduler}（components 的 virtual 档真实
-     * 实现，本模块以 test 作用域依赖它）：控制面契约测试要的是「有一份真实档位实现能跑通全链路」，
-     * 不需要 examples 的演示 SUT——依赖方向因此保持单向（examples → control）。
+     * <p>SUT 用本模块测试夹具 {@code ControlFixtureSut}（scheduler 端点应答 + 注册静默期后
+     * 自行退出）：控制面契约测试要的是「启动/状态/事件/断言/停止全链路真的走通」，而不是
+     * 调度算法本身（那在 examples 的 {@code DemoScheduler}）。依赖方向因此保持单向
+     * （examples → control）。{@code fixture.holdMs} 是夹具的私有键——本测试走本机配置档
+     * 可用；REST 层的外部输入档不收它，靠夹具缺省窗口。
      */
     private static final String FAST_SCENARIO = """
             name: control-host-smoke
@@ -44,7 +46,7 @@ class ScenarioHostTest {
                 tier: virtual
                 sut: true
                 launch: { mode: in-process, main: io.duo.sim.control.testfixture.ControlFixtureSut }
-                config: { dag.tasks: "a,b", fixture.expectedWorkers: "2" }
+                config: { dag.tasks: "a,b", fixture.holdMs: "300" }
                 exposes: [{ contract: scheduler, port: 0 }]
                 wiring:
                   registry: { node: zk, contract: registry }
@@ -91,7 +93,7 @@ class ScenarioHostTest {
 
     private static final long _60S = 60_000;
 
-    /** 夹具 SUT 自己退出的观察上限：夹具在第二个 worker 注册+心跳到达后即返回。 */
+    /** 夹具 SUT 自行退出的观察上限：静默期 600ms + hold 300ms + 启动余量，15s 绰绰有余。 */
     private static final long _15S = 15_000;
 
     @Test
@@ -103,7 +105,7 @@ class ScenarioHostTest {
             assertEquals("control-host-smoke", st.get("scenario"));
             assertTrue(host.isRunning());
 
-            // 夹具 SUT 收齐 2 个 worker 的注册与心跳后 run() 返回 → sut.exited → 场景终态。
+            // 夹具 SUT 在注册静默期后 run() 返回 → sut.exited → 场景终态。
             // 这也是 §7.3 结束条件为「SUT 退出」的可执行证据：不是时间到，是 SUT 说了算。
             var fin = host.awaitFinish(_15S);
             assertEquals("FINISHED", fin.get("state"),

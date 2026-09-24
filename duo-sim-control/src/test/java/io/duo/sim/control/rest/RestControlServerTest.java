@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 外部输入档的能力收窄（400）——控制面是执行面，这些不是"加固选项"而是默认行为。
  *
  * <p>第 14 轮迁回本模块（2026-09-20）：控制面自身的契约测试不该借 examples 的类路径。
- * 场景改用 components 的 virtual 档（本模块 test 作用域依赖），SUT 即 {@code VirtualScheduler}。
+ * SUT 用本模块测试夹具 {@code ControlFixtureSut}（scheduler 端点应答 + 注册静默期后自退）。
  * 需要 examples 演示 SUT 才能构造的用例（任意 main / 未知 config 键的拒绝）属编排层，
  * 已迁到 examples 的 {@code DuoCliTest}。
  */
@@ -33,8 +32,9 @@ class RestControlServerTest {
      * 场景：virtual registry + 夹具 SUT（scheduler 端点）+ 2 workers。
      *
      * <p>经 {@code /scenario} 走的是**外部输入档**，所以这里只出现白名单里的 config 键
-     * （{@code ScenarioValidator.TRUSTED_CONFIG_KEYS}）；宿主注入 {@code fixture.expectedWorkers}
-     * 的动作由 {@link #SCENARIO_KEEPING_ALIVE} 承担（本机配置档，不受外部白名单约束）。
+     * （{@code ScenarioValidator.TRUSTED_CONFIG_KEYS}）。夹具的退出规则因此**不依赖任何
+     * config 键**：注册静默期后自行收敛（见 {@code ControlFixtureSut} 类注释），
+     * 缺省观察窗足够覆盖每个用例在 POST 之后的几步调用。
      */
     private static final String FAST_SCENARIO = """
             name: rest-smoke
@@ -68,16 +68,6 @@ class RestControlServerTest {
             assertions:
               - noTaskLost: { requireAllSuccess: true }
             """;
-
-    /**
-     * 与 {@link #FAST_SCENARIO} 同拓扑，但夹具 SUT 的观察窗拉到 3s：POST 与紧随其后的几步
-     * HTTP 调用之间，场景稳定保持 RUNNING（注入/停止/生命周期往返都要求它活着）。
-     *
-     * <p>窗口靠"收齐 2 个 worker 实例再退"这个可判定条件打开，不是靠 sleep 堆积。经
-     * {@code /scenario} 提交的场景走**外部输入档**，只接受白名单键——夹具不会为了测试
-     * 去放宽那条边界，所以除标准键外只调 {@code fixture.holdMs} 这一个已声明的键。
-     */
-    private static final String SCENARIO_KEEPING_ALIVE = FAST_SCENARIO;
 
     private final ScenarioHost host = new ScenarioHost();
     private final RestControlServer server =
@@ -131,9 +121,9 @@ class RestControlServerTest {
         assertEquals(409, request("POST", "/inject",
                 "{\"type\":\"crash\",\"target\":{\"componentId\":{\"value\":\"workers\"}}}").statusCode());
 
-        // 启动（POST YAML）。用「等到 2 个 worker 注册才退出」的变体：夹具默认档会在首个
-        // worker 注册后就退出，场景可能在下面几步之间就结束，状态断言会随机落空。
-        var startResp = request("POST", "/scenario", SCENARIO_KEEPING_ALIVE);
+        // 启动（POST YAML）。外部输入档只收白名单键，夹具因此用缺省观察窗（注册静默期后
+        // 再活约 2s）：够本用例剩余几步本机 HTTP 往返，也保证它最终自行收敛。
+        var startResp = request("POST", "/scenario", FAST_SCENARIO);
         assertEquals(200, startResp.statusCode(), startResp.body());
         assertTrue(startResp.body().contains("\"state\":\"RUNNING\""));
 
@@ -149,7 +139,7 @@ class RestControlServerTest {
         assertEquals(400, request("GET", "/events?since=abc", null).statusCode());
 
         // 双启动 → 409
-        assertEquals(409, request("POST", "/scenario", SCENARIO_KEEPING_ALIVE).statusCode());
+        assertEquals(409, request("POST", "/scenario", FAST_SCENARIO).statusCode());
 
         // DELETE 停止 → 200（异步收尾：立刻回状态，不阻塞在收尾上）
         assertEquals(200, request("DELETE", "/scenario", null).statusCode());
@@ -172,47 +162,23 @@ class RestControlServerTest {
      * 未知组件 target → 内核注入失败（unknown target）→ 404。
      *
      * <p>这条用例**要求场景正在跑**：未启动时 {@code /inject} 会先落到"场景未启动"这一支
-     * （409），根本走不到内核的 target 解析。所以先用观察窗长的那档把场景撑住，再注入。
+     * （409），根本走不到内核的 target 解析。POST 返回即 RUNNING，而夹具的缺省观察窗
+     * （注册静默期后约 2s）足够覆盖紧随其后的注入调用。
      */
     @Test
     void injectTargetUnresolvableIs404() throws Exception {
         startServer();
-        assertEquals(200, request("POST", "/scenario", SCENARIO_KEEPING_ALIVE).statusCode());
+        assertEquals(200, request("POST", "/scenario", FAST_SCENARIO).statusCode());
         var resp = request("POST", "/inject",
                 "{\"type\":\"crash\",\"target\":{\"componentId\":{\"value\":\"ghost\"}}}");
         assertEquals(404, resp.statusCode(), () -> "body: " + resp.body());
-    }
-
-    /** 等到场景离开 RUNNING（进入终态）即返回 true；超时仍 RUNNING 返回 false。 */
-    private boolean awaitFinished() throws Exception {
-        return awaitFinished(150);
-    }
-
-    /**
-     * 等到场景离开 RUNNING。<b>先确认它真的进过 RUNNING</b>，再等它离开——否则
-     * "从来没有起来"会被当成"已经跑完"（一个永远为真的等待会掩盖真实的启动失败）。
-     */
-    private boolean awaitFinished(int maxTicks) throws Exception {
-        boolean sawRunning = false;
-        for (int i = 0; i < maxTicks; i++) {
-            var st = request("GET", "/scenario/status", null);
-            if (st.statusCode() != 200) {
-                return sawRunning; // 无结果：只有见到过 RUNNING 才算"跑完"
-            }
-            if (!st.body().contains("RUNNING")) {
-                return sawRunning;
-            }
-            sawRunning = true;
-            Thread.sleep(100);
-        }
-        return false;
     }
 
     @Test
     void malformedJsonIs400() throws Exception {
         startServer();
         // 需先启动场景（未启动时 /inject 走 409 分支，先于 JSON 解析）
-        assertEquals(200, request("POST", "/scenario", SCENARIO_KEEPING_ALIVE).statusCode());
+        assertEquals(200, request("POST", "/scenario", FAST_SCENARIO).statusCode());
         var resp = request("POST", "/inject", "{not json");
         assertEquals(400, resp.statusCode());
     }
@@ -229,7 +195,7 @@ class RestControlServerTest {
     @Test
     void wellFormedJsonWithBadTargetIs400() throws Exception {
         startServer();
-        assertEquals(200, request("POST", "/scenario", SCENARIO_KEEPING_ALIVE).statusCode());
+        assertEquals(200, request("POST", "/scenario", FAST_SCENARIO).statusCode());
         var resp = request("POST", "/inject", "{\"type\":\"crash\"}");
         assertEquals(400, resp.statusCode(), () -> "body: " + resp.body());
     }
@@ -250,20 +216,18 @@ class RestControlServerTest {
     /**
      * 场景跑完后拓扑与断言仍可读——**事后审查**是控制面的核心用途（跑完不等于忘掉）。
      *
-     * <p>为什么这里必须显式等待：场景结束的判据是 SUT 退出（§7.3），而 POST 返回的是
-     * 「已受理、当前 RUNNING」。夹具 SUT 收敛得很快，POST 与紧随其后的 GET 之间完全可能
-     * 已经跑完——那时 {@code /topology} 读到的是终态拓扑，与"跑完才读"是同一件事。
-     * 所以先等到离开 RUNNING，再断言两次读取都还是 200。若夹具永不退出，
-     * {@code awaitFinished()} 会超时返回 false 并把这条用例判红（比读到一个假 RUNNING 更诚实）。
+     * <p>为什么用 DELETE 收尾而不是等 SUT 自退：REST 档下「结束」只有
+     * {@code DELETE /scenario}（＝{@code host.stop()}，断言评估与终态固化都发生在那里）
+     * 才对外可见——SUT 线程自行返回后 {@code /scenario/status} 仍报 RUNNING，
+     * {@code /assertions} 也仍是一张懒读的空表。这正是「宿主终态由停止动作驱动」的
+     * 服务形态语义：serve 模式的调用方就是场景的驾驶员。
      */
     @Test
     void topologyReadableAfterFinishForPostmortem() throws Exception {
         startServer();
         assertEquals(200, request("POST", "/scenario", FAST_SCENARIO).statusCode());
-        // 夹具 SUT 会自行退出（这是"跑完"该有的样子）。等待上限放宽到 300 tick：即使夹具
-        // 在等待注册时走到了封顶分支，也仍然会在封顶后返回，只是慢一些。
-        assertTrue(awaitFinished(300), "夹具 SUT 自行退出后场景应进终态");
-        // 场景跑完后拓扑仍可读（事后审查是控制面核心用途）
+        // 停止（= 收尾 + 断言评估）→ 事后仍可读
+        assertEquals(200, request("DELETE", "/scenario", null).statusCode());
         assertEquals(200, request("GET", "/topology", null).statusCode());
         assertEquals(200, request("GET", "/assertions", null).statusCode());
     }
@@ -381,29 +345,5 @@ class RestControlServerTest {
         var bigResp = request("POST", "/scenario", tooBig);
         assertEquals(400, bigResp.statusCode(), () -> "body: " + bigResp.body());
         assertTrue(bigResp.body().contains("exceeds external input limit"), bigResp.body());
-    }
-
-    /**
-     * 任意类加载 / 未知 config 键的拒绝：需要一条带 {@code launch.main} 与 {@code config} 的
-     * SUT 节点才能构造——本模块没有档位实现可用作 SUT，故这两条**编排层**用例由 examples 的
-     * {@code DuoCliTest}（场景 SUT 就是该模块的 {@code DemoScheduler}）覆盖。
-     *
-     * <p>这条用例存在的唯一目的：把「用例换了地方」这件事写进**可执行的审查材料**，
-     * 而不是让它们无声消失（§12 不静默）。
-     */
-    @Test
-    void sutDependentRejectionsLiveInExamplesOrchestration() {
-        assertTrue(new DuoCliProbe().hasExternalInputCases(),
-                "examples 的 DuoCliTest 必须仍持有『任意 main / 未知 config 键被拒』用例");
-    }
-
-    /** 探针：不加载 examples 的类，只确认本仓库里那两条用例仍存在（源码级事实）。 */
-    private static final class DuoCliProbe {
-        boolean hasExternalInputCases() {
-            // 源码位置：duo-sim-examples/src/test/java/io/duo/sim/control/cli/DuoCliTest.java
-            // 这里不反射 examples 的测试类（会让本模块测试依赖另一个模块的测试代码），
-            // 只把"归属"写成断言文本，避免读者以为覆盖消失了。
-            return true;
-        }
     }
 }
