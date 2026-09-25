@@ -73,6 +73,13 @@ public final class RestControlServer implements AutoCloseable {
     /** 请求体上限（1 MiB）：场景 YAML/FaultAction 都远小于此，超出即 413。 */
     public static final int MAX_BODY_BYTES = 1 << 20;
 
+    /**
+     * 413 排空上限：拒绝超限上传前先读并丢弃的字节预算。正常超限上传（≈1 MiB 量级，
+     * {@link #MAX_BODY_BYTES} 级别）必在此预算内读到 EOF；超出预算的滥用流放弃排空
+     * （宁可它丢 413 响应，也不陪跑无限流）。
+     */
+    private static final long MAX_DRAIN_BYTES = 64L << 20;
+
     /** 回环主机名白名单（Host 头校验；含 IPv6 字面量）。 */
     private static final Set<String> LOOPBACK_HOSTS = Set.of(
             "127.0.0.1", "localhost", "[::1]", "::1", "0:0:0:0:0:0:0:1");
@@ -190,7 +197,7 @@ public final class RestControlServer implements AutoCloseable {
                     try {
                         yaml = readBody(ex);
                     } catch (BodyTooLargeException e) {
-                        respond(ex, 413, Map.of("error", e.getMessage()));
+                        rejectTooLarge(ex, e);
                         return;
                     } catch (IOException e) {
                         return; // 客户端断开
@@ -296,7 +303,7 @@ public final class RestControlServer implements AutoCloseable {
                             "reason", result.reason() == null ? "" : result.reason()));
                 }
             } catch (BodyTooLargeException e) {
-                respond(ex, 413, Map.of("error", e.getMessage()));
+                rejectTooLarge(ex, e);
             } catch (com.fasterxml.jackson.core.JacksonException | IllegalArgumentException e) {
                 respond(ex, 400, Map.of("error", String.valueOf(e.getMessage())));
             } catch (NullPointerException e) {
@@ -464,6 +471,38 @@ public final class RestControlServer implements AutoCloseable {
             out.write(buf, 0, read);
         }
         return out.toByteArray();
+    }
+
+    /**
+     * 413 的确定性投递（CI 间歇红实证：2026-09-23
+     * `RestControlServerTest.oversizedBodyIsRejectedWith413` 与 2026-09-25
+     * `SecurityRemediationAcceptanceTest.oversizedUploadsAreRejectedByDeclaredAndActualSize`，
+     * 签名同为客户端「HTTP/1.1 header parser received no bytes」，同一代码一次红一次绿）。
+     *
+     * <p>机理（JDK 21.0.12 `sun.net.httpserver.ServerImpl` 源码实证）：响应写完后若请求体
+     * 未读至 EOF，`t.close = true` → `c.close()` **硬关连接**（JDK 不排空剩余体）。超限体
+     * （>1 MiB）在响应写完时客户端往往仍在发送——带未读接收数据 close 触发内核 RST，RST 使
+     * 客户端读侧立刻 ECONNRESET，**已到达但未读的 413 响应字节一并作废**。小体量的
+     * 401/403/405/400 拒绝用例从不闪红：客户端早已发完转入读态，响应在 RST 前已被消费。
+     * 修法：先有界排空请求体再响应——读到 EOF 后 JDK 不再硬关（连接优雅收尾），413 必达。
+     * Windows 本地不复现、Linux CI 间歇命中，与本机 RST 时序差异一致。
+     */
+    private void rejectTooLarge(HttpExchange ex, BodyTooLargeException e) {
+        drainUpTo(ex.getRequestBody(), MAX_DRAIN_BYTES);
+        respond(ex, 413, Map.of("error", e.getMessage()));
+    }
+
+    /** 有界排空：读并丢弃至 EOF 或 {@code cap} 字节；客户端中途断开则无事可做。 */
+    private static void drainUpTo(InputStream in, long cap) {
+        byte[] buf = new byte[8192];
+        long drained = 0;
+        try {
+            for (int read; drained < cap && (read = in.read(buf)) >= 0; drained += read) {
+                // 丢弃即可
+            }
+        } catch (IOException e) {
+            // 客户端断开：413 已无处投递
+        }
     }
 
     /**

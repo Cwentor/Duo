@@ -77,6 +77,16 @@
 
 ### 修复
 
+- **413 超限拒绝的确定性投递（CI 间歇红，2026-09-25 修复）**：`RestControlServer` 的 413 路径
+  在响应后带着未读请求体关闭连接，Linux 上间歇性让客户端收到
+  `HTTP/1.1 header parser received no bytes` 而非 413——实证链：09-23
+  `RestControlServerTest.oversizedBodyIsRejectedWith413` 与 09-25
+  `SecurityRemediationAcceptanceTest.oversizedUploadsAreRejectedByDeclaredAndActualSize`
+  两红、同一代码一次红一次绿。机理（JDK 21.0.12 `ServerImpl` 源码实证）：响应写完后请求体
+  未读至 EOF 即 `c.close()` 硬关连接；超限体（>1 MiB）此时客户端仍在发送，带未读接收数据
+  close 触发内核 RST，已到达未读的 413 响应字节一并作废。修法：`rejectTooLarge` 先有界排空
+  （64 MiB 预算，读到 EOF 后 JDK 不再硬关）再响应——413 必达，连接优雅收尾；小体量拒绝
+  用例（401/403/405/400）因客户端早已转入读态从未受影响。
 - **控制面测试夹具的退出规则不再依赖自定义 config 键（第 33 轮）**：`ControlFixtureSut`
   原按「收齐 `fixture.expectedWorkers` 个注册后退出」收敛，但 REST 层测试经
   `POST /scenario` 走**外部输入档**——`ScenarioValidator` 的 config 键白名单根本不收
