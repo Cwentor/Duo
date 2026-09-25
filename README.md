@@ -1,19 +1,52 @@
-# Duo —— 通用可组合虚拟大数据仿真系统
+<div align="center">
+
+# Duo
+
+**通用可组合虚拟大数据仿真系统（Composable Virtual Big-Data Simulation System）**
+
+[![CI](https://github.com/Cwentor/Duo/actions/workflows/ci.yml/badge.svg)](https://github.com/Cwentor/Duo/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Java](https://img.shields.io/badge/Java-21_LTS-ED8B00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/21/)
+[![Maven](https://img.shields.io/badge/Maven-3.9%2B-C71A36?logo=apachemaven&logoColor=white)](https://maven.apache.org/)
+[![JUnit](https://img.shields.io/badge/JUnit-5-25A162?logo=junit5&logoColor=white)](https://junit.org/junit5/)
+
+[简体中文](README.md) · [English](README.en.md)
+
+[快速开始](#5-快速开始) · [场景 DSL](docs/SCENARIO-DSL.md) · [架构详解](docs/ARCHITECTURE.md) · [路线图](docs/ROADMAP.md) · [文档索引](#9-文档索引)
+
+</div>
 
 > 用一份 YAML 在**单 JVM** 里搭出大数据/分布式系统的整条链路（注册中心、存储、资源管理、Worker、调度器），
 > 把真正要测的那一个节点换成你的真实实现（SUT），然后在秒级反馈回路里对它注入故障、观察自愈、用断言判成败。
+
+## 项目概览
 
 | 项目 | 说明 |
 | --- | --- |
 | 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
 | 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
-| 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿** |
+| 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次 |
 | 最近全量回归 | 2026-09-25 · `.\mvnw.cmd -o -B test` → **397 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1） |
 | 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
 | 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
 **里程碑进度**：`M0` 内核骨架 ✅ · `M1` 场景与注入 ✅ · `M2` 嵌入中间件 ✅ · `M3` 控制面 ✅ ·
-`M4` 规模与桥接 ✅ · `M5` 契约与档位补全 ✅ · `M6` external SUT ✅ · `M7` 工程化与 CI ✅ · `M8` 观测面 ✅
+`M4` 规模与桥接 ✅ · `M5` 契约与档位补全 ✅ · `M6` external SUT ✅ · `M7` 工程化与 CI ✅ · `M8` 观测面 ✅ ·
+`M9` 真实第三方接入（Phase A ✅ · Phase B 未启动）
+
+## 目录
+
+- [项目概览](#项目概览)
+- [1. 它解决什么问题](#1-它解决什么问题)
+- [2. 四个核心概念](#2-四个核心概念)
+- [3. 总体架构](#3-总体架构)
+- [4. 模块地图](#4-模块地图)
+- [5. 快速开始](#5-快速开始) — [5.1 环境](#51-环境) · [5.2 构建与测试](#52-构建与测试) · [5.3 跑一个场景（CLI 控制面）](#53-跑一个场景cli-控制面) · [5.4 观测面](#54-观测面三条通道怎么用m8) · [5.5 场景测试（JUnit5）](#55-写一个场景测试junit5)
+- [6. 契约 × 档位](#6-契约--档位当前已实现的实现清单)
+- [7. 一个最小场景](#7-一个最小场景)
+- [8. 现状与差距](#8-现状与差距一页速览)
+- [9. 文档索引](#9-文档索引)
+- [10. 许可](#10-许可)
 
 ---
 
@@ -140,17 +173,20 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）分三个 job：
 | --- | --- | --- |
 | `regression` | push / PR | 无 Docker 全量回归 + 依赖门禁（`-Dquality`）+ skip 清单可见 |
 | `container` | push / PR | 有 Docker，跑容器档并断言 **skip=0**（真 PostgreSQL 6/6 + 真 ZK 4/4） |
-| `scale` | nightly / 手动 | 千/万 Worker 心跳压测，产物留档 |
+| `scale` | nightly / 手动 | 千/万 Worker 心跳压测，产物留档（`duo-sim-examples/build/scale/*.json`，产物缺失即红） |
 
-容器档已在 CI 上**四次取证为绿**：runs
+容器档已在 CI 上**五次取证为绿**：runs
 [35341365256](https://github.com/Cwentor/Duo/actions/runs/35341365256)、
 [35343279887](https://github.com/Cwentor/Duo/actions/runs/35343279887)、
 [35417427531](https://github.com/Cwentor/Duo/actions/runs/35417427531)、
-[35420349133](https://github.com/Cwentor/Duo/actions/runs/35420349133)。
+[35420349133](https://github.com/Cwentor/Duo/actions/runs/35420349133)、
+[36115793273](https://github.com/Cwentor/Duo/actions/runs/36115793273)（三作业全绿，`scale` 档全套 413 用例全绿）。
 
 > **两件必须分清的事**：① 本机无 Docker，这 10 条只能 skip——所以「本机绿」与「容器档绿」不是同一件事，
-> 别互相代替；② 本地 `master` 领先 `origin/master` 若干提交，这些提交**没有 CI 运行**，
-> 引用取证时只能引用上面这些已跑过的版本。
+> 别互相代替；② run `36115793273` 同时是 **G8「压测产物留档」承诺的首次真实验证**——`scale-artifacts`
+> 683 bytes 首次真正上传（此前产物路径错配让该步自 CI 建档以来静默空转，已修复：路径对齐模块目录 +
+> `if-no-files-found` 由 `warn` 加固为 `error`）。仓库本地与 `origin/master` 已同步于 `257ca48`
+> （2026-09-25）——引用取证时上面这些已跑过的版本即当前版本。
 
 ### 5.3 跑一个场景（CLI 控制面）
 
@@ -331,7 +367,7 @@ assertions:
 | 3 可替换（换档零改动） | 🟡 部分 | M0 `TierSwapAcceptanceTest` 通过；`registry`（三档）、`store`/`resource`/`worker`/`scheduler`（各两档）已有多档实现；`scheduler` 两档同源（`SchedulerStateMachine`） |
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
-| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 四次取证为绿**（本机无 Docker 时 10 条容器用例按设计 skip） |
+| 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 五次取证为绿**（最近一次 run `36115793273` 三作业全绿；本机无 Docker 时 10 条容器用例按设计 skip） |
 | 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **397 测 / 0 失败 / 0 错误 / 12 skip**（10 条容器档因本机无 Docker、1 条未开压测开关、1 条未开 `-Dduo.ds=true` 真实 SUT 演练门控——其常驻守卫 `DsFailoverDrillGuardTest` 无门控进常规回归；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
 | — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
@@ -356,6 +392,7 @@ assertions:
 | [`docs/superpowers/specs/`](docs/superpowers/specs) | 设计文档 v1.0（冻结，唯一依据） |
 | [`docs/superpowers/plans/`](docs/superpowers/plans) | 各阶段实施计划 |
 | [`docs/superpowers/acceptance/`](docs/superpowers/acceptance) | 验收记录、万级压测报告、独立复验记录 |
+| [`README.en.md`](README.en.md) | 统一英文文档（与中文 README 同口径同步维护） |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本策略与未发布/已发布变更 |
 
 ## 10. 许可
