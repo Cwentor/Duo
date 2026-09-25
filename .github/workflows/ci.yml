@@ -94,7 +94,10 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      # 压测产物落 build/scale/*.json（.gitignore 覆盖，故必须作为 artifact 留档 —— G8）
+      # 压测产物落 duo-sim-examples/build/scale/*.json（模块工作目录下；.gitignore 覆盖，
+      # 故必须作为 artifact 留档 —— G8）。此前路径写的是仓库根的 build/scale/*.json——
+      # 测试经 Path.of("build","scale",...) 相对路径写在**模块目录**，根路径永远收不到，
+      # if-no-files-found: warn 让它静默空转（2026-09-25 立案：产物上传从未真正落盘过）。
       - name: scale tests
         run: ./mvnw -B -Dduo.scale=true -Dduo.docker.enabled=false test
       - name: skip summary (must be visible)
@@ -105,5 +108,5 @@ jobs:
         with:
           name: scale-artifacts
           path: |
-            build/scale/*.json
-          if-no-files-found: warn
+            duo-sim-examples/build/scale/*.json
+          if-no-files-found: error

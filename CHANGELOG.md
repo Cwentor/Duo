@@ -77,6 +77,12 @@
 
 ### 修复
 
+- **CI scale 产物上传从未真正落盘（2026-09-25 立案修复）**：workflow 收 `build/scale/*.json`
+  （仓库根），但压测用例经 `Path.of("build","scale",...)` 相对路径写在**模块目录**
+  （`duo-sim-examples/build/scale/`）——根路径永远收不到，`if-no-files-found: warn` 让它自 CI
+  建档以来**静默空转**（G8「压测产物留档」承诺从未兑现；09-24 夜跑日志的 warning 首次暴露）。
+  修法：路径改 `duo-sim-examples/build/scale/*.json`，`if-no-files-found` 由 `warn` 加固为
+  `error`——产物缺失即红，不允许再静默。
 - **413 超限拒绝的确定性投递（CI 间歇红，2026-09-25 修复）**：`RestControlServer` 的 413 路径
   在响应后带着未读请求体关闭连接，Linux 上间歇性让客户端收到
   `HTTP/1.1 header parser received no bytes` 而非 413——实证链：09-23
@@ -87,6 +93,10 @@
   close 触发内核 RST，已到达未读的 413 响应字节一并作废。修法：`rejectTooLarge` 先有界排空
   （64 MiB 预算，读到 EOF 后 JDK 不再硬关）再响应——413 必达，连接优雅收尾；小体量拒绝
   用例（401/403/405/400）因客户端早已转入读态从未受影响。
+  **夜跑 scale 档同源**：09-24 scale 作业的红＝同一竞态的 `fixed content-length: 46,
+  bytes received: 0` 变体（413 状态行已到、46 字节响应体被 RST 吞；压测本身 2/2 绿
+  60.92s）——同一修复覆盖；实证链补齐为三跑两红一绿（09-23 regression / 09-24 scale /
+  09-25 regression-rerun 绿）。
 - **控制面测试夹具的退出规则不再依赖自定义 config 键（第 33 轮）**：`ControlFixtureSut`
   原按「收齐 `fixture.expectedWorkers` 个注册后退出」收敛，但 REST 层测试经
   `POST /scenario` 走**外部输入档**——`ScenarioValidator` 的 config 键白名单根本不收
