@@ -54,5 +54,15 @@
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
         </dependency>
+        <!-- M9：DsFailoverAcceptanceTest 的 DS OpenAPI 编排层直用 jackson-databind
+             （ObjectMapper/JsonNode 解析 DS 响应）。依赖门禁第 11 轮口径：直接 import 的
+             坐标必须显式声明（门禁豁免表只放行 annotations/core 聚合分体件，不放行
+             databind）——此前经 control 传递偶得、e80deb4 引入首个直接 import 后 CI 门禁红。
+             仅测试代码使用，scope=test。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
