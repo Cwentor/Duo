@@ -83,6 +83,9 @@
   建档以来**静默空转**（G8「压测产物留档」承诺从未兑现；09-24 夜跑日志的 warning 首次暴露）。
   修法：路径改 `duo-sim-examples/build/scale/*.json`，`if-no-files-found` 由 `warn` 加固为
   `error`——产物缺失即红，不允许再静默。
+  **验证回填（2026-09-25）**：workflow_dispatch run `36115793273` 三作业全绿（regression /
+  container / scale），scale 档全套含 413 用例全绿——`scale-artifacts` **683 bytes 首次
+  真正上传**（此前每轮皆空）。
 - **413 超限拒绝的确定性投递（CI 间歇红，2026-09-25 修复）**：`RestControlServer` 的 413 路径
   在响应后带着未读请求体关闭连接，Linux 上间歇性让客户端收到
   `HTTP/1.1 header parser received no bytes` 而非 413——实证链：09-23
@@ -96,7 +99,7 @@
   **夜跑 scale 档同源**：09-24 scale 作业的红＝同一竞态的 `fixed content-length: 46,
   bytes received: 0` 变体（413 状态行已到、46 字节响应体被 RST 吞；压测本身 2/2 绿
   60.92s）——同一修复覆盖；实证链补齐为三跑两红一绿（09-23 regression / 09-24 scale /
-  09-25 regression-rerun 绿）。
+  09-25 regression-rerun 绿），修复后 run `36115793273` scale 档全套复验绿。
 - **控制面测试夹具的退出规则不再依赖自定义 config 键（第 33 轮）**：`ControlFixtureSut`
   原按「收齐 `fixture.expectedWorkers` 个注册后退出」收敛，但 REST 层测试经
   `POST /scenario` 走**外部输入档**——`ScenarioValidator` 的 config 键白名单根本不收
