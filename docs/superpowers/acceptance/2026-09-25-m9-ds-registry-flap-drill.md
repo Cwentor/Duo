@@ -78,7 +78,7 @@ DS 的重注册路径（Curator RECONNECTED 分支）将只能由这类温和故
 
 | 通道 | 内容 | 本轮证据 |
 | --- | --- | --- |
-| ① Duo 旁路事件 | flap 先因后果 + 注入事实 | `fault-injected → flap-started(39ms)→ flap-cleared(portStable)` 顺序断言过 |
+| ① Duo 旁路事件 | registry 生命周期事实（`sim.registry-started/-flap-*/-stopped`）+ 注入先因后果。**诚实边界（M6 既定）**：CuratorRegistry 门面只对门面中介的写发节点变更事件，DS 经 wire 端口的注册/心跳活动**不进 Duo 事件流**——DS 注册成功的证据走间接事实（就绪探针过 + OpenAPI 回读 + 慢应答器真实命中） | `fault-injected → flap-started(39ms)→ flap-cleared(portStable)` 顺序断言过 |
 | ② SUT 生命周期 | `sut.exited`(0) / `sut.crashed` 判定 | 自停被记为 `sut.exited` exitCode 0（非崩溃）；时序晚于 flap |
 | ③ SUT API 回读 | 死前状态 + 真实执行 | `RUNNING_EXECUTION` 确认后才注入；慢应答器命中 ≥1（真实任务执行） |
 | （补充）SUT 文件日志 | 环境侧取证材料，不入断言 | `dolphinscheduler-standalone.log`：SUSPENDED→LOST→自停逐字链（§3） |
@@ -94,6 +94,8 @@ DS 的重注册路径（Curator RECONNECTED 分支）将只能由这类温和故
 | `plugins\task-plugins\` 补 task-http | 3.3.0 起插件不随二进制分发 | 缺失时保存工作流报 10001 |
 | **registry-jdbc jar 拔除**（4 副本移入 `devtools\m9-jar-disabled\`） | DS 3.4.3 standalone 聚合扫描会无条件实例化 `JdbcRegistryClientRepository`（`@Repository`），其 mapper 只在 jdbc 的 `@MapperScan`（`@ConditionalOnProperty`）下注册——zk 模式缺 mapper，Spring 上下文崩 | 拔 jar 后 zk 模式启动干净；回退 jdbc smoke 时移回即可 |
 | wrapper 脚本 UTF-8 **带 BOM** | `powershell.exe` 5.1 对无 BOM UTF-8 按 GBK 解码，中文注释尾字节吞行尾换行，把下一行代码并进注释（实测赋值语句被并入注释 → `$cfg` 恒空） | BOM 后 wrapper 在 5.1/7 下双态正常 |
+| 凭据与端口口径（D-M9-5） | 凭据＝DS standalone 出厂缺省值 `admin/dolphinscheduler123`（官方文档公开，不构成秘密），置于测试代码、不进场景 YAML（外部输入档禁令）、不进事件流（审计 M-5）；与计划原文「env/token-file 注入」的偏差在计划 v1.4 留痕——未来改用真实凭据须回退该方式 | 登录成功；`post()` 仅编排层 HttpClient，无事件落盘 |
+| **仅本机回环**（D-M9-5 尾款） | DS API/UI 一律 `127.0.0.1:12345`，Duo ZK 为回环随机端口；演练全程无任何外部暴露面 | 探针/编排/事件流三处均为回环地址 |
 
 ---
 

@@ -297,6 +297,13 @@ class DsFailoverAcceptanceTest {
                 .build();
         private final ObjectMapper om = new ObjectMapper();
 
+        /**
+         * D-M9-5 凭据口径：admin/dolphinscheduler123 系 DS standalone **出厂缺省值**
+         * （官方文档公开），演练专用独立进程（每次全新 H2）+ 仅本机回环，不构成秘密——
+         * 故直接置于测试代码（与计划原文「env/token-file 注入」的偏差已在计划 v1.4 留痕）。
+         * 意图条款不变：凭据永不进场景 YAML（外部输入档禁令）、永不进事件流（审计 M-5 教训）。
+         * 若未来演练改用真实凭据，必须回退 env/token-file 注入。
+         */
         static DolphinSchedulerApi login() {
             DolphinSchedulerApi api = new DolphinSchedulerApi();
             JsonNode resp = api.post("/login", Map.of(
