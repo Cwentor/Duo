@@ -1,0 +1,41 @@
+# M9 场景模板（T-M9-1，Phase A）：真实 DolphinScheduler 3.4.3 standalone 作为 external SUT，
+# registry 由 DS 缺省的 jdbc 翻转到 Duo 的 CuratorRegistry（embedded 档 JVM 内真 ZK，
+# flap = TestingServer 整服重启、端口复用——D-M9-2）。
+#
+# 这是**模板**而非可直接运行的场景：@duo.ds.wrapper@ / @duo.ds.configOut@ 是机器相关
+# 占位符，由 DsFailoverAcceptanceTest 在加载前替换（M6 的 external SUT 场景同款惯例：
+# 场景文件不写死本机路径）。门控 D-M9-4：测试以 -Dduo.ds=true 才运行。
+#
+# 拓扑只有两个节点：
+#   - zk：Duo 侧替身，真实 ZK 端口（SUT 用真实 Curator 客户端连它）；startSut() 会按
+#     wiring 依赖预启动它，再把其真实端点写进 configOut（duo.endpoint.registry=...）。
+#   - ds：external SUT（不可改码的真实第三方系统，sut: true）。启动器包装脚本
+#     （ds-launch-duo.ps1）读 duo.config 环境变量里的端点告知文件，把 ZK 端点注入
+#     DS 的 application.yaml（registry.type=zookeeper），再以 JDK11 直启 DS standalone。
+#
+# 断言只取 Duo 可观测的事实（D-M9-3 三封闭通道之①）：
+#   热注入发生在工作流在途时（测试侧防空真守护），flap 的"先因后果"必须完整落流。
+#   SUT 的真实容错语义（实测：整服闪断 ⇒ DS 3.4.3 受控自停，非自愈续跑）由测试经
+#   通道②（sut.exited 生命周期事件）与通道③（死前 OpenAPI 回读）断言，不入 YAML。
+name: m9-ds-failover
+topology:
+  - id: zk
+    contract: registry
+    tier: embedded
+  - id: ds
+    contract: scheduler
+    tier: real
+    sut: true
+    exposes:
+      - contract: scheduler
+        port: 12345
+        addr: 127.0.0.1
+    wiring:
+      registry: { node: zk, contract: registry }
+    launch:
+      mode: external
+      command: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File @duo.ds.wrapper@'
+      configOut: @duo.ds.configOut@
+      ready: { type: http, port: 12345, path: /dolphinscheduler/ui/, timeout: 180s }
+assertions:
+  - eventSequence: [sim.fault-injected, sim.registry-flap-started, sim.registry-flap-cleared]

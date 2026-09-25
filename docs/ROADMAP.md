@@ -1,18 +1,22 @@
 # Duo 发展规划 —— 如何达成最初的目标
 
-- 日期：2026-09-20（**第 13 轮更新**；原始基线 2026-09-18）
+- 日期：2026-09-25（**第 34 轮更新**：M9 Phase A 真实系统接入完成；此前第 13 轮基线 2026-09-20）
 - 基线：`0.1.0-SNAPSHOT`；**M0–M8 均已完成并验收，差距清单 G1–G12 全部闭合**；
-  全量回归 ~~**406 测**~~ **388 测 / 0 失败 / 0 错误 / 11 skip**（第 13 轮实测值；原记「406」系误记，
-  2026-09-24 复核在 `5d17a87` 干净 worktree 复跑订正，见审计报告 §7.2(6)；当前最新口径见 T7 行；
-  无 Docker 档，11 条 skip 逐条可解释）；
+  **M9 Phase A 完成（2026-09-25）**：首个真实第三方系统（DolphinScheduler 3.4.3）registry-flap
+  端到端演练全绿（55.51s），语义发现与断言改判见
+  [`superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md)；
+  全量回归 **397 测 / 0 失败 / 0 错误 / 12 skip**（2026-09-25 实测；11 条既有 + M9 门控 1 条，
+  逐条可解释；此前口径 388/395 的订正史见 T7 行与各轮记录）；
   依赖门禁 9 模块零告警（第 11 轮，已进 CI）
 - 唯一保留项：M8 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现）；
-  两处**有意不做**并已如实标注：`FrameConnection` 双重分配、对用户 SUT 的强杀（L-3）
+  两处**有意不做**并已如实标注：`FrameConnection` 双重分配、对用户 SUT 的强杀（L-3）；
+  M9 Phase B（DS 重注册路径所需的"会话可存活"故障面）未启动，属后续轮次
 - 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）；
   安全审计 [`security-audit-2026-09-20.md`](security-audit-2026-09-20.md)（整改台账见其 §7，
   第二轮补充整改与"第一轮台账串号"的更正见 §7.2；独立复核记录
   [`security-audit-2026-09-20-recheck.md`](security-audit-2026-09-20-recheck.md)）
-- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D12 已全部拍板，无悬空决策）
+- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D13 已全部拍板，无悬空决策；D13＝真实 SUT 演练
+  断言以观测语义为准，2026-09-25 新增）
 
 ---
 
@@ -473,6 +477,20 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 ---
 
 ## 10. 进展记录
+
+### 2026-09-25（第 34 轮）：M9 Phase A——首个真实第三方系统接入（DolphinScheduler 3.4.3）
+
+| 项 | 结果 |
+| --- | --- |
+| 触发 | grill 共识改判「初步目标达成口径＝接真实系统」；选型 DS 3.4.3；计划 [`superpowers/plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md`](superpowers/plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md)（T-M9-0~4，v1/v1.1/v1.2） |
+| T-M9-0 spike | **Go**：standalone 形态（免 pseudo-cluster 回退）；JDK11 直启冒烟通过（Windows 无 bash/WSL 发行版，daemon 脚本不可用 → 自构 classpath 直调主类）；环境工件全部 `devtools\` 不入库，`docs/DEVELOPMENT.md` §1.3 表格化登记 |
+| T-M9-1~2 场景与编排 | `m9-ds-failover.yaml`（模板占位符物化）+ `DsFailoverAcceptanceTest`：startSut 预启动 Duo 真 ZK → wrapper 读 `duo.config` 端点告知注入 `registry.type=zookeeper` → DS 就绪探针 → OpenAPI（v1，cookie+表单）建项目/3×HTTP 任务链工作流/上线/启动 |
+| T-M9-3 演练与**语义发现（D13）** | 9 轮执行链：原假设「DS 自愈续跑→SUCCESS」被第 8 轮实测**推翻**——整服 ZK 闪断（embedded flap 设计语义，39ms 同端口复活、Duo 侧无缺陷）⇒ DS Curator LOST（SUSPENDED 后 20.0s）⇒ **Master/Worker/Alert 全进程受控自停**（exit 0，反脑裂设计，无配置开关；生产续跑由 HA 承接）。断言按观测语义改写（`sut.exited`(0) 晚于 flap + 死前 RUNNING + 真实任务执行 ≥1），撤除断言在测试注释留痕——**DECISIONS D13** |
+| 第 9 轮全绿 | `Tests run: 1, Failures: 0, Errors: 0 — 55.51s BUILD SUCCESS`；时间线（spawn→ready 27.9s、注入→自停 24.1s、flap 39ms）与三通道证据见验收记录 §2/§4 |
+| 环境适配（零源码改动） | 负载阈值 0.8→0.99（本机 91% 磁盘常态，缺省值让 master 拒消费假死）；`sudo.enable=false`；task-http 插件补齐（task-shell Windows 不可用，改纯 Java HTTP 任务+测试托管 8s 慢应答器）；**registry-jdbc jar 拔除**（standalone 聚合扫描实例化 `JdbcRegistryClientRepository` 而 mapper 被 jdbc 条件关闭——zk 模式 Spring 崩） |
+| 踩坑登记 | wrapper 须 UTF-8 **带 BOM**（5.1 对无 BOM 按 GBK 解码，注释吞行尾把代码并进注释）；`$env:duo.config` 带点变量名非法（须 `[Environment]::Get/SetValue…`）；`-D` token 必须引用（违反自家 §1.2 规则，如实记录）；**start 响应 `data`≠实例 id**（按列表查询发现 id）；查询失败≠实例缺失（code≠0 即抛） |
+| 回归 | 全量 **397 测 / 0 失败 / 0 错误 / 12 skip**（`-Dduo.docker.enabled=false`，BUILD SUCCESS）：11 条既有 + M9 门控 1 条（`-Dduo.ds=true` 才跑，缺省可见 skip）；**判据字面缺口同轮补齐**——负例取证（`-Dduo.ds.noflap=true` 跑红 119.9s，自停断言依赖真实注入、防空真得证）+ 常驻守卫 `DsFailoverDrillGuardTest`（无门控，钉模板语义，0.029s；计划 v1.3）；内核零改动（Phase A 约束守住） |
+| 文档 | 验收记录（新）、计划 v1.1/v1.2/v1.3、DECISIONS D13 + 修订行、DEVELOPMENT §1.3（M9 环境登记）+ §3.2 分布 397 + §3.3 门控行（改名"明文门控"+4 条）、CHANGELOG、README 口径 397 |
 
 ### 2026-09-18：M7 最小子集 + M6 主线
 

@@ -24,6 +24,21 @@
 
 ### 新增
 
+- **M9 Phase A：首个真实第三方系统接入（DolphinScheduler 3.4.3，第 34 轮）**：DS standalone 以
+  external SUT 形态接入，registry 由缺省 jdbc 翻转到 Duo 的 embedded 真 ZK（CuratorRegistry），
+  完成 registry-flap 端到端演练并全绿（55.51s）。交付物：`m9-ds-failover.yaml` 场景模板 +
+  `DsFailoverAcceptanceTest`（`-Dduo.ds=true` 门控，缺省可见 skip；`-Dduo.ds.wrapper` 可覆盖
+  wrapper 路径）。**语义发现（DECISIONS D13）**：原假设「DS 自愈续跑→SUCCESS」被实测推翻——
+  整服 ZK 闪断（会话不可恢复）⇒ DS 3.4.3 单实例**受控自停**（Curator LOST 后优雅关停，exit 0，
+  反脑裂设计；生产续跑由 HA 多 master 承接）。演练断言按观测语义改写：`sut.exited`(0) 晚于 flap
+  （因果）+ 死前经 OpenAPI 确认 `RUNNING_EXECUTION` + 真实任务执行 ≥1；撤除断言在测试注释留痕。
+  内核零改动；环境适配（负载阈值/sudo/task-http 插件/registry-jdbc jar 拔除/UTF-8 BOM wrapper
+  （SUT 自停语义，v1.2/验收记录）。负例取证（T-M9-3⑥）：`-Dduo.ds.noflap=true` 跳过注入跑红
+  （119.9s，红点＝自停断言）——断言集不恒真；常驻守卫 `DsFailoverDrillGuardTest`（无门控）
+  钉模板语义契约。内核零改动；环境适配（负载阈值/sudo/task-http 插件/registry-jdbc jar 拔除/
+  UTF-8 BOM wrapper 纪律）全部环境侧并登记 `docs/DEVELOPMENT.md` §1.3。验收记录
+  `docs/superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md`；回归口径
+  **397 测 / 0 失败 / 0 错误 / 12 skip**（11 既有 + M9 门控 1 条，逐条可解释）。
 - **worker 侧真实 SUT（`RealWorkerSut`，第 32 轮）**：`duo-sim-examples` 交付完整档
   worker 侧 `SutMain`——真连 master（显式 `scheduler.endpoint` / `master.list` 文件 /
   registry 自注册三条发现路径）、周期心跳、领取→执行→回报任务、断连后重连自愈。

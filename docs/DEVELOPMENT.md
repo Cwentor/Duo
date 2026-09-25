@@ -40,6 +40,41 @@ cd D:\Program\Duo
 > PowerShell 传 `-D` 属性时要**加引号**（否则 `.` 会被当作参数分隔）：
 > `.\mvnw.cmd -o test "-Dduo.docker.enabled=false"`。
 
+### 1.3 M9 真实 SUT 环境（DolphinScheduler 3.4.3，可选）
+
+M9 演练（`DsFailoverAcceptanceTest`）需要**仓库外**的环境工件（计划 M9 风险 §4：产物不入库，
+路径登记于此；T-M9-0 spike 已实测就绪）：
+
+| 工件 | 位置（本机） | 说明 |
+| --- | --- | --- |
+| DS 发行包 | `C:\Users\cwt15\devtools\apache-dolphinscheduler-3.4.3-bin\` | tar 的 SHA512 与官方一致；包内 symlink 已转实体复制（两遍法，脚本 `ds-extract.py`/`ds-links.py`） |
+| DS 进程 JDK | `C:\Users\cwt15\devtools\jdk11\jdk-11.0.32.1+1\` | 官方要求 1.8/11；与 Duo 的 JDK 21 **进程级解耦**（external SUT 各自带 JVM） |
+| 直启配方 | `devtools\ds-launch-standalone.ps1` | 纯 CLI、无 `-D` token、`-cp` 单变量——PS 5.1 原生参数传递会截断 `-D` 型 token |
+| 演练 wrapper | `devtools\ds-launch-duo.ps1` | 读内核端点告知（env `duo.config`）→ 用 `application-duo.yaml` 模板重生成 DS `application.yaml`（`registry.type=zookeeper` + `connect-string` 注入）→ 调直启配方 |
+| ZK 配置模板 | `devtools\application-duo.yaml` | 与发行包 `application.yaml` 同构，唯 registry 段替换为 zookeeper + `@DUO_ZK_CONNECT@` 占位符 |
+
+DS 侧配置适配（均在包内配置文件，**无源码改动**）：
+
+- 负载保护阈值 `0.8 → 0.99`（master/worker 各 4 项）：本机磁盘 91%/内存 95% 常态，
+  缺省阈值会让 master 无限拒绝消费命令（实测"server is overload"假死）。
+- `sudo.enable=false`（common.properties）：Windows 的原生 `sudo` 不支持 `-u`。
+- 插件：`plugins\task-plugins\`（task-shell、task-http）、`plugins\storage-plugins\`（storage-hdfs）——
+  3.3.0 起插件不随二进制分发，需从 Maven Central 单独获取。
+- **registry-jdbc jar 拔除**（drill wrapper 启动时移入 `devtools\m9-jar-disabled\`）：
+  DS 3.4.3 standalone 的聚合组件扫描会**无条件**实例化 `JdbcRegistryClientRepository`（`@Repository`），
+  而其依赖的 mapper bean 只在 `registry.type=jdbc` 的 `@MapperScan`（`@ConditionalOnProperty`）下注册——
+  zk 模式下 Spring 上下文直接崩溃（实测 `required a bean of type ...JdbcRegistryClientHeartbeatMapper`）。
+  jar 不在 classpath ⇒ 无类可扫描 ⇒ 干净；回退 jdbc smoke 时把 jar 移回各 server 的 `libs\` 即可。
+- **Windows 事实**：DS task-shell 在 Windows 不可用（`sudo -u` 无对应 + `.sh` 无法 CreateProcess，
+  实测 error=2）——演练工作流用 **HTTP 任务**（纯 Java 任务类型），受控延迟由测试 JVM 托管的
+  慢应答器提供。
+
+**踩坑登记（wrapper 脚本纪律）**：被 `powershell.exe` 5.1 加载的 `.ps1` 必须
+**UTF-8 带 BOM**（无 BOM 时按 ANSI/GBK 误解码，中文注释的 UTF-8 尾字节被当 GBK 双字节前导
+**吞掉行尾换行**，把下一行代码并进注释）；环境变量名带点（如内核主途径的 `duo.config`）时
+`$env:duo.config` 语法**无效**（PS 解析为属性访问），须用
+`[Environment]::GetEnvironmentVariable('duo.config')`。
+
 ---
 
 ## 2. 常用命令
@@ -98,7 +133,7 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > 否则会形成 `junit ↔ examples` 循环依赖。`duo-sim-control` 第 14 轮起**自带契约测试**
 > （test 作用域依赖 `duo-sim-components`，依赖方向仍单向），不再受此约束。
 
-### 3.2 当前分布（2026-09-20 实测，第 33 轮后）
+### 3.2 当前分布（2026-09-25 实测，第 34 轮后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
@@ -109,8 +144,8 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 | `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
 | `duo-sim-control` | 22 | 0 |
-| `duo-sim-examples` | 50 | **1**（未开压测开关：`ScaleAcceptanceTest`） |
-| **合计（reactor 内 8 模块）** | **395** | **11** |
+| `duo-sim-examples` | 52 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻） |
+| **合计（reactor 内 8 模块）** | **397** | **12** |
 
 > **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
 > `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试
@@ -122,10 +157,11 @@ skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用�
 > ⚠️ **注意 `duo-sim-examples` 的 1 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
 > 带两个档（`scale-1k.yaml` / `scale-10k.yaml`），`@EnabledIfSystemProperty(duo.scale=true)`
 > 关闭时 JUnit 计 **1** 条 skip 而不是 2 条（参数化整体被禁用）。所以"skip=1"说的是
-> "压测门控关着"，不是"只跳了一个档"。
+> "压测门控关着"，不是"只跳了一个档"。M9 的 `DsFailoverAcceptanceTest` 同为
+> `@EnabledIfSystemProperty(duo.ds=true)` 门控（D-M9-4），缺省 skip 可见。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：395 测 / 0 失败 / 0 错误 / 11 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：397 测 / 0 失败 / 0 错误 / 12 skip（本机无 Docker）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
 .\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：9 模块零未声明/零未使用（CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
@@ -242,7 +278,7 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 > 场景 YAML 见 `duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml`。
 > 「尚无 worker SUT」这句话从今天起不再成立，保留删除线是为了让读到这里的人知道它被**证伪**过。
 
-### 3.3 三条明文门控
+### 3.3 明文门控
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
@@ -250,6 +286,7 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 | 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
 | **依赖门禁** | `-Dquality` 激活 `dependency:analyze-only`（绑 `verify`），`failOnWarning=true`——**新增一条"未声明/未使用"告警即构建失败**；缺省不激活 ⇒ 常规回归零开销 | M7 交付物 4（第 11 轮）；基线取证见 [`superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) |
+| M9 真实 SUT 演练 | `-Dduo.ds=true` 显式触发（缺省 skip）；显式开启但环境缺失（`duo.ds.wrapper` 不存在）时 **fail-fast 不静默** | M9 计划 D-M9-4「真实第三方系统演练不进常规回归；skip 必须可见」 |
 
 **新增测试的纪律**：skip 必须可解释、可复算，且**安全属性不能只被门控覆盖**（容器档守卫用例的教训）。
 
@@ -373,7 +410,7 @@ components/embedded/control/junit ← examples（唯一聚合点）
 5. **落验收记录**：`docs/superpowers/acceptance/YYYY-MM-DD-duo-mN-<主题>-record.md`，
    含验收标准对照表、实测数字、缺陷处置、限制说明。
 6. **同步工程文档**：按 [文档索引的「何时需要改它」](README.md#2-工程文档) 一栏执行。
-7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 396 测 / 11 skip（无 Docker）」）。
+7. **提交**：提交信息里写明实测数字与对应提交号（如「实测全仓 397 测 / 12 skip（无 Docker）」）。
 
 ---
 

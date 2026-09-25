@@ -213,6 +213,28 @@
 
 ---
 
+## 2.2 M9 真实系统接入决策（2026-09-25）
+
+### D13：真实 SUT 演练断言以**观测到的**容错语义为准——不预设第三方系统行为
+
+- **背景**：M9 Phase A 首个真实 SUT（DolphinScheduler 3.4.3）registry-flap 演练。计划原假设
+  「整服 ZK 闪断 ⇒ DS Curator 客户端重连同端口、重注册、任务续跑 ⇒ 工作流终态 SUCCESS」，
+  并为此写了全套断言。第 8 轮实测推翻：DS 对会话死亡（整服重启 ⇒ 会话与临时节点不可恢复，
+  Duo embedded 档 flap 的设计语义）的真实选择是 **Master/Worker/Alert 全进程受控自停**
+  （Curator LOST 后优雅关停，exit 0——反脑裂设计，生产侧续跑由 HA 多 master 承接，无配置开关）。
+  Duo 侧无缺陷：flap 39ms 同端口复活、门面重连成功。
+- **拍板**：演练断言改判为观测事实——`sut.exited`(0) 晚于 flap（因果）+ 死前经 SUT API 确认过
+  `RUNNING_EXECUTION` + 真实任务执行过；撤除断言在测试注释留痕。**演练的价值在于拿到真答案**，
+  不在于把第三方系统的行为掰成我们期望的形状；「假设被推翻」是演练的成功而非失败。
+- **对 Duo 机制的含义**：embedded 档 `registry-flap` 建模的是**整服死亡**（会话必丢）。
+  「会话可存活」的故障面（网络分区/延迟——可触发 SUT 重注册路径）当前无对应故障类型，
+  列为 Phase B 内核故障类型扩展的输入。
+- **落地点**：`duo-sim-examples` `DsFailoverAcceptanceTest`（语义改判的断言集 + 撤除断言留痕注释）；
+  实证链见 [`superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md) §3。
+- **修订记录**：2026-09-25 首版（drill 第 8/9 轮实测钉死；第 9 轮全绿）。
+
+---
+
 ## 3. 与 ROADMAP 的对照
 
 | 决策 | 拍板 | ROADMAP 落点 | 状态 |
@@ -249,3 +271,4 @@ M5 契约与档位补全（含 G7 DSL 断链与 G4 金标准场景集）⏭ → 
 | 2026-09-18 | 补记实施结果：D1/D6/D7/D8/D9 本轮兑现；派生「注入事件先因后果」纪律；M6 验收记录见 `superpowers/acceptance/2026-09-18-duo-m6-external-sut-record.md` |
 | 2026-09-20 | 新增 D10/D11（安全审计整改的信任模型与输入分层）；报告见 `security-audit-2026-09-20.md`，验收记录见 `superpowers/acceptance/2026-09-20-duo-security-remediation-record.md` |
 | 2026-09-20 | 新增 D12（句柄归属与收摊），由 M-7 复核的实测死锁证据逼出；L-3/L-4 的"不照字面实现"取舍并入 D12 |
+| 2026-09-25 | 新增 D13（真实 SUT 演练断言以观测语义为准），由 M9 drill 第 8 轮实测「DS 整服闪断 ⇒ 受控自停」逼出；验收记录见 `superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md` |
