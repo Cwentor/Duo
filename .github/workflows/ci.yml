@@ -6,6 +6,11 @@ name: CI
 # 原则（T8）：**skip 必须可见、可解释**——每个 job 都打印 skip 汇总，容器档还显式断言「不许 skip」。
 # 供应链（安全审计 2026-09-20 L-6）：所有 action pin 到 **commit SHA**，不用可被上游移动的标签；
 # 注释里保留人类可读的版本号便于升级（升级＝改 SHA + 改注释，一次提交一件事）。
+# 2026-09-26 升级：checkout v4.2.2→v7.0.1 / setup-java v4.7.1→v6.0.1 / upload-artifact v4.6.2→v7.0.1
+# （三个新 SHA 均 Node 24 原生，消除「Node 20 action 被 runner 强跑 Node 24」的每轮三条 deprecation 告警）；
+# runner 由 ubuntu-latest pin 为 ubuntu-24.04——2026-10-19 起 ubuntu-latest 切 Ubuntu 26（GitHub
+# runner-images 公告），本仓有 CI-only 时序红前科（G9、413×2），换代必须显式提交：
+# 先 dispatch 本 workflow 验证全绿，再改 pin。
 
 on:
   push:
@@ -26,10 +31,10 @@ permissions:
 jobs:
   regression:
     name: regression (no Docker)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
@@ -47,7 +52,7 @@ jobs:
       # 只到 `verify`（跳过测试）——测试已在上一步跑过。
       - name: dependency gate (no unused/undeclared deps)
         run: ./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests verify
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: regression-surefire-reports
@@ -57,10 +62,10 @@ jobs:
 
   container:
     name: container tier (Docker)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
@@ -76,7 +81,7 @@ jobs:
       - name: assert container tests really ran
         if: always()
         run: bash .github/scripts/skip-summary.sh --fail-on-skip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: container-surefire-reports
@@ -86,10 +91,10 @@ jobs:
   scale:
     name: scale (nightly / manual)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.7.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
@@ -103,7 +108,7 @@ jobs:
       - name: skip summary (must be visible)
         if: always()
         run: bash .github/scripts/skip-summary.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: scale-artifacts
