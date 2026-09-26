@@ -28,7 +28,7 @@
 | Version | `0.1.0-SNAPSHOT` (`io.duo:duo-sim-parent`) |
 | Tech stack | Java 21 (LTS) · Maven multi-module · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
 | Stage status | **M0–M8 all implemented and accepted; gap list G1–G11 fully closed** (the only registered exception: M8 deliverable 4, "accelerated-clock evaluation", still awaiting its trigger condition); **M9 Phase A complete (2026-09-25): the first real third-party system, DolphinScheduler 3.4.3, ran the registry-flap drill all green**; M9 Phase B (the "session-survivable" fault surface needed for DS re-registration) not started — scheduled for a later round |
-| Latest full regression | 2026-09-25 · `.\mvnw.cmd -o -B test` → **397 tests / 0 failures / 0 errors / 12 skips** (per-module breakdown in the [Development Guide §3.2](docs/DEVELOPMENT.md); every skip itemized and explainable: container tier 10 + stress test 1 + M9 real-SUT drill gate 1) |
+| Latest full regression | 2026-09-26 · `.\mvnw.cmd -o -B test` → **397 tests / 0 failures / 0 errors / 12 skips** (per-module breakdown in the [Development Guide §3.2](docs/DEVELOPMENT.md); every skip itemized and explainable: container tier 10 + stress test 1 + M9 real-SUT drill gate 1) |
 | Quality gate | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → dependency analysis "zero undeclared / zero unused" (wired into CI) |
 | Design basis | [Design document v1.0 (frozen)](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 

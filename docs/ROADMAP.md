@@ -15,8 +15,9 @@
   安全审计 [`security-audit-2026-09-20.md`](security-audit-2026-09-20.md)（整改台账见其 §7，
   第二轮补充整改与"第一轮台账串号"的更正见 §7.2；独立复核记录
   [`security-audit-2026-09-20-recheck.md`](security-audit-2026-09-20-recheck.md)）
-- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D13 已全部拍板，无悬空决策；D13＝真实 SUT 演练
-  断言以观测语义为准，2026-09-25 新增）
+- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D15 已全部拍板，无悬空决策；D13＝真实 SUT 演练
+  断言以观测语义为准，2026-09-25 新增；D14＝CI 不归档事件录制（维持审计 M-8）、D15＝SUT 拆卸时
+  在途任务滞留 PENDING 定性，2026-09-26 新增）
 
 ---
 
@@ -336,11 +337,15 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 - ✅ 新机器上 `git clone && ./mvnw test` 一条命令成功（无需改任何文件）——**已取证**：远端干净 runner 上
   `regression` job 直接跑 `./mvnw` 全绿；本地 `mvnw.cmd -v` → Maven 3.9.11 / JDK 21.0.12.1（只需 `JAVA_HOME`）；
-- ✅ CI 三个 job 全绿且 skip 数可解释——**已取证**：run
-  [35325284561](https://github.com/Cwentor/Duo/actions/runs/35325284561) `regression` ✓ 2m57s、
-  `container` ✓ 32s（`--fail-on-skip` 门禁通过＝容器档无 skip）、`scale` 按设计仅 nightly/手动触发；
-- ✅ 压测产物作为 artifact 可从 CI 下载并与报告逐项比对——`scale` job 的 upload-artifact
-  （`build/scale/*.json` + `**/build/scenarios/**/events.jsonl`）；regression job 亦归档事件录制便于失败回放。
+- ✅ CI 三个 job 全绿且 skip 数可解释——**已取证（2026-09-26 更新引用）**：workflow_dispatch run
+  [36115793273](https://github.com/Cwentor/Duo/actions/runs/36115793273) 三作业全绿——`regression`、
+  `container`（`--fail-on-skip` 门禁通过＝容器档无 skip）、`scale`（全套含 413 用例）；
+- ✅ 压测产物作为 artifact 可从 CI 下载并与报告逐项比对——**已取证**：同 run 的 `scale-artifacts`
+  **683 B 首次真正落盘**（2026-09-25 立案修复：upload 路径由仓库根 `build/scale/*.json` 改为
+  `duo-sim-examples/build/scale/*.json`、`if-no-files-found` 由 `warn` 加固为 `error`；此前自 CI
+  建档以来该上传一直静默空转，见 CHANGELOG）。事件录制（`events.jsonl`）**不作为 CI artifact
+  归档**——安全审计 M-8：录制物内容敏感；`regression` job 归档的是 surefire 报告
+  （`regression-surefire-reports`），口径见 [`DECISIONS.md`](DECISIONS.md) D14。
 
 > ✅ 遗留风险已闭合（**G9**）：`ControlPlaneAcceptanceTest` 的间歇性挂起在 CI run 35326005487 上**复现并定位**
 > （调度侧把重派任务发给已满实例 → worker 静默丢弃 → 永久挂起），本轮完成修复 + 5 条回归用例 + 失败自诊断。

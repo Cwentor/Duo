@@ -78,10 +78,13 @@
 | [`acceptance/2026-09-18-duo-m4-independent-verification-record.md`](superpowers/acceptance/2026-09-18-duo-m4-independent-verification-record.md) | M4 独立复验：压测数据链核对 + 容器档 HIGH 整改取证 |
 | [`acceptance/2026-09-18-duo-m6-external-sut-record.md`](superpowers/acceptance/2026-09-18-duo-m6-external-sut-record.md) | M6 验收：external 第三方 SUT 端到端（端点告知双途径 / ready 探针 / 退出与崩溃事实 / 不杀进程）+ M7 最小子集（标准 Wrapper + CI 三 job）+ 注入事件顺序缺陷处置 |
 | [`acceptance/2026-09-19-duo-m8-observability-record.md`](superpowers/acceptance/2026-09-19-duo-m8-observability-record.md) | M8 验收：观测面三条通道（`/metrics` 指标 / logback 日志 / `duo diagnose` 因果链）+ 交付物 4 为何仍 ⏸ 的判定 |
+| [`acceptance/2026-09-20-duo-security-remediation-record.md`](superpowers/acceptance/2026-09-20-duo-security-remediation-record.md) | 安全审计 20 条发现整改验收：逐条「跑什么、看到什么」（含第二轮死锁复核与 406→388 订正注） |
+| [`acceptance/2026-09-24-duo-m4-scale-independent-rerun-record.md`](superpowers/acceptance/2026-09-24-duo-m4-scale-independent-rerun-record.md) | M4 规模判据独立复现实跑（千/万档 2/2 通过，worktree 独立检出）+ 收口 09-18 无文档重跑悬案 |
+| [`acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md) | M9 Phase A 验收：DolphinScheduler 3.4.3 registry-flap 端到端演练（DS 受控自停语义发现，D13） |
 | [`plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) | M7 依赖门禁的**基线取证**：7 类告警逐条原文 + 真修复 vs 有意保留的取舍 + 再基线命令 |
 
-> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258** / **263** / **280**）都是**对应提交那一代**的实测数，
-> 不是可复算到任意 HEAD 的不变量。当前 HEAD 的实测值（**366 测 / 0 失败 / 0 错误 / 11 skip**，第 11 轮质量门禁后）见 [`../README.md`](../README.md) 顶部，
+> **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258** / **263** / **280** / **366** / **388** …）都是**对应提交那一代**的实测数，
+> 不是可复算到任意 HEAD 的不变量。当前 HEAD 的实测值（**397 测 / 0 失败 / 0 错误 / 12 skip**，2026-09-26 实测）见 [`../README.md`](../README.md) 顶部，
 > 逐模块分布见 [`DEVELOPMENT.md`](DEVELOPMENT.md) §3.2。
 
 ## 4. 文档维护约定

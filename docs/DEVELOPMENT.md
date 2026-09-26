@@ -102,9 +102,16 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 | --- | --- | --- |
 | `regression` | push / PR | `./mvnw -B -Dduo.docker.enabled=false test`（确定性无 Docker 档）+ skip 汇总 |
 | `container` | push / PR | `-pl duo-sim-embedded -am test -Dtest='ZookeeperContainer*'`，并**断言 skip=0**（有 Docker 时不许静默跳过） |
-| `scale` | nightly / 手动 | `-Dduo.scale=true`，把 `build/scale/*.json` 与事件录制上传为 artifact（G8「规模数据可追溯」） |
+| `scale` | nightly / 手动 | `-Dduo.scale=true`，压测 JSON 落 `duo-sim-examples/build/scale/`（模块工作目录）并上传为 artifact，`if-no-files-found: error`（G8「规模数据可追溯」）；事件录制不归档（M-8，口径见 DECISIONS D14） |
 
 skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用于容器档门禁）。
+
+供应链（2026-09-26 升级）：三个 action pin 到 **Node 24 原生版本**的 commit SHA——
+`checkout` v7.0.1 / `setup-java` v6.0.1 / `upload-artifact` v7.0.1（旧 SHA 目标 Node 20，
+被 runner 强跑在 Node 24 上，每轮 CI 三条 deprecation 告警）；runner 由 `ubuntu-latest` pin 为
+`ubuntu-24.04`——2026-10-19 起 `ubuntu-latest` 切 Ubuntu 26（GitHub runner-images 公告），本仓有
+CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dispatch 验证再改）；
+升级纪律仍按审计 L-6：改 SHA + 改注释，一次提交一件事。
 
 ### 2.1 `surefire` 的 Windows 特殊配置
 

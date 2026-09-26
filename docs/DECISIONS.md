@@ -233,6 +233,54 @@
   实证链见 [`superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md) §3。
 - **修订记录**：2026-09-25 首版（drill 第 8/9 轮实测钉死；第 9 轮全绿）。
 
+## 2.3 口径收口决策（2026-09-26）
+
+### D14：CI 不归档事件录制（events.jsonl）——维持审计 M-8；本地录制物不是证据
+
+- **背景**：两套互斥口径曾并存——①安全审计 M-8（2026-09-20 第二轮）以「录制物是内容敏感的
+  运行产物」为由，删掉了 CI 两处 `**/build/scenarios/**/events.jsonl` artifact 上传；②同日
+  worker-SUT 轮的收尾总结以「CI regression job 会归档事件录制用于失败回放」为由保留本地
+  `build/scenarios/**/events.jsonl`——②引用的是①已删除的行为，两者必有一个不成立。
+- **决定**：维持 M-8——事件录制**不作为 CI artifact 归档**。CI 失败回放的取证链＝surefire
+  报告 artifact（`regression-surefire-reports` / `container-surefire-reports`）＋断言失败
+  消息自带的事件现场（types / relayEdges / payload）＋可本地复跑。本地
+  `build/scenarios/**/events.jsonl` 是 `.gitignore` 覆盖的**本地调试产物**，不构成证据——
+  删留与 CI 无关（本机现存的一份 worker-sut 录制就是调试期崩溃 run 的现场，不是任何验收证据）。
+- **理由**：录制物含凭据掩码之外的全部运行语义（内部路径、业务拓扑、告警原文）；M-5/M-7 的
+  掩码只覆盖凭据与 argv，不等于「其余内容可公开」。而失败回放真正需要的最小事实（哪个用例、
+  什么断言、什么事件表）已由 surefire 报告与断言消息承载——413 间歇红从定位到修复全程
+  没用到事件录制。
+- **触发条件**：出现「必须拿到完整事件流才能复现的 CI 失败」的真实案例 → 再评估对录制物做
+  字段级脱敏后归档，而不是恢复原文归档。
+- **落地点**：`docs/ROADMAP.md` G8 取证段与 `docs/DEVELOPMENT.md` §2.0 CI 表（2026-09-26
+  同步改掉「上传事件录制」的陈旧表述）；`ci.yml` 维持现状（M-8 已删，无需改动）。
+- **修订记录**：2026-09-26 首版（收口 M-8 与 worker-SUT 轮保留理由的矛盾）。
+
+### D15：SUT 会话拆卸时在途任务滞留 PENDING＝设计语义——不是缺陷，不补「丢弃」事实
+
+- **事实链（代码 + 实测）**：SUT 是「一个会话」——`run()` 返回 ⇒ `sut.exited` ⇒ 场景收摊
+  （§7.3/§9）。SUT 停止 ⇒ 与 master 的连接断开 ⇒ 内核侧 `VirtualScheduler.onFeedLost`：
+  实例从 `feeds`/`DispatchSelector` 摘除，`SchedulerStateMachine.onInstanceLost` 把该实例
+  **在途**任务重置回 PENDING（受 `MAX_ATTEMPTS` 约束，达上限的直接 FAILED 并跳过下游）并发布
+  `sut.instance-lost {requeued}`。此后场景拆卸、派发循环停转：重置回 PENDING 的任务**没有
+  再派对象**，滞留至场景结束——即便拆卸瞬间恰有在途任务被重置，发出的也只是单次「事实」
+  （RETRYING / `sut.task-retry` / `sut.failover`），永远不会有再派——**事实发得出、任务派不出**；
+  `sut.dag-terminal` 只在拆卸前已全终态时才会发。
+- **拍板**：这是「**拆除优先于任务完成**」的设计语义——拆卸是编排边界，不是故障恢复路径。
+  验收断言**不得**把 `sut.task-retry` / `sut.task-terminal state=FAILED` / `sut.dag-terminal`
+  当作「SUT 会话先于组件结束」场景的判据——出现与否取决于拆卸瞬间的在途时序，两侧都不赌
+  （worker-SUT 验收实测 10s 窗口无 retry、无 dag-terminal，留痕见
+  `WorkerSutAcceptanceTest` 断言 5 注释与 `docs/DEVELOPMENT.md` §3.2）。要验证 retry 的线协议
+  语义，用调度器在途、worker 为内核组件的场景（m1/m3 验收形态）。
+- **理由**：拆卸时刻把在途任务强判 FAILED、或强行续跑，都要给「收摊」引入新的失败语义与
+  停止时序耦合（谁先停、等多久、等谁），换来的只是让一组断言从「不可达」变「可达」——
+  没有真实场景需要它。
+- **触发条件**：M9 Phase B（「会话可存活」故障面）或出现「拆卸后滞留任务必须显式终态」的
+  真实需求 → 重开；届时补显式的 sut.* 事实类型，而不是静默改语义。
+- **落地点**：`WorkerSutAcceptanceTest`（断言分层注释已按此语义写，本条补上缺失的「为什么」）；
+  本决策同时是 `DEVELOPMENT` §3.2「结构上不可达」记录的定性背书。
+- **修订记录**：2026-09-26 首版（收口 worker-SUT 轮遗留的语义悬案）。
+
 ---
 
 ## 3. 与 ROADMAP 的对照
@@ -251,6 +299,9 @@
 | D10 | 控制面令牌必填 + 回环双校验 + body/规模上限 | 安全整改（审计 2026-09-20） | **本轮兑现** |
 | D11 | 输入信任分层：CONFIG 不缩水 / EXTERNAL_INPUT 收窄 | 安全整改（审计 2026-09-20） | **本轮兑现** |
 | D12 | 句柄归属：代起形态内核收摊，attach 形态不碰用户进程 | 安全整改（审计 2026-09-20 M-7/L-3/L-4） | **本轮兑现** |
+| D13 | 真实 SUT 演练断言以观测到的容错语义为准 | M9 Phase A | **已兑现**（2026-09-25 演练全绿） |
+| D14 | CI 不归档事件录制；本地录制物＝调试产物非证据 | 工程口径（M-8/G8 收口） | **已兑现**（2026-09-26 文档对账同步） |
+| D15 | SUT 拆卸时在途任务滞留 PENDING＝设计语义 | 验收断言口径（worker-SUT 轮） | **已兑现**（用例注释即按此口径） |
 
 **节奏（照 ROADMAP §5）**：M7 最小子集（Wrapper + CI）✅ → M6 external SUT 主线 ✅ →
 M5 契约与档位补全（含 G7 DSL 断链与 G4 金标准场景集）⏭ → M7 余项（LICENSE/发布配置）⏭ → M8 观测面 ⏭。
@@ -272,3 +323,4 @@ M5 契约与档位补全（含 G7 DSL 断链与 G4 金标准场景集）⏭ → 
 | 2026-09-20 | 新增 D10/D11（安全审计整改的信任模型与输入分层）；报告见 `security-audit-2026-09-20.md`，验收记录见 `superpowers/acceptance/2026-09-20-duo-security-remediation-record.md` |
 | 2026-09-20 | 新增 D12（句柄归属与收摊），由 M-7 复核的实测死锁证据逼出；L-3/L-4 的"不照字面实现"取舍并入 D12 |
 | 2026-09-25 | 新增 D13（真实 SUT 演练断言以观测语义为准），由 M9 drill 第 8 轮实测「DS 整服闪断 ⇒ 受控自停」逼出；验收记录见 `superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md` |
+| 2026-09-26 | 新增 D14（CI 不归档事件录制，收口 M-8 与 worker-SUT 轮保留理由的矛盾）/ D15（SUT 拆卸时在途任务滞留 PENDING 定性）；§3 对照表补 D13–D15 行 |

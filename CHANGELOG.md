@@ -77,6 +77,22 @@
 
 ### 修复
 
+- **CI artifact 承诺的文档对账（2026-09-26）**：`ROADMAP` G8 取证段与 `DEVELOPMENT` §2.0 仍写着
+  「scale 上传 `build/scale/*.json` + `**/build/scenarios/**/events.jsonl`；regression job 亦归档
+  事件录制便于失败回放」——前半是 `4c51624` 修复前的死路径，后半是安全审计 M-8 **有意删除**
+  的行为。改为实测口径：scale 上传 `duo-sim-examples/build/scale/*.json`
+  （`if-no-files-found: error`），「三个 job 全绿 / 产物可下载」的取证引用统一改 run
+  `36115793273`（三作业全绿、scale-artifacts 683 B 首次落盘）；事件录制不归档，正式拍板见
+  `DECISIONS` D14。同轮：`docs/README.md` 快照数 366→397/12 订正（自称「当前 HEAD 实测」却停在
+  第 11 轮的数字），验收索引补 3 份缺录记录（安全整改 09-20 / M4 规模独立复现 09-24 /
+  M9 DS 演练 09-25）。
+- **DECISIONS D15：SUT 会话拆卸时在途任务滞留 PENDING＝设计语义**（收口 worker-SUT 轮遗留悬案）：
+  SUT 会话结束 ⇒ 连接断开 ⇒ `onInstanceLost` 重置在途任务回 PENDING（受 `MAX_ATTEMPTS` 约束），
+  随后实例摘除、派发停转，任务滞留至场景结束——即便拆卸瞬间有在途被重置，也只是单次事实
+  （RETRYING/`sut.task-retry`/`sut.failover`）而永远没有再派；不补「丢弃」事实。验收断言不得
+  把 retry / FAILED 终态 / `sut.dag-terminal` 当「SUT 会话先于组件结束」场景的判据
+  （`WorkerSutAcceptanceTest` 注释与 `DEVELOPMENT` §3.2 的实测记录已按此口径，本条补上缺失的
+  「为什么」）。
 - **CI scale 产物上传从未真正落盘（2026-09-25 立案修复）**：workflow 收 `build/scale/*.json`
   （仓库根），但压测用例经 `Path.of("build","scale",...)` 相对路径写在**模块目录**
   （`duo-sim-examples/build/scale/`）——根路径永远收不到，`if-no-files-found: warn` 让它自 CI
@@ -126,6 +142,11 @@
 
 ### 测试
 
+- **`WorkerSutAcceptanceTest` 的 EDGES/relayEdges 诊断收口（去留拍板：保留）**：relay 边计数是
+  测试自有夹具 `KernelSchedulerRelay` 的失败现场（连接走到哪一步、死在哪一步）——CI 深夜一红时
+  往往是唯一的中继线索，不删；唯一的问题是静态累计会把前序用例的边混进当前失败现场，改为
+  `@BeforeEach` 清零，并把保留定性写进 javadoc。悬案来源：worker-SUT 轮总结「EDGES 留在测试里、
+  尚无文档说明」。本轮回归实测 **397 测 / 0 失败 / 0 错误 / 12 skip**（2026-09-26，收口后口径不变）。
 - `ZkSchedulerDiscoveryTest`（3 例）：把「real 档 SUT 写的端点对内核 registry 可见」
   钉成契约，并记录「跨档位组合要求 registry 后端同源」这条设计约束（异源时发现为空、
   显式失败，不做假成功）。

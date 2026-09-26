@@ -26,7 +26,7 @@
 | 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
 | 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
 | 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次 |
-| 最近全量回归 | 2026-09-25 · `.\mvnw.cmd -o -B test` → **397 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1） |
+| 最近全量回归 | 2026-09-26 · `.\mvnw.cmd -o -B test` → **397 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1） |
 | 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
 | 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
