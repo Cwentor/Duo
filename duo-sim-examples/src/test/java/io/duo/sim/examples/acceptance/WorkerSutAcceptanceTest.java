@@ -6,6 +6,7 @@ import io.duo.sim.kernel.core.ContractRegistry;
 import io.duo.sim.kernel.sut.SutLauncher;
 import io.duo.sim.scenario.ScenarioEngine;
 import io.duo.sim.scenario.ScenarioLoader;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -45,6 +46,16 @@ class WorkerSutAcceptanceTest {
 
     @TempDir
     Path tmp;
+
+    /**
+     * relay 边诊断按用例隔离（2026-09-26 EDGES 去留拍板：**保留**，理由见
+     * {@code KernelSchedulerRelay.EDGES} 字段 javadoc）。清零保证失败 dump 里的
+     * {@code relayEdges=} 只含当前用例的现场——静态累计会把前序用例的边混进来误导排障。
+     */
+    @BeforeEach
+    void resetRelayEdges() {
+        KernelSchedulerRelay.EDGES.clear();
+    }
 
     // ---- ① 完整链路：real worker SUT × virtual 内核 master ----
 
@@ -394,7 +405,11 @@ class WorkerSutAcceptanceTest {
                 + " | sutEndpointsFile=" + readSutEndpointsFile());
     }
 
-    /** relay 边界的计数（发现失败时最直接的现场：进了几次连接、失败发生在哪一步）。 */
+    /**
+     * relay 边界的计数（发现失败时最直接的现场：进了几次连接、失败发生在哪一步）。
+     * 保留定性（2026-09-26）：真实 socket 用例在 CI 一红时，这往往是唯一的中继现场；
+     * 现场按用例隔离，见 {@link #resetRelayEdges()}。
+     */
     private static String relayEdges() {
         return new java.util.TreeMap<>(KernelSchedulerRelay.EDGES).toString();
     }
@@ -425,7 +440,12 @@ class WorkerSutAcceptanceTest {
  */
 final class KernelSchedulerRelay implements AutoCloseable {
 
-    /** relay 边界的计数（发现失败时最直接的现场：进了几次连接、失败发生在哪一步）。 */
+    /**
+     * relay 边界的计数（发现失败时最直接的现场：进了几次连接、失败发生在哪一步）。
+     * 去留定性（2026-09-26）：**保留**——这是测试自有夹具的失败诊断，不是内核状态；
+     * 唯一的问题是静态字段跨用例累计，由 {@code WorkerSutAcceptanceTest#resetRelayEdges}
+     * 每用例清零，dump 里只有当前用例的现场。
+     */
     static final java.util.Map<String, java.util.concurrent.atomic.AtomicInteger> EDGES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
