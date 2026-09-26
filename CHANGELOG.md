@@ -77,6 +77,17 @@
 
 ### 修复
 
+- **CI 供应链升级（2026-09-26）**：三个 action 升到 **Node 24 原生版本**并重钉 commit SHA——
+  `actions/checkout` v4.2.2→**v7.0.1**、`actions/setup-java` v4.7.1→**v6.0.1**、
+  `actions/upload-artifact` v4.6.2→**v7.0.1**；runner 由 `ubuntu-latest` pin 为 **`ubuntu-24.04`**——
+  2026-10-19 起 `ubuntu-latest` 切 Ubuntu 26，本仓有 CI-only 时序红前科（G9、413×2），换代必须走
+  显式提交（先 dispatch 验证再改 pin）。**验证回填**：workflow_dispatch run
+  [36225481132](https://github.com/Cwentor/Duo/actions/runs/36225481132) 三作业全绿——`regression`
+  4m03s（含依赖门禁）、`container` 41s（`--fail-on-skip` 门禁通过＝容器档无 skip）、`scale` 5m06s
+  （scale-artifacts 682 B 正常落盘）。日志 A/B：升级前 schedule run 36188294250 的 regression 日志
+  有三条弃用告警（`setup-java v4 is deprecated`、node `DEP0040` punycode、`DEP0169` url.parse），
+  升级后同位置仅剩 `ZkBackedRegistry` 的 javac `-Xlint:deprecation` 提示（既有 Java 弃用 API
+  提示，两轮都在，非本轮引入）。
 - **CI artifact 承诺的文档对账（2026-09-26）**：`ROADMAP` G8 取证段与 `DEVELOPMENT` §2.0 仍写着
   「scale 上传 `build/scale/*.json` + `**/build/scenarios/**/events.jsonl`；regression job 亦归档
   事件录制便于失败回放」——前半是 `4c51624` 修复前的死路径，后半是安全审计 M-8 **有意删除**
