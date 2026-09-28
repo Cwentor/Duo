@@ -1,6 +1,8 @@
 <div align="center">
 
-# Duo
+<img src="docs/assets/duo-logo.svg" width="96" alt="Duo 图标" />
+
+<h1><img src="docs/assets/duo-title.svg" alt="Duo" height="72" /></h1>
 
 **通用可组合虚拟大数据仿真系统（Composable Virtual Big-Data Simulation System）**
 
