@@ -6,7 +6,8 @@ import '@vue-flow/core/dist/theme-default.css'
 import type { ScenarioView } from '../model/scenario'
 import { loadLayout, saveLayout, type NodePos } from './workspace-logic'
 
-const props = defineProps<{ view: ScenarioView; scenarioId: string }>()
+const props = defineProps<{ view: ScenarioView; scenarioId: string;
+                            faults?: Record<string, number[]> }>()
 const emit = defineEmits<{
   connect: [fromId: string, contract: string, toId: string]
   disconnect: [fromId: string, contract: string]
@@ -20,18 +21,23 @@ const nodes = ref<Node[]>([])
 
 function rebuildNodes() {
   const ids = new Set(props.view.nodes.map((n) => n.id))
-  nodes.value = props.view.nodes.map((n, i) => ({
-    id: n.id,
-    position: layout[n.id] ?? { x: 80 + (i % 3) * 220, y: 60 + Math.floor(i / 3) * 120 },
-    data: { label: `${n.id}${n.sut ? ' ★SUT' : ''}\n${n.contract}/${n.tier}` },
-  }))
+  nodes.value = props.view.nodes.map((n, i) => {
+    // 运行态状态灯：实例故障数来自事件推导（终审 I-4——规格 §4「N/M 实例故障」）
+    const faultCount = props.faults?.[n.id]?.length ?? 0
+    const faultLine = faultCount > 0 ? `\n⚠ ${faultCount}/${n.count ?? 1} 实例故障` : ''
+    return {
+      id: n.id,
+      position: layout[n.id] ?? { x: 80 + (i % 3) * 220, y: 60 + Math.floor(i / 3) * 120 },
+      data: { label: `${n.id}${n.sut ? ' ★SUT' : ''}\n${n.contract}/${n.tier}${faultLine}` },
+    }
+  })
   // 清理已删节点的残留布局
   for (const k of Object.keys(layout)) {
     if (!ids.has(k)) delete layout[k]
   }
 }
 
-watch(() => props.view, rebuildNodes, { immediate: true, deep: true })
+watch(() => [props.view, props.faults], rebuildNodes, { immediate: true, deep: true })
 
 const edges = computed<Edge[]>(() =>
   props.view.nodes.flatMap((n) =>

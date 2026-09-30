@@ -14,7 +14,9 @@ const draft = ref<{ tier: string; count: number | null; sut: boolean; configText
   tier: 'virtual', count: null, sut: false, configText: '',
 })
 
-watch(() => props.node, (n) => {
+watch(() => props.node?.id, () => {
+  // 只在**选中节点切换**时重载草稿——画布全量重投影（改别的节点）不得清空当前编辑（终审 I-5）
+  const n = props.node
   if (n) {
     draft.value = {
       tier: n.tier,

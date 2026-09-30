@@ -9,6 +9,8 @@ import YamlDrawer from '../components/YamlDrawer.vue'
 import InjectPanel from '../components/InjectPanel.vue'
 import ObservePanel from '../components/ObservePanel.vue'
 import { runtime } from '../stores/runtime'
+import { deriveInstanceFaults } from '../stores/runtime'
+import { ApiError } from '../api/client'
 import { draftKey } from '../components/workspace-logic'
 
 const route = useRoute()
@@ -29,6 +31,10 @@ const CONTRACTS = ['registry', 'worker', 'scheduler', 'engine', 'store', 'resour
 const TIER = ['virtual', 'embedded', 'container', 'real']
 
 const selected = computed(() => view.value?.nodes.find((n) => n.id === selectedId.value) ?? null)
+
+// 运行态实例故障灯（规格 §4：画布节点「N/M 实例故障」）——事件推导（终审 I-4 消费端）
+const instanceFaults = computed(() =>
+  deriveInstanceFaults(runtime.events, view.value?.nodes.map((n) => n.id) ?? []))
 
 onMounted(async () => {
   try {
@@ -97,7 +103,7 @@ function addNode() {
   newNode.value = { id: '', contract: 'registry', tier: 'virtual' }
 }
 
-async function startScenario() {
+async function startScenario(replacing = false) {
   if (!doc.value) return
   notice.value = ''
   try {
@@ -105,6 +111,15 @@ async function startScenario() {
     await runtime.start(doc.value.toString())
     mode.value = 'run'
   } catch (e: any) {
+    if (e instanceof ApiError && e.status === 409 && !replacing) {
+      // serve 单场景宿主：已有场景在跑——按规格 §5.7 先确认再「停止并替换」（终审 I-6）
+      if (window.confirm('已有场景在运行：停止当前场景并替换？')) {
+        await runtime.stop()
+        return startScenario(true)
+      }
+      error.value = '已有场景在运行（未替换）'
+      return
+    }
     error.value = `启动失败: ${e?.message ?? e}`
   }
 }
@@ -117,7 +132,19 @@ async function stopScenario() {
   }
 }
 
-onBeforeUnmount(() => runtime.endPolling())
+onBeforeUnmount(() => {
+  runtime.endPolling()
+  window.removeEventListener('beforeunload', warnUnsaved)
+})
+
+// 未保存离开拦截（规格 §10；终审 I-7）
+function warnUnsaved(e: BeforeUnloadEvent) {
+  if (dirty.value) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
 </script>
 
 <template>
@@ -170,9 +197,10 @@ onBeforeUnmount(() => runtime.endPolling())
         v-if="view"
         :view="view"
         :scenario-id="id"
+        :faults="instanceFaults"
         @select="(nid) => (selectedId = nid)"
       />
-      <InjectPanel v-if="selectedId" :node-id="selectedId" />
+      <InjectPanel v-if="selectedId" :key="selectedId" :node-id="selectedId" />
       <aside v-else class="inject-hint"><p>点画布上的节点选择注入目标</p></aside>
     </div>
     <ObservePanel v-if="mode === 'run'" />

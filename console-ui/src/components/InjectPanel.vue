@@ -1,37 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { api, CapabilityRow, TopologyNode } from '../api/client'
+import { computed, ref } from 'vue'
+import { api, CapabilityRow } from '../api/client'
 import { runtime } from '../stores/runtime'
 import { buildFaultAction, COMPONENT_SCOPED } from './inject-logic'
 
 const props = defineProps<{ nodeId: string }>()
 
-const node = computed<TopologyNode | undefined>(() =>
-  runtime.nodes.find((n) => n.id === props.nodeId))
-const actions = ref<string[]>([])
+const node = computed(() => runtime.nodes.find((n) => n.id === props.nodeId))
 const action = ref('')
 const instance = ref<number | null>(null)
 const result = ref('')
+const providers = ref<CapabilityRow[]>([])
 
-onMounted(async () => {
-  // 动作下拉来自 /api/capabilities（能力元数据）——不写死清单（规格 §6.1#7）
+// 能力清单全量拉一次，按**当前选中节点**的契约实时过滤——切节点下拉即时跟随（终审 I-3）
+async function loadCapabilities() {
   try {
-    const caps = await api.capabilities()
-    actions.value = caps.providers
-      .filter((p: CapabilityRow) => p.contract === nodeContract() && p.supportedFaults.length > 0)
-      .flatMap((p: CapabilityRow) => p.supportedFaults)
+    providers.value = (await api.capabilities()).providers
   } catch {
-    actions.value = []
+    providers.value = []
   }
-})
+}
+loadCapabilities()
+
+const actions = computed(() =>
+  providers.value
+    .filter((p) => p.contract === nodeContract() && p.supportedFaults.length > 0)
+    .flatMap((p) => p.supportedFaults))
 
 function nodeContract(): string {
   return node.value?.contract ?? ''
-}
-
-function faultInstances(): number[] {
-  // 运行态实例故障由 runtime 从事件推导；此处展示用，注入目标取用户输入
-  return []
 }
 
 async function inject() {
@@ -55,8 +52,6 @@ async function clear() {
     result.value = String(e?.message ?? e)
   }
 }
-
-defineExpose({ faultInstances })
 </script>
 
 <template>

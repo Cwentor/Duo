@@ -63,10 +63,33 @@ describe('runtime store 逻辑', () => {
   })
 
   it('轮询失败退避且 connected=false', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net down') }))
+    const fetchMock = vi.fn(async (url: any) => { throw new Error(String(url)) })
+    vi.stubGlobal('fetch', fetchMock)
+    const eventCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/events')).length
     runtime.beginPolling()
     await vi.advanceTimersByTimeAsync(50)
     expect(runtime.connected).toBe(false)
+    // 退避递增（按 /events 一路计数；每拍三路各一次 fetch）：首拍后 failures=1 → 下一拍 2s
+    const afterFirst = eventCalls()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(eventCalls()).toBe(afterFirst, '1s 处不得重试（应等 2s）')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(eventCalls()).toBe(afterFirst + 1)
     runtime.endPolling()
+  })
+
+  it('endPolling 后在途响应不续命（僵尸轮询防护，终审 I-2）', async () => {
+    const resolvers: ((r: Response) => void)[] = []
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Promise<Response>((resolve) => { resolvers.push(resolve) })))
+    runtime.beginPolling()
+    await vi.advanceTimersByTimeAsync(50)
+    const callsAtPending = resolvers.length
+    runtime.endPolling()
+    for (const r of resolvers) {
+      r(new Response('{"since":0,"next":0,"dropped":0,"events":[]}', { status: 200 }))
+    }
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(resolvers.length).toBe(callsAtPending, '停止后不得再有新请求')
   })
 })

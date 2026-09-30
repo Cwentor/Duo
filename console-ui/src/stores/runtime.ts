@@ -46,7 +46,8 @@ interface RuntimeStore {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null
-let failures = 0
+let generation = 0          // 轮询代次：endPolling/重启后，在途响应作废（终审 I-2）
+let consecutiveFailures = 0 // 连续「三路全空」次数，驱动退避（终审 I-1）
 
 export const runtime = reactive<RuntimeStore>({
   state: null,
@@ -60,7 +61,6 @@ export const runtime = reactive<RuntimeStore>({
   async start(yamlText) {
     const r = await api.startScenario(yamlText)
     this.state = (r as any)?.state ?? 'RUNNING'
-    failures = 0
     this.beginPolling()
   },
 
@@ -72,16 +72,22 @@ export const runtime = reactive<RuntimeStore>({
 
   beginPolling() {
     this.endPolling()
+    const gen = ++generation
     const tick = async () => {
+      if (gen !== generation) return // 代次已换：本轮是僵尸，不得续命
       try {
         // 三路合并：状态/拓扑全量刷，事件增量按游标。
-        // status 在 IDLE/未启动时 409——容忍为 null（状态不可读≠轮询故障）。
+        // status 在 IDLE/未启动时 409——容忍为 null（状态不可读≠轮询故障）；
+        // 三路**全**拿不到才算一次失败（退避针对的是 serve 不可达，不是单端点空态）。
         const [status, topology, page] = await Promise.all([
           api.status().catch(() => null),
           api.topology().catch(() => null),
           api.eventsSince(this.next).catch(() => null),
         ])
-        this.connected = status !== null || page !== null
+        if (gen !== generation) return // 响应期间被停止/重启：丢弃，不写状态不续命
+        const ok = status !== null || topology !== null || page !== null
+        this.connected = ok
+        consecutiveFailures = ok ? 0 : consecutiveFailures + 1
         if (status) { this.status = status; this.state = status.state }
         if (topology) this.nodes = topology.nodes
         if (page) {
@@ -89,17 +95,18 @@ export const runtime = reactive<RuntimeStore>({
           this.next = page.next
           this.dropped = page.dropped
         }
-        failures = 0
       } catch {
+        consecutiveFailures += 1
         this.connected = false
-        failures += 1
       }
-      timer = setTimeout(tick, backoffMs(failures))
+      if (gen !== generation) return
+      timer = setTimeout(tick, backoffMs(consecutiveFailures))
     }
     timer = setTimeout(tick, 0)
   },
 
   endPolling() {
+    generation += 1 // 在途 tick 返回后代次不匹配，自动终止
     if (timer) { clearTimeout(timer); timer = null }
   },
 
