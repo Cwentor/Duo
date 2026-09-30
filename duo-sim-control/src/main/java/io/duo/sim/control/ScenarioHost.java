@@ -401,6 +401,8 @@ public final class ScenarioHost implements AutoCloseable {
         if (lastError != null) {
             out.put("error", lastError);
         }
+        // M10：外部进程遗留等警告对控制台可见（§12 不静默；warnings() 同步可重入，安全）
+        out.put("warnings", warnings());
         return out;
     }
 

@@ -24,6 +24,20 @@
 
 ### 新增
 
+- **M10 计划一：Web 控制台 Java 控制面（D16，2026-10-01）**：`duo serve` 场景参数改为**可选**
+  （无参数＝IDLE 态启动，浏览器打开 `http://127.0.0.1:<port>/` 即控制台入口）+ `--library-dir`
+  场景库目录（缺省 `./duo-console-library`）。新端点族（全部过既有 Bearer/回环校验管道）：
+  `/api/scenarios`（列表/读/存/删/fork/validate，内置模板只读 + 外部输入档校验与 `POST /scenario`
+  同档）、`/api/capabilities`（契约×档位×supportedFaults 能力元数据，ServiceLoader 直读）、
+  `/api/meta`（serve 自述）、`/api/inject/clear`（手动清除注入，薄委托 `ScenarioRuntime.clear`）、
+  `GET /diagnose`（诊断链一等化，复用 `FaultDiagnostics`）。`GET /events` 响应向后兼容地新增
+  `next` 游标与 `dropped` 丢弃计数；`GET /scenario/status` 新增 `warnings`；SPA 静态托管
+  （`/console/**`，CSP `default-src 'self'` + nosniff，穿越显式拒绝）。**顺手修复**：
+  `respond()` 对不可序列化响应体原会静默吞掉异常 ⇒ 客户端挂死，现显式回 500。
+  设计文档 `docs/superpowers/specs/2026-09-30-duo-web-console-design.md`；计划一
+  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+22 测，全量 419 全绿）；
+  计划二（console-ui 前端）待启动。内核/场景/组件模块零改动。
+
 - **M9 Phase A：首个真实第三方系统接入（DolphinScheduler 3.4.3，第 34 轮）**：DS standalone 以
   external SUT 形态接入，registry 由缺省 jdbc 翻转到 Duo 的 embedded 真 ZK（CuratorRegistry），
   完成 registry-flap 端到端演练并全绿（55.51s）。交付物：`m9-ds-failover.yaml` 场景模板 +

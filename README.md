@@ -192,6 +192,10 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）分三个 job：
 
 ### 5.3 跑一个场景（CLI 控制面）
 
+> **M10 起**：`duo serve` 的场景参数**可选**——`duo serve --port 0 --token <T>` 以 IDLE 态启动，
+> 浏览器打开 `http://127.0.0.1:<port>/` 即 Web 控制台（场景库/画布编辑/注入/观测；前端见
+> [设计文档](docs/superpowers/specs/2026-09-30-duo-web-console-design.md) M10）。CLI 与 REST 原用法不变。
+
 ```bash
 # 单命令：启动 → 3s 后热注入 crash workers[2] → 等 SUT 退出 → 打印结果，退出码即结论
 ./mvnw -o install -DskipTests

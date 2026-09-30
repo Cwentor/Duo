@@ -140,7 +140,7 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 > 否则会形成 `junit ↔ examples` 循环依赖。`duo-sim-control` 第 14 轮起**自带契约测试**
 > （test 作用域依赖 `duo-sim-components`，依赖方向仍单向），不再受此约束。
 
-### 3.2 当前分布（2026-09-25 实测，第 34 轮后）
+### 3.2 当前分布（2026-10-01 实测，M10 计划一后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
@@ -150,9 +150,9 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 | `duo-sim-components` | 120 | 0 |
 | `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
-| `duo-sim-control` | 22 | 0 |
-| `duo-sim-examples` | 52 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻） |
-| **合计（reactor 内 8 模块）** | **397** | **12** |
+| `duo-sim-control` | 43 | 0（M10 计划一 +21：`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、`RestConsoleApiTest` 12、`RestControlServerTest` +1；第 34 轮基线 22＝Host 10 + REST 12） |
+| `duo-sim-examples` | 54 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻。M10 计划一 +2：CLI serve 可选场景/help 文案） |
+| **合计（reactor 内 8 模块）** | **420** | **12** |
 
 > **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
 > `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试

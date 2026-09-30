@@ -207,6 +207,11 @@ the scale tier's full suite of 413 tests all green).
 
 ### 5.3 Run a Scenario (CLI Control Plane)
 
+> **Since M10**: the `duo serve` scenario argument is **optional** — `duo serve --port 0 --token <T>`
+> starts in IDLE mode; open `http://127.0.0.1:<port>/` in a browser for the Web console
+> (scenario library / canvas editor / injection / observability; see the
+> [design doc](docs/superpowers/specs/2026-09-30-duo-web-console-design.md) M10). CLI and REST usage unchanged.
+
 ```bash
 # one command: start → hot-inject "crash workers[2]" after 3s → wait for SUT exit → print result;
 # the exit code is the verdict

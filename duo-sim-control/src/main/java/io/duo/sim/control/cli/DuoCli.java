@@ -148,9 +148,8 @@ public final class DuoCli {
     private static int cmdServe(List<String> args) throws Exception {
         String yamlPath = arg(args, 0); // M10：可选——缺省 IDLE 态启动，控制台为主要入口
         if (yamlPath != null && yamlPath.startsWith("--")) {
-            System.err.println("usage: serve [scenario.yaml] [--port N]"
-                    + " [--token T | --token-file F | --insecure-no-auth] [--library-dir D]");
-            return 1;
+            // 场景参数缺省：首参其实是第一个选项（如 --port），不是 yaml
+            yamlPath = null;
         }
         String portArg = opt(args, "--port");
         int port = portArg == null ? 7788 : Integer.parseInt(portArg);

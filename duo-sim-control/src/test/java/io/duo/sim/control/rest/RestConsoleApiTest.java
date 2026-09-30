@@ -271,6 +271,19 @@ class RestConsoleApiTest {
         assertTrue(root.body().contains("Duo Console"));
     }
 
+    /** M10 计划一 Task 10：status 暴露 warnings（外部进程遗留等警告控制台可见）。 */
+    @Test
+    void statusExposesWarnings() throws Exception {
+        send("POST", "/scenario", VALID_YAML);
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline
+                && send("GET", "/scenario/status", null).statusCode() != 200) {
+            Thread.sleep(100);
+        }
+        var body = json(send("GET", "/scenario/status", null));
+        assertTrue(body.containsKey("warnings"), "status must expose warnings for the console");
+    }
+
     private static final String CLEAR_SCENARIO = """
             name: clear-smoke
             topology:
