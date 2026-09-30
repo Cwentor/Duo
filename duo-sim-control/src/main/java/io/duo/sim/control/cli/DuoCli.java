@@ -143,17 +143,20 @@ public final class DuoCli {
         });
     }
 
-    // ---- serve <yaml> [--port N] [--token T | --token-file F | --insecure-no-auth] ----
+    // ---- serve [yaml] [--port N] [--token T | --token-file F | --insecure-no-auth] [--library-dir D] ----
 
     private static int cmdServe(List<String> args) throws Exception {
-        String yamlPath = arg(args, 0);
-        if (yamlPath == null) {
-            System.err.println("usage: serve <scenario.yaml> [--port N]"
-                    + " [--token T | --token-file F | --insecure-no-auth]");
+        String yamlPath = arg(args, 0); // M10：可选——缺省 IDLE 态启动，控制台为主要入口
+        if (yamlPath != null && yamlPath.startsWith("--")) {
+            System.err.println("usage: serve [scenario.yaml] [--port N]"
+                    + " [--token T | --token-file F | --insecure-no-auth] [--library-dir D]");
             return 1;
         }
         String portArg = opt(args, "--port");
         int port = portArg == null ? 7788 : Integer.parseInt(portArg);
+        // M10：控制台场景库目录（缺省 ./duo-console-library，启动时创建）
+        String libraryDir = opt(args, "--library-dir");
+        Path libraryPath = Path.of(libraryDir == null ? "./duo-console-library" : libraryDir);
 
         // 认证材料解析（安全审计 2026-09-20 C-1）：令牌必填，缺省取环境变量 DUO_TOKEN，
         // 两处都没有就**拒绝启动**——默认裸奔是这个漏洞的根因，不能靠"记得加参数"。
@@ -180,16 +183,23 @@ public final class DuoCli {
                     + " and any local process or web page can start scenarios on this machine.");
         }
         ScenarioHost host = new ScenarioHost();
+        var library = new io.duo.sim.control.library.ScenarioLibrary(libraryPath);
         RestControlServer server = new RestControlServer(host,
-                insecure ? RestControlServer.Auth.INSECURE : RestControlServer.Auth.TOKEN, token);
-        host.start(Path.of(yamlPath));
-        // SUT 自行退出时自动固化结果（客户端只需轮询 status，无需触发停止）
-        host.awaitFinishInBackground(30 * 60_000L);
+                insecure ? RestControlServer.Auth.INSECURE : RestControlServer.Auth.TOKEN, token,
+                library);
+        if (yamlPath != null) {
+            host.start(Path.of(yamlPath));
+            // SUT 自行退出时自动固化结果（客户端只需轮询 status，无需触发停止）
+            host.awaitFinishInBackground(30 * 60_000L);
+        }
         int actual = server.start(port);
         // 脚本据此发现端口（--port 0 时为实际分配值）；令牌**不**回显（它已经在客户端手里，
         // 回显只会把它写进日志与终端历史——审计 M-8 的口径泄露同源问题）。
         System.out.println("listening on http://127.0.0.1:" + actual
-                + (insecure ? " (auth: none)" : " (auth: bearer token)"));
+                + (insecure ? " (auth: none)" : " (auth: bearer token)")
+                + (yamlPath == null
+                    ? " (idle: no scenario loaded; console at http://127.0.0.1:" + actual + "/)"
+                    : ""));
         System.out.flush();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -528,8 +538,11 @@ public final class DuoCli {
                   run <scenario.yaml> [--keep] [--name N] [--wait]
                         [--inject-after <dur> "<action> <target>"]
                                                     启动场景；--inject-after 到点自动注入并等待结果
-                  serve <scenario.yaml> [--port N] [--token T | --token-file F | --insecure-no-auth]
+                  serve [scenario.yaml] [--port N] [--token T | --token-file F | --insecure-no-auth]
+                                                     [--library-dir D]
                                                      独立进程承载场景 + REST 服务（跨进程模式服务端）；
+                                                     场景参数可选（M10：缺省 IDLE 态启动，控制台为主要入口）；
+                                                     --library-dir 场景库目录（缺省 ./duo-console-library）；
                                                      令牌必填（缺省读环境变量 DUO_TOKEN），
                                                      --insecure-no-auth 显式关闭认证（仅本机临时用）
                   stop [--url X] [--token T]        停止场景
