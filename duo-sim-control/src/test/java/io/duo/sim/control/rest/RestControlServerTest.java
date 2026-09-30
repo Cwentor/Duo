@@ -346,4 +346,69 @@ class RestControlServerTest {
         assertEquals(400, bigResp.statusCode(), () -> "body: " + bigResp.body());
         assertTrue(bigResp.body().contains("exceeds external input limit"), bigResp.body());
     }
+
+    /** M10 计划一 Task 2：/events 响应携带 next 游标与 dropped 丢弃计数（向后兼容）。 */
+    @Test
+    void eventsResponseCarriesNextCursorAndDropCounter() throws Exception {
+        ScenarioHost host = new ScenarioHost();
+        RestControlServer server = new RestControlServer(host, RestControlServer.Auth.INSECURE, null);
+        try {
+            int port = server.start(0);
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            var startResp = client.send(HttpRequest.newBuilder(URI.create(
+                            "http://127.0.0.1:" + port + "/scenario"))
+                            .POST(HttpRequest.BodyPublishers.ofString(FAST_SCENARIO,
+                                    StandardCharsets.UTF_8)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, startResp.statusCode(), startResp.body());
+            long deadline = System.currentTimeMillis() + 10_000;
+            boolean running = false;
+            while (System.currentTimeMillis() < deadline && !running) {
+                var st = client.send(HttpRequest.newBuilder(URI.create(
+                        "http://127.0.0.1:" + port + "/scenario/status")).GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                running = st.statusCode() == 200;
+                if (!running) {
+                    Thread.sleep(100);
+                }
+            }
+            assertTrue(running, "scenario should be running within 10s");
+
+            // 组件注册会产生事件：等到至少 1 条，然后校验游标契约
+            deadline = System.currentTimeMillis() + 10_000;
+            int next = -1;
+            while (System.currentTimeMillis() < deadline) {
+                var resp = client.send(HttpRequest.newBuilder(URI.create(
+                        "http://127.0.0.1:" + port + "/events?since=0")).GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, resp.statusCode());
+                @SuppressWarnings("unchecked")
+                var body = (java.util.Map<String, Object>) new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(resp.body(), java.util.Map.class);
+                @SuppressWarnings("unchecked")
+                var events = (java.util.List<Object>) body.get("events");
+                if (!events.isEmpty()) {
+                    assertEquals(events.size(), ((Number) body.get("next")).intValue(),
+                            "next must equal since + events.size()");
+                    assertTrue(body.containsKey("dropped"), "dropped counter must be present");
+                    next = ((Number) body.get("next")).intValue();
+                    break;
+                }
+                Thread.sleep(100);
+            }
+            assertTrue(next > 0, "should observe at least one event within 10s");
+            // 二次拉取不重不漏：since=next 应为空
+            var resp2 = client.send(HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + port + "/events?since=" + next)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            @SuppressWarnings("unchecked")
+            var body2 = (java.util.Map<String, Object>) new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(resp2.body(), java.util.Map.class);
+            assertEquals(0, ((java.util.List<?>) body2.get("events")).size(),
+                    "since=next must yield no repeated events");
+        } finally {
+            server.close();
+            host.close();
+        }
+    }
 }

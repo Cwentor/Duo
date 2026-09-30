@@ -276,7 +276,12 @@ public final class RestControlServer implements AutoCloseable {
                         + sanitizeReason(e.getMessage())));
                 return;
             }
-            respond(ex, 200, Map.of("since", since, "events", events));
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("since", since);
+            body.put("next", since + events.size());   // M10：下一游标（eventsSince 语义 = 下标 >= since）
+            body.put("dropped", host.droppedEvents()); // M10：丢弃计数可见（§12 不静默延伸到 UI）
+            body.put("events", events);
+            respond(ex, 200, body);
         });
         server.createContext("/inject", ex -> {
             if (!guard(ex, false)) {
