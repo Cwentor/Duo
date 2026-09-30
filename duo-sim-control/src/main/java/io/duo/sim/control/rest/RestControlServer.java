@@ -284,6 +284,11 @@ public final class RestControlServer implements AutoCloseable {
                     }
                 }
             }
+            if (since < 0) {
+                // 负数 since 会产生倒退游标（next = since + size），拒绝而非静默钳制（终审 M-6）
+                respond(ex, 400, Map.of("error", "since must be >= 0"));
+                return;
+            }
             List<Map<String, Object>> events;
             try {
                 events = host.eventsSince(since);
@@ -432,7 +437,8 @@ public final class RestControlServer implements AutoCloseable {
             } catch (BodyTooLargeException e) {
                 rejectTooLarge(ex, e);
             } catch (com.fasterxml.jackson.core.JacksonException | IllegalArgumentException e) {
-                respond(ex, 400, Map.of("error", String.valueOf(e.getMessage())));
+                // 错误响应一律 sanitizeReason（全局约束；终审 M-1——/inject 同分支系历史遗留，另行记账）
+                respond(ex, 400, Map.of("error", sanitizeReason(String.valueOf(e.getMessage()))));
             } catch (NullPointerException e) {
                 respond(ex, 400, Map.of("error",
                         "fault action is missing a required field: " + sanitizeReason(e.getMessage())));
@@ -583,10 +589,17 @@ public final class RestControlServer implements AutoCloseable {
                     ? path.substring("/api/scenarios".length() + 1) : "";
             String[] parts = rest.isEmpty() ? new String[0] : rest.split("/");
             // 路由前先解码并校验每一段：/api/scenarios/..%2F..%2Fsecret 解码后含路径段
-            // 分隔，必须 400（穿越拒绝）而不是落进结构性 404（Review Focus #1）
+            // 分隔，必须 400（穿越拒绝）而不是落进结构性 404（Review Focus #1）。
+            // 解码包在 try 内：双重编码（foo%25zz）的 IAE 也要 400 而不是硬关连接（终审 I-1）
             for (String part : parts) {
-                if (!ScenarioLibrary.validId(
-                        java.net.URLDecoder.decode(part, StandardCharsets.UTF_8))) {
+                String decoded;
+                try {
+                    decoded = java.net.URLDecoder.decode(part, StandardCharsets.UTF_8);
+                } catch (IllegalArgumentException e) {
+                    respond(ex, 400, Map.of("error", "invalid scenario id encoding"));
+                    return;
+                }
+                if (!ScenarioLibrary.validId(decoded)) {
                     respond(ex, 400, Map.of("error", "invalid scenario id: only [A-Za-z0-9._-]"));
                     return;
                 }
@@ -648,11 +661,20 @@ public final class RestControlServer implements AutoCloseable {
                             String source = java.net.URLDecoder.decode(parts[0],
                                     StandardCharsets.UTF_8);
                             String body = readBody(ex);
-                            var req = mapper.readValue(body, Map.class);
-                            Object newIdObj = req.get("id");
-                            if (!(newIdObj instanceof String newId) || !ScenarioLibrary.validId(newId)) {
+                            String newId;
+                            if (body.isBlank()) {
+                                newId = null; // 缺省：按源 id 加后缀（规格 §6.1#5）
+                            } else {
+                                var req = mapper.readValue(body, Map.class);
+                                Object newIdObj = req.get("id");
+                                newId = newIdObj instanceof String s && !s.isBlank() ? s : null;
+                            }
+                            if (newId == null) {
+                                newId = source + "-copy";
+                            }
+                            if (!ScenarioLibrary.validId(newId)) {
                                 respond(ex, 400, Map.of("error",
-                                        "body must be {\"id\":\"<valid-id>\"}"));
+                                        "invalid scenario id: only [A-Za-z0-9._-]"));
                                 return;
                             }
                             String created = library.fork(source, newId);

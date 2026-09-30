@@ -284,6 +284,23 @@ class RestConsoleApiTest {
         assertTrue(body.containsKey("warnings"), "status must expose warnings for the console");
     }
 
+    /** 终审 I-1：双重编码 id（%25 → %）在预检解码即抛 IAE——必须 400，不能硬关连接。 */
+    @Test
+    void doubleEncodedIdIs400NotConnectionReset() throws Exception {
+        var resp = send("GET", "/api/scenarios/foo%25zz", null);
+        assertEquals(400, resp.statusCode());
+    }
+
+    /** 终审 M-3：fork 请求体缺省 id ⇒ 按源 id 加后缀自动生成（规格 §6.1#5）。 */
+    @Test
+    void forkWithoutBodyIdDefaultsToSourceSuffix() throws Exception {
+        var resp = send("POST", "/api/scenarios/worker-crash-failover/fork", "{}");
+        assertEquals(200, resp.statusCode(), resp.body());
+        assertTrue(((String) json(resp).get("id")).startsWith("worker-crash-failover"),
+                "default id must derive from source id");
+        assertEquals(200, send("GET", "/api/scenarios/worker-crash-failover-copy", null).statusCode());
+    }
+
     private static final String CLEAR_SCENARIO = """
             name: clear-smoke
             topology:

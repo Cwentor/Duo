@@ -196,6 +196,7 @@ public final class DuoCli {
         // 回显只会把它写进日志与终端历史——审计 M-8 的口径泄露同源问题）。
         System.out.println("listening on http://127.0.0.1:" + actual
                 + (insecure ? " (auth: none)" : " (auth: bearer token)")
+                + " (library: " + libraryPath.toAbsolutePath() + ")"
                 + (yamlPath == null
                     ? " (idle: no scenario loaded; console at http://127.0.0.1:" + actual + "/)"
                     : ""));

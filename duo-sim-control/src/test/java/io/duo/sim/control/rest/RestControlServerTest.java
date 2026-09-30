@@ -347,6 +347,15 @@ class RestControlServerTest {
         assertTrue(bigResp.body().contains("exceeds external input limit"), bigResp.body());
     }
 
+    /** 终审 M-6：负数 since 拒绝（防游标倒退，T2 契约的一部分）。 */
+    @Test
+    void negativeSinceIsRejectedWith400() throws Exception {
+        startServer();
+        var resp = request("GET", "/events?since=-1", null);
+        assertEquals(400, resp.statusCode());
+        assertTrue(resp.body().contains("since"), resp.body());
+    }
+
     /** M10 计划一 Task 2：/events 响应携带 next 游标与 dropped 丢弃计数（向后兼容）。 */
     @Test
     void eventsResponseCarriesNextCursorAndDropCounter() throws Exception {

@@ -35,7 +35,7 @@
   （`/console/**`，CSP `default-src 'self'` + nosniff，穿越显式拒绝）。**顺手修复**：
   `respond()` 对不可序列化响应体原会静默吞掉异常 ⇒ 客户端挂死，现显式回 500。
   设计文档 `docs/superpowers/specs/2026-09-30-duo-web-console-design.md`；计划一
-  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+22 测，全量 419 全绿）；
+  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+23 测，全量 420 全绿）；
   计划二（console-ui 前端）待启动。内核/场景/组件模块零改动。
 
 - **M9 Phase A：首个真实第三方系统接入（DolphinScheduler 3.4.3，第 34 轮）**：DS standalone 以
