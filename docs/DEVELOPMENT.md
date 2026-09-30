@@ -86,6 +86,17 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 - 本机 npm 启用了 allow-scripts 安全策略：首次 `npm install` 后需 `npm approve-scripts esbuild`
   （vite 构建依赖其二进制）。
 
+**端到端冒烟清单**（验收判据 G-W2 的机器可执行版；`duo serve --port 0 --token <T>` 后浏览器执行，
+或对同一端口 curl 等价 API 序列）：
+
+1. 令牌页输入 `<T>` 进入库页（TOKEN 模式输错令牌显示错误；INSECURE 模式免令牌）；
+2. fork「worker-crash-failover」→ 工作区画布 3 节点 + 接线；
+3. 属性面板改 workers `count: 4→3` → 保存 → `GET /api/scenarios/<id>` 已更新；
+4. ▶ 启动场景 → RUNNING（工具栏状态灯 + 连接指示）；
+5. 点 workers → 注入 `crash` 实例 3 → 事件流见 `sim.fault-injected` / `sim.worker-instance-crashed`；
+6. 诊断链 tab：注入链 ≥1、SUT 事实 >0、gaps=0；断言 tab 场景收口后 PASS/FAIL 可见；
+7. 停止 → 回编辑态；删除 fork 场景收尾。全程零终端命令（除启动 serve 本身）。
+
 ---
 
 ## 2. 常用命令

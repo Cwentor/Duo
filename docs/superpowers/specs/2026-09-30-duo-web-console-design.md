@@ -149,6 +149,7 @@ Duo/
 
 - **Java 侧（进常规回归，`-Dquality` 口径不变）**：场景库七端点契约测试（含路径遍历防护、模板不可删/拒写、外部输入档拒绝、fork 语义）；`/diagnose` 复用 `FaultDiagnostics` 既有验收语义；`/events` 扩展字段向后兼容；`/api/capabilities` 与 `ContractRegistry` 声明矩阵一致；`/api/meta`、`/api/inject/clear`、`/topology` 扩展各自契约用例；静态资源托管（SPA fallback/MIME/CSP 头）；安全回归（静态资源免令牌但 API 全 401、CSP 存在性、库目录逃逸拒绝）。预计新增 30–40 条用例。
 - **前端侧（console-ui 工程）**：Vitest 单测覆盖纯逻辑层（YAML round-trip、快速校验规则、画布模型投影）；Playwright E2E 只做一条金标准冒烟链（编辑→启动→注入→观测），诚实标注不做全 UI 覆盖。
+  - **修订（2026-10-01，计划二实施裁决）**：不引 Playwright（浏览器下载与 CI 复杂度对一条冒烟不成比例），改为「构建产物 + `duo serve` 真实冒烟清单（11 步：令牌→库→编辑→启动→注入→观测→停止→清理）」，与计划一 Task 10 的 E2E 冒烟同型；实现于计划二 Task 11（清单见 `docs/DEVELOPMENT.md` §1.4）。
 - **CI**：`regression` job 加 node build + 前端单测步骤；`container`/`scale` job 不动。
 
 ## 12. 验收标准

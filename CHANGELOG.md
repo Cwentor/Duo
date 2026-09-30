@@ -24,6 +24,14 @@
 
 ### 新增
 
+- **M10 计划二：console-ui 前端（D16，2026-10-01）**：`console-ui/`（Vue3+TS+Vite，Node 仅构建期）。
+  三页：令牌页（sessionStorage 会话，401 自动回登录且草稿不丢）、场景库（模板/用户库、fork、删除）、
+  工作区（拓扑画布 @vue-flow + 属性面板 + YAML 抽屉双向同步——YAML 唯一事实来源、未动子树注释保留、
+  布局坐标存 localStorage 不进 YAML；编辑⇄运行双模式；注入面板动作下拉来自 `/api/capabilities`；
+  观测三 tab＝事件流 live（1s 轮询 + 退避 + 丢弃计数可见）/断言/诊断链）。构建产物直出
+  `duo-sim-control/target/classes/console`（`npm run build` 内置 CSP 兼容门：禁内联脚本/外域资源），
+  CI regression job 接入 node 构建 + Vitest。端到端冒烟 11 步全过（fork→改→存→启动→注入→
+  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 24 测全绿。
 - **M10 计划一：Web 控制台 Java 控制面（D16，2026-10-01）**：`duo serve` 场景参数改为**可选**
   （无参数＝IDLE 态启动，浏览器打开 `http://127.0.0.1:<port>/` 即控制台入口）+ `--library-dir`
   场景库目录（缺省 `./duo-console-library`）。新端点族（全部过既有 Bearer/回环校验管道）：
