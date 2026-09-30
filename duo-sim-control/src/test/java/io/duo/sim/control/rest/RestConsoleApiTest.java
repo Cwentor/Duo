@@ -173,6 +173,71 @@ class RestConsoleApiTest {
                 "libraryDir must be an absolute path");
     }
 
+    /** M10 计划一 Task 6：手动清除注入（freeze 为组件级动作，寻址不带 instanceIndex）。 */
+    @Test
+    void clearInjectionAfterInjecting() throws Exception {
+        var startResp = send("POST", "/scenario", CLEAR_SCENARIO);
+        assertEquals(200, startResp.statusCode(), startResp.body());
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline
+                && send("GET", "/scenario/status", null).statusCode() != 200) {
+            Thread.sleep(100);
+        }
+        assertEquals(200, send("GET", "/scenario/status", null).statusCode());
+
+        var faultBody = """
+                {"type":"freeze",
+                 "target":{"componentId":{"value":"workers"}},
+                 "params":{}}
+                """;
+        // 注入（在组件注册完成前可能 unknown target：有界重试）
+        boolean injected = false;
+        for (int i = 0; i < 20 && !injected; i++) {
+            var r = json(send("POST", "/inject", faultBody));
+            injected = Boolean.TRUE.equals(r.get("success"));
+            if (!injected) {
+                Thread.sleep(100);
+            }
+        }
+        assertTrue(injected, "inject freeze should succeed");
+        var cleared = json(send("POST", "/api/inject/clear", faultBody));
+        assertEquals(Boolean.TRUE, cleared.get("success"),
+                "clear should succeed: " + cleared.get("reason"));
+    }
+
+    private static final String CLEAR_SCENARIO = """
+            name: clear-smoke
+            topology:
+              - id: zk
+                contract: registry
+                tier: virtual
+              - id: master
+                contract: scheduler
+                tier: virtual
+                sut: true
+                launch: { mode: in-process, main: io.duo.sim.control.testfixture.ControlFixtureSut }
+                config: { dag.tasks: "a,b" }
+                exposes: [{ contract: scheduler, port: 0 }]
+                wiring:
+                  registry: { node: zk, contract: registry }
+              - id: workers
+                contract: worker
+                tier: virtual
+                count: 2
+                capacity: { slots: 1 }
+                wiring:
+                  registry: { node: zk, contract: registry }
+            behaviors:
+              profiles:
+                default: { duration: 3s, jitter: 0.0, successRate: 1.0 }
+              bindings:
+                - node: workers
+                  profile: default
+            timeline: []
+            assertions:
+              - noTaskLost: { requireAllSuccess: true }
+            """;
+
     private static final String VALID_YAML = """
             name: api-smoke
             topology:

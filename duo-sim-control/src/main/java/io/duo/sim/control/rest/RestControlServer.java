@@ -410,6 +410,36 @@ public final class RestControlServer implements AutoCloseable {
                     "libraryDir", library == null ? "" : library.userDir().toString(),
                     "eventBufferMax", io.duo.sim.scenario.EventRecorder.MAX_BUFFERED_EVENTS));
         });
+        // M10 W-API-8：手动清除注入（与 /inject 同构的 body 与错误映射；薄委托 host.clear）。
+        server.createContext("/api/inject/clear", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            if (!"POST".equals(ex.getRequestMethod())) {
+                respond(ex, 405, Map.of("error", "method not allowed"));
+                return;
+            }
+            if (!host.isRunning()) {
+                respond(ex, 409, Map.of("error", "scenario not running"));
+                return;
+            }
+            try {
+                String body = readBody(ex);
+                var action = mapper.readValue(body, io.duo.sim.kernel.api.FaultAction.class);
+                var result = host.clear(action);
+                respond(ex, 200, Map.of("success", result.success(),
+                        "reason", result.reason() == null ? "" : result.reason()));
+            } catch (BodyTooLargeException e) {
+                rejectTooLarge(ex, e);
+            } catch (com.fasterxml.jackson.core.JacksonException | IllegalArgumentException e) {
+                respond(ex, 400, Map.of("error", String.valueOf(e.getMessage())));
+            } catch (NullPointerException e) {
+                respond(ex, 400, Map.of("error",
+                        "fault action is missing a required field: " + sanitizeReason(e.getMessage())));
+            } catch (Exception e) {
+                respond(ex, 500, Map.of("error", sanitizeReason(e.getMessage())));
+            }
+        });
         registerLibraryRoutes();
     }
 
