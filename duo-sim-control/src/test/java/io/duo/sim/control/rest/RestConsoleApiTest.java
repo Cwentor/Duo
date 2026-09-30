@@ -235,6 +235,42 @@ class RestConsoleApiTest {
         assertTrue(((Number) body.get("eventsTotal")).intValue() >= 1);
     }
 
+    /** M10 计划一 Task 8：SPA 静态托管（免令牌 + CSP + SPA fallback + 穿越拒绝）。 */
+    @Test
+    void staticAssetsServedWithCspAndTraversalRejected() throws Exception {
+        var index = client.send(HttpRequest.newBuilder(URI.create(
+                "http://127.0.0.1:" + port + "/console/index.html")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, index.statusCode());
+        assertEquals("text/html", index.headers().firstValue("Content-Type").orElse("")
+                .split(";")[0].trim());
+        assertEquals("default-src 'self'",
+                index.headers().firstValue("Content-Security-Policy").orElse("").trim());
+        assertEquals("nosniff",
+                index.headers().firstValue("X-Content-Type-Options").orElse("").trim());
+        assertTrue(index.body().contains("Duo Console"));
+
+        // SPA fallback：无扩展名路径回退 index.html
+        var route = client.send(HttpRequest.newBuilder(URI.create(
+                "http://127.0.0.1:" + port + "/console/library/my-drill")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, route.statusCode());
+
+        // 穿越：.. 必须拒绝，绝不触碰文件路径语义
+        var trav = client.send(HttpRequest.newBuilder(URI.create(
+                "http://127.0.0.1:" + port + "/console/../rest/RestControlServer.class")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertTrue(trav.statusCode() == 400 || trav.statusCode() == 404,
+                "traversal must be rejected, got " + trav.statusCode());
+
+        // 根路径也出控制台
+        var root = client.send(HttpRequest.newBuilder(URI.create(
+                "http://127.0.0.1:" + port + "/")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, root.statusCode());
+        assertTrue(root.body().contains("Duo Console"));
+    }
+
     private static final String CLEAR_SCENARIO = """
             name: clear-smoke
             topology:

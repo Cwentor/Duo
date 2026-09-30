@@ -470,7 +470,80 @@ public final class RestControlServer implements AutoCloseable {
                         + sanitizeReason(e.getMessage())));
             }
         });
+        // M10 W-API-11：SPA 静态托管。静态资源是构建产物、不含机密 → 与 /health 同档免令牌
+        //（guard(ex, true) 仍做回环 Host/Origin 校验）；API 依旧全令牌。纵深防御：CSP + nosniff。
+        server.createContext("/", ex -> {
+            if (!guard(ex, true)) {
+                return;
+            }
+            if (!"GET".equals(ex.getRequestMethod())) {
+                respond(ex, 405, Map.of("error", "method not allowed"));
+                return;
+            }
+            serveConsoleAsset(ex, ex.getRequestURI().getPath());
+        });
         registerLibraryRoutes();
+    }
+
+    private static final java.util.Map<String, String> ASSET_MIME = java.util.Map.ofEntries(
+            java.util.Map.entry("html", "text/html; charset=utf-8"),
+            java.util.Map.entry("js", "text/javascript; charset=utf-8"),
+            java.util.Map.entry("css", "text/css; charset=utf-8"),
+            java.util.Map.entry("svg", "image/svg+xml"),
+            java.util.Map.entry("json", "application/json"),
+            java.util.Map.entry("png", "image/png"),
+            java.util.Map.entry("ico", "image/x-icon"),
+            java.util.Map.entry("map", "application/json"),
+            java.util.Map.entry("woff2", "font/woff2"));
+
+    /** classpath 上的 SPA 资源根（构建产物由计划二输出到 {@code target/classes/console}）。 */
+    private static final String CONSOLE_ROOT = "/console/";
+
+    private void serveConsoleAsset(HttpExchange ex, String path) throws java.io.IOException {
+        String rel = path.equals("/") ? "index.html" : path;
+        if (rel.startsWith("/console/")) {
+            rel = rel.substring("/console/".length());
+        } else if (rel.startsWith("/")) {
+            rel = rel.substring(1);
+        }
+        // 穿越：拒绝 .. 与反斜杠形态；其余按 classpath 资源解析（绝不触碰 java.io.File 路径语义）
+        if (rel.contains("..") || rel.contains("\\") || rel.startsWith("/")) {
+            respond(ex, 400, Map.of("error", "invalid asset path"));
+            return;
+        }
+        if (rel.isBlank()) {
+            rel = "index.html";
+        }
+        String ext = rel.contains(".") ? rel.substring(rel.lastIndexOf('.') + 1) : "";
+        byte[] bytes = null;
+        try (var in = RestControlServer.class.getResourceAsStream(CONSOLE_ROOT + rel)) {
+            if (in != null) {
+                bytes = in.readAllBytes();
+            }
+        }
+        if (bytes == null && ext.isEmpty()) {
+            // SPA 路由 fallback：无扩展名路径回 index.html
+            try (var in = RestControlServer.class.getResourceAsStream(CONSOLE_ROOT + "index.html")) {
+                if (in != null) {
+                    bytes = in.readAllBytes();
+                }
+            }
+            ext = "html";
+        }
+        if (bytes == null) {
+            respond(ex, 404, Map.of("error", "asset not found"));
+            return;
+        }
+        ex.getResponseHeaders().set("Content-Type",
+                ASSET_MIME.getOrDefault(ext, "application/octet-stream"));
+        ex.getResponseHeaders().set("Content-Security-Policy", "default-src 'self'");
+        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        ex.sendResponseHeaders(200, bytes.length);
+        try (var os = ex.getResponseBody()) {
+            os.write(bytes);
+        } catch (IOException e) {
+            // 客户端断开
+        }
     }
 
     /** M10 W-API：场景库端点族（/api/ 前缀——控制台专属面，不触碰被 CLI 依赖的核心端点）。 */
