@@ -205,6 +205,36 @@ class RestConsoleApiTest {
                 "clear should succeed: " + cleared.get("reason"));
     }
 
+    /** M10 计划一 Task 7：诊断链服务端一等化（复用 CLI duo diagnose 同一套 FaultDiagnostics）。 */
+    @Test
+    void diagnoseReturnsChainsAfterInjection() throws Exception {
+        var startResp = send("POST", "/scenario", CLEAR_SCENARIO);
+        assertEquals(200, startResp.statusCode());
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline
+                && send("GET", "/scenario/status", null).statusCode() != 200) {
+            Thread.sleep(100);
+        }
+        String faultBody = """
+                {"type":"freeze",
+                 "target":{"componentId":{"value":"workers"}},
+                 "params":{}}
+                """;
+        for (int i = 0; i < 20; i++) {
+            if (Boolean.TRUE.equals(json(send("POST", "/inject", faultBody)).get("success"))) {
+                break;
+            }
+            Thread.sleep(100);
+        }
+        // 给事件流一点时间落盘
+        Thread.sleep(500);
+        var resp = send("GET", "/diagnose", null);
+        assertEquals(200, resp.statusCode());
+        var body = json(resp);
+        assertTrue(body.containsKey("chains"), "report must expose chains");
+        assertTrue(((Number) body.get("eventsTotal")).intValue() >= 1);
+    }
+
     private static final String CLEAR_SCENARIO = """
             name: clear-smoke
             topology:

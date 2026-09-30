@@ -440,6 +440,36 @@ public final class RestControlServer implements AutoCloseable {
                 respond(ex, 500, Map.of("error", sanitizeReason(e.getMessage())));
             }
         });
+        // M10 W-API-10：诊断链服务端一等化——复用 CLI `duo diagnose` 同一套 FaultDiagnostics，
+        // 前端直接渲染四段报告（注入 → 组件反应 → SUT 事实 → 断言），断链段沿用 gaps→MISSING 语义。
+        server.createContext("/diagnose", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            if (!"GET".equals(ex.getRequestMethod())) {
+                respond(ex, 405, Map.of("error", "method not allowed"));
+                return;
+            }
+            if (!host.hasResult() && !host.isRunning()) {
+                respond(ex, 409, Map.of("error", "scenario not started"));
+                return;
+            }
+            try {
+                // host.assertions() 是 {"assertions":[...], "passed":...} Map——与 CLI 同进程
+                // 路径同型的断言行抽取（DuoCli cmdDiagnose asRows 语义）
+                var raw = host.assertions().get("assertions");
+                List<Map<String, Object>> assertionRows = raw instanceof List<?> l
+                        ? l.stream().filter(Map.class::isInstance)
+                                .map(m -> (Map<String, Object>) m).toList()
+                        : List.of();
+                var report = io.duo.sim.control.FaultDiagnostics.analyze(
+                        host.eventsSince(0), assertionRows);
+                respond(ex, 200, reportToJson(report));
+            } catch (RuntimeException e) {
+                respond(ex, 500, Map.of("error", "cannot analyze event stream: "
+                        + sanitizeReason(e.getMessage())));
+            }
+        });
         registerLibraryRoutes();
     }
 
@@ -770,9 +800,63 @@ public final class RestControlServer implements AutoCloseable {
         }
     }
 
+    /**
+     * {@link io.duo.sim.control.FaultDiagnostics.Report} → JSON 安全 Map。
+     *
+     * <p>为什么不直接序列化 record：{@code Chain.componentReactions} 内嵌内核
+     * {@code Event}，其 {@code timestamp} 是 {@code java.time.Instant}——Jackson 无
+     * JSR-310 模块（零依赖纪律）抛 {@code InvalidDefinitionException}，被 {@link #respond}
+     * 修复前的 {@code catch (IOException)} 吞掉 ⇒ 客户端挂死（Task 7 实测）。转换与
+     * {@code ScenarioHost.eventsSince} 同款（{@code timestamp.toString()}）。
+     */
+    private static Map<String, Object> reportToJson(io.duo.sim.control.FaultDiagnostics.Report r) {
+        var chains = new java.util.ArrayList<Map<String, Object>>(r.chains().size());
+        for (var c : r.chains()) {
+            var chain = new java.util.LinkedHashMap<String, Object>();
+            chain.put("injectedIndex", c.injectedIndex());
+            chain.put("target", c.target());
+            chain.put("action", c.action());
+            chain.put("failedReason", c.failedReason());
+            chain.put("cleared", c.cleared());
+            var reactions = new java.util.ArrayList<Map<String, Object>>(c.componentReactions().size());
+            for (io.duo.sim.kernel.api.Event e : c.componentReactions()) {
+                var m = new java.util.LinkedHashMap<String, Object>();
+                m.put("type", e.type());
+                m.put("sourceId", e.sourceId());
+                m.put("timestamp", e.timestamp().toString());
+                m.put("payload", e.payload() == null ? Map.of() : e.payload());
+                reactions.add(m);
+            }
+            chain.put("componentReactions", reactions);
+            chain.put("sutFacts", c.sutFacts());
+            chain.put("sutFactTotal", c.sutFactTotal());
+            chain.put("windowEnd", c.windowEnd());
+            chains.add(chain);
+        }
+        var out = new java.util.LinkedHashMap<String, Object>();
+        out.put("chains", chains);
+        out.put("assertions", r.assertions());
+        out.put("eventsTotal", r.eventsTotal());
+        out.put("gaps", r.gaps());
+        return out;
+    }
+
     private void respond(HttpExchange ex, int code, Object body) {
+        byte[] bytes;
         try {
-            byte[] bytes = mapper.writeValueAsBytes(body);
+            bytes = mapper.writeValueAsBytes(body);
+        } catch (com.fasterxml.jackson.core.JacksonException e) {
+            // 响应体不可序列化绝不能吞：吞掉 = 客户端永远等不到响应（Task 7 实测挂死，§12）。
+            // 降级为错误 JSON——此路径的 body 恒可序列化，不会递归。
+            String msg = sanitizeReason(String.valueOf(e.getMessage()))
+                    .replaceAll("[\"\\r\\n]", "'");
+            bytes = ("{\"error\":\"response serialization failed: " + msg + "\"}")
+                    .getBytes(StandardCharsets.UTF_8);
+            code = 500;
+        } catch (IOException e) {
+            return; // 客户端断开
+        }
+        try {
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(code, bytes.length);
             try (OutputStream os = ex.getResponseBody()) {
