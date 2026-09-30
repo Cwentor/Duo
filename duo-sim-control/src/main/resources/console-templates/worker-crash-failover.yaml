@@ -1,0 +1,38 @@
+name: worker-crash-failover
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config: { dag.tasks: "job-a,job-b,job-c,job-d" }
+    exposes: [{ contract: scheduler, port: 0 }]
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 4
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 15s, jitter: 0.1, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline:
+  - at: 10s
+    action: crash
+    target: workers[3]
+  - at: 27s
+    action: restart
+    target: workers[3]
+assertions:
+  - affectedTasksAtLeast: { min: 1 }
+  - failoverWithin: { seconds: 30 }
+  - noTaskLost: { requireAllSuccess: true }
