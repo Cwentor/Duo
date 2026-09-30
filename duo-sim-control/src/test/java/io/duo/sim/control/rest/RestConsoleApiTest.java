@@ -147,6 +147,32 @@ class RestConsoleApiTest {
         }
     }
 
+    /** M10 计划一 Task 5：能力元数据（注入面板「动作×契约」下拉的唯一数据源）。 */
+    @Test
+    void capabilitiesListsProvidersWithSupportedFaults() throws Exception {
+        var resp = send("GET", "/api/capabilities", null);
+        assertEquals(200, resp.statusCode());
+        var body = json(resp);
+        var providers = (List<Map<String, Object>>) body.get("providers");
+        // control 测试类路径上有 components 模块 ⇒ ServiceLoader 必然发现 virtual registry
+        assertTrue(providers.stream().anyMatch(p ->
+                "registry".equals(p.get("contract")) && "virtual".equals(p.get("tier"))));
+        assertTrue(providers.stream().anyMatch(p ->
+                p.get("supportedFaults") != null), "supportedFaults must be present");
+    }
+
+    /** M10 计划一 Task 5：serve 自述（关于页 + 前端能力探测）。 */
+    @Test
+    void metaDescribesServeEnvironment() throws Exception {
+        var resp = send("GET", "/api/meta", null);
+        assertEquals(200, resp.statusCode());
+        var body = json(resp);
+        assertEquals("INSECURE", body.get("auth"));
+        assertTrue(body.containsKey("version"));
+        assertTrue(new java.io.File((String) body.get("libraryDir")).isAbsolute(),
+                "libraryDir must be an absolute path");
+    }
+
     private static final String VALID_YAML = """
             name: api-smoke
             topology:

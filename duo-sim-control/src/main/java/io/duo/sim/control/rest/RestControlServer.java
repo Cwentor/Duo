@@ -375,6 +375,41 @@ public final class RestControlServer implements AutoCloseable {
             respondText(ex, 200, metrics.scrape(),
                     "text/plain; version=0.0.4; charset=utf-8");
         });
+        // M10 W-API-7：能力元数据（注入面板「动作×契约」下拉的唯一数据源，前端不写死）。
+        // 直接枚举 ServiceLoader provider——不实例化 ContractRegistry，IDLE 态同样可用。
+        server.createContext("/api/capabilities", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            List<Map<String, Object>> providers = new java.util.ArrayList<>();
+            for (var p : java.util.ServiceLoader.load(io.duo.sim.kernel.spi.ComponentProvider.class)) {
+                var m = p.metadata();
+                var row = new java.util.LinkedHashMap<String, Object>();
+                // 契约/档位/端点形态按 DSL 方言输出小写（DSL 用 registry/virtual），前端直接消费
+                row.put("contract", p.contract().name().toLowerCase(java.util.Locale.ROOT));
+                row.put("tier", p.tier().name().toLowerCase(java.util.Locale.ROOT));
+                row.put("impl", p.implName());
+                row.put("default", p.isDefault());
+                row.put("supportedFaults", m.supportedFaults());
+                row.put("endpointShape", m.endpointShape().name().toLowerCase(java.util.Locale.ROOT));
+                row.put("interfaceDirect", m.interfaceDirect());
+                row.put("instanceControl", m.instanceControl());
+                providers.add(row);
+            }
+            respond(ex, 200, Map.of("providers", providers));
+        });
+        // M10 W-API-9：serve 自述（关于页 + 前端能力探测）。不回显令牌本体——只回认证模式。
+        server.createContext("/api/meta", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            String version = RestControlServer.class.getPackage().getImplementationVersion();
+            respond(ex, 200, Map.of(
+                    "version", version == null ? "0.1.0-SNAPSHOT" : version,
+                    "auth", auth.name(),
+                    "libraryDir", library == null ? "" : library.userDir().toString(),
+                    "eventBufferMax", io.duo.sim.scenario.EventRecorder.MAX_BUFFERED_EVENTS));
+        });
         registerLibraryRoutes();
     }
 
