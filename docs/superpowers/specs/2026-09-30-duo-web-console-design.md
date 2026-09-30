@@ -66,7 +66,7 @@ Duo/
 
 - **场景库首页**：内置模板卡片（classpath 中的金标准场景，只读）+ 用户库列表（`--library-dir` 目录，可写）。操作：fork 到我的库、打开编辑、直接运行、删除（仅用户场景）、YAML 导入导出（前端读/存文件，无需专有端点）。
 - **工作区 · 编辑模式**：左侧组件库面板（8 契约，按 `ContractRegistry` 能力元数据渲染可支持档位/动作）、中央拓扑画布（拖节点/连线）、右侧属性面板（选中节点的 tier/sut/wiring/config/行为剧本绑定）、底部抽屉（YAML 视图 ⇄ 校验问题面板）。顶部工具栏：保存、另存、校验、**▶ 启动场景**。
-- **工作区 · 运行模式**：同一画布切换为活状态——节点状态灯（健康/故障实例比例 `instances: {total, healthy}`）、SUT 节点标星、点节点弹右侧注入面板（动作下拉来自 `/api/capabilities` 的 `supportedFaults` 矩阵 → 实例勾选 → 参数 → 立即注入）；底部三个 tab：**事件流（live，1s 轮询 `/events?since=<next>`）**、**断言结果**（`/assertions`）、**诊断链**（`/diagnose` 四段渲染，断链段显示 `MISSING`）。
+- **工作区 · 运行模式**：同一画布切换为活状态——节点状态灯（组件级 `healthy` + 前端从事件流推导实例级故障，如 `workers 3/4 实例故障`）、SUT 节点标星、点节点弹右侧注入面板（动作下拉来自 `/api/capabilities` 的 `supportedFaults` 矩阵 → 实例勾选 → 参数 → 立即注入）；底部三个 tab：**事件流（live，1s 轮询 `/events?since=<next>`）**、**断言结果**（`/assertions`）、**诊断链**（`/diagnose` 四段渲染，断链段显示 `MISSING`）。
 
 「你编辑的图就是你观测的图」：画布只实现一套，编辑→重跑→看反应的反馈回路无页面跳转。
 
@@ -109,7 +109,7 @@ Duo/
 | `POST /scenario`、`DELETE /scenario`、`GET /scenario/status`、`POST /inject`、`GET /assertions`、`GET /metrics`、`/health` | 原样复用 |
 | `GET /events?since=N` | 响应**增加** `next`（下一游标）与 `dropped`（EventRecorder 丢弃计数）字段；旧字段不变——前端轮询驱动 + 「已丢弃 N 条」可见 |
 | `GET /scenario/status` | 确保包含 `warnings()`（外部进程遗留等警告控制台可见；若已含则零改动） |
-| `GET /topology` | 响应**增加**每节点 `instances: {total, healthy}`（口径对齐 `MetricsCollector` 组件指标），供状态灯 |
+| `GET /topology` | 复核现状（实施计划核对）：响应已含每节点 `id/contract/tier/sut/count/hosted/healthy/endpoints`，v1 **零改动**；实例级状态灯由前端从事件流推导（`sim.worker-instance-crashed` 等事实），不做需内核 API 的实例粒度健康数 |
 
 ### 6.3 预留占位（只定命名空间，不实现）
 
