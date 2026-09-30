@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.duo.sim.control.ScenarioHost;
+import io.duo.sim.control.library.ScenarioLibrary;
 import io.duo.sim.kernel.core.ScenarioRuntime;
 
 import java.io.ByteArrayOutputStream;
@@ -15,6 +16,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -89,8 +91,14 @@ public final class RestControlServer implements AutoCloseable {
     private final io.duo.sim.control.metrics.MetricsCollector metrics;
     private final Auth auth;
     private final byte[] token;
+    /** M10：控制台场景库。{@code null} = 未配置（/api/scenarios 返回 503）。 */
+    private ScenarioLibrary library;
     private HttpServer server;
     private ExecutorService executor;
+
+    /** M10：控制台场景库。{@code null} = 未配置（/api/scenarios 返回 503）。 */
+    private static final String LIBRARY_NOT_CONFIGURED =
+            "scenario library not configured (pass --library-dir to serve)";
 
     /** 显式关闭认证（仅 {@code --insecure-no-auth} 使用；默认构造＝令牌必填）。 */
     public RestControlServer(ScenarioHost host) {
@@ -105,6 +113,7 @@ public final class RestControlServer implements AutoCloseable {
         this.host = host;
         this.metrics = new io.duo.sim.control.metrics.MetricsCollector(host);
         this.auth = java.util.Objects.requireNonNull(auth, "auth");
+        this.library = null;
         if (auth == Auth.TOKEN) {
             if (token == null || token.isEmpty()) {
                 throw new IllegalArgumentException("control plane token must not be empty "
@@ -117,6 +126,15 @@ public final class RestControlServer implements AutoCloseable {
             }
             this.token = null;
         }
+    }
+
+    /**
+     * M10：带场景库的构造。库承载 {@code /api/scenarios} 端点族（设计 §6.1）；
+     * 未配置库的实例上访问这些端点返回 503（显式可辨，不是静默 404）。
+     */
+    public RestControlServer(ScenarioHost host, Auth auth, String token, ScenarioLibrary library) {
+        this(host, auth, token);
+        this.library = library;
     }
 
     /** 当前认证方式（CLI 启动提示用）。 */
@@ -356,6 +374,141 @@ public final class RestControlServer implements AutoCloseable {
             // 那是"结果不可读"，这里是"指标恒可读"）。
             respondText(ex, 200, metrics.scrape(),
                     "text/plain; version=0.0.4; charset=utf-8");
+        });
+        registerLibraryRoutes();
+    }
+
+    /** M10 W-API：场景库端点族（/api/ 前缀——控制台专属面，不触碰被 CLI 依赖的核心端点）。 */
+    private void registerLibraryRoutes() {
+        server.createContext("/api/scenarios/validate", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            if (!"POST".equals(ex.getRequestMethod())) {
+                respond(ex, 405, Map.of("error", "method not allowed"));
+                return;
+            }
+            if (library == null) {
+                respond(ex, 503, Map.of("error", LIBRARY_NOT_CONFIGURED));
+                return;
+            }
+            try {
+                String yaml = readBody(ex);
+                List<String> errors = library.validateYaml(yaml);
+                respond(ex, 200, Map.of("ok", errors.isEmpty(), "errors", errors));
+            } catch (BodyTooLargeException e) {
+                rejectTooLarge(ex, e);
+            } catch (IOException e) {
+                // 客户端断开
+            }
+        });
+        server.createContext("/api/scenarios", ex -> {
+            if (!guard(ex, false)) {
+                return;
+            }
+            if (library == null) {
+                respond(ex, 503, Map.of("error", LIBRARY_NOT_CONFIGURED));
+                return;
+            }
+            String path = ex.getRequestURI().getPath(); // /api/scenarios[/{id}[/fork]]
+            String rest = path.length() > "/api/scenarios".length()
+                    ? path.substring("/api/scenarios".length() + 1) : "";
+            String[] parts = rest.isEmpty() ? new String[0] : rest.split("/");
+            // 路由前先解码并校验每一段：/api/scenarios/..%2F..%2Fsecret 解码后含路径段
+            // 分隔，必须 400（穿越拒绝）而不是落进结构性 404（Review Focus #1）
+            for (String part : parts) {
+                if (!ScenarioLibrary.validId(
+                        java.net.URLDecoder.decode(part, StandardCharsets.UTF_8))) {
+                    respond(ex, 400, Map.of("error", "invalid scenario id: only [A-Za-z0-9._-]"));
+                    return;
+                }
+            }
+            try {
+                switch (ex.getRequestMethod()) {
+                    case "GET" -> {
+                        if (parts.length == 0) {
+                            var all = library.list();
+                            respond(ex, 200, Map.of(
+                                    "templates", all.stream()
+                                            .filter(ScenarioLibrary.Entry::template).toList(),
+                                    "user", all.stream().filter(e -> !e.template()).toList()));
+                        } else if (parts.length == 1) {
+                            var c = library.get(
+                                    java.net.URLDecoder.decode(parts[0], StandardCharsets.UTF_8));
+                            respond(ex, 200, Map.of("id", c.id(), "template", c.template(),
+                                    "yaml", c.yaml()));
+                        } else {
+                            respond(ex, 404, Map.of("error", "not found"));
+                        }
+                    }
+                    case "PUT" -> {
+                        if (parts.length != 1) {
+                            respond(ex, 404, Map.of("error", "not found"));
+                            return;
+                        }
+                        String id = java.net.URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
+                        if (!ScenarioLibrary.validId(id)) {
+                            respond(ex, 400,
+                                    Map.of("error", "invalid scenario id: only [A-Za-z0-9._-]"));
+                            return;
+                        }
+                        String yaml = readBody(ex);
+                        List<String> errors = library.validateYaml(yaml);
+                        if (!errors.isEmpty()) {
+                            respond(ex, 400, Map.of("errors", errors));
+                            return;
+                        }
+                        library.put(id, yaml);
+                        respond(ex, 200, Map.of("id", id, "saved", true));
+                    }
+                    case "DELETE" -> {
+                        if (parts.length != 1) {
+                            respond(ex, 404, Map.of("error", "not found"));
+                            return;
+                        }
+                        String id = java.net.URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
+                        if (!ScenarioLibrary.validId(id)) {
+                            respond(ex, 400,
+                                    Map.of("error", "invalid scenario id: only [A-Za-z0-9._-]"));
+                            return;
+                        }
+                        library.delete(id);
+                        respond(ex, 200, Map.of("id", id, "deleted", true));
+                    }
+                    case "POST" -> {
+                        if (parts.length == 2 && "fork".equals(parts[1])) {
+                            String source = java.net.URLDecoder.decode(parts[0],
+                                    StandardCharsets.UTF_8);
+                            String body = readBody(ex);
+                            var req = mapper.readValue(body, Map.class);
+                            Object newIdObj = req.get("id");
+                            if (!(newIdObj instanceof String newId) || !ScenarioLibrary.validId(newId)) {
+                                respond(ex, 400, Map.of("error",
+                                        "body must be {\"id\":\"<valid-id>\"}"));
+                                return;
+                            }
+                            String created = library.fork(source, newId);
+                            respond(ex, 200, Map.of("source", source, "id", created));
+                        } else {
+                            respond(ex, 404, Map.of("error", "not found"));
+                        }
+                    }
+                    default -> respond(ex, 405, Map.of("error", "method not allowed"));
+                }
+            } catch (BodyTooLargeException e) {
+                rejectTooLarge(ex, e);
+            } catch (NoSuchFileException e) {
+                respond(ex, 404, Map.of("error", "scenario not found: " + e.getMessage()));
+            } catch (IllegalArgumentException e) {
+                respond(ex, 400, Map.of("error", sanitizeReason(e.getMessage())));
+            } catch (IllegalStateException e) {
+                // 模板只读等：资源存在但方法不被允许 → 405
+                respond(ex, 405, Map.of("error", sanitizeReason(e.getMessage())));
+            } catch (com.fasterxml.jackson.core.JacksonException e) {
+                respond(ex, 400, Map.of("error", sanitizeReason(e.getMessage())));
+            } catch (IOException e) {
+                respond(ex, 500, Map.of("error", sanitizeReason(e.getMessage())));
+            }
         });
     }
 

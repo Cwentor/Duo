@@ -1,0 +1,182 @@
+package io.duo.sim.control.rest;
+
+import io.duo.sim.control.ScenarioHost;
+import io.duo.sim.control.library.ScenarioLibrary;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** M10 计划一 Task 4：场景库端点契约（list/get/put/delete/fork/validate + 外部输入档 + 503）。 */
+class RestConsoleApiTest {
+
+    @TempDir
+    Path libDir;
+
+    private ScenarioHost host;
+    private RestControlServer server;
+    private HttpClient client;
+    private int port;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        host = new ScenarioHost();
+        server = new RestControlServer(host, RestControlServer.Auth.INSECURE, null,
+                new ScenarioLibrary(libDir));
+        port = server.start(0);
+        client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        server.close();
+        host.close();
+    }
+
+    private HttpResponse<String> send(String method, String path, String body) throws Exception {
+        var req = switch (method) {
+            case "GET" -> HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .GET().build();
+            case "DELETE" -> HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .DELETE().build();
+            case "PUT" -> HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .PUT(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
+            default -> HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .POST(HttpRequest.BodyPublishers.ofString(body == null ? "" : body,
+                            StandardCharsets.UTF_8)).build();
+        };
+        return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> send(String method, String path) throws Exception {
+        return send(method, path, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> json(HttpResponse<String> resp) throws Exception {
+        return new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(resp.body(), Map.class);
+    }
+
+    @Test
+    void listSplitsTemplatesFromUserScenarios() throws Exception {
+        send("PUT", "/api/scenarios/mine-01", VALID_YAML);
+        var resp = send("GET", "/api/scenarios", null);
+        assertEquals(200, resp.statusCode());
+        var body = json(resp);
+        var templates = (List<Map<String, Object>>) body.get("templates");
+        var user = (List<Map<String, Object>>) body.get("user");
+        assertTrue(templates.stream().anyMatch(t -> "worker-crash-failover".equals(t.get("id"))));
+        assertTrue(user.stream().anyMatch(t -> "mine-01".equals(t.get("id"))));
+    }
+
+    @Test
+    void putRejectsInvalidYamlWithPerIssueErrors() throws Exception {
+        var resp = send("PUT", "/api/scenarios/bad-01", "name: [broken");
+        assertEquals(400, resp.statusCode());
+        assertTrue(((List<?>) json(resp).get("errors")).size() >= 1);
+        // 外部输入档：launch.command 必须被拒
+        var resp2 = send("PUT", "/api/scenarios/bad-02", """
+                name: bad
+                topology:
+                  - id: m
+                    contract: scheduler
+                    tier: real
+                    sut: true
+                    launch: { mode: external, command: "calc.exe" }
+                timeline: []
+                assertions: []
+                """);
+        assertEquals(400, resp2.statusCode());
+    }
+
+    @Test
+    void putToTemplateIs405AndDeleteTemplateIs405() throws Exception {
+        assertEquals(405, send("PUT", "/api/scenarios/worker-crash-failover", VALID_YAML).statusCode());
+        assertEquals(405, send("DELETE", "/api/scenarios/worker-crash-failover").statusCode());
+    }
+
+    @Test
+    void traversalIdsAre400NeverTouchDisk() throws Exception {
+        assertEquals(400, send("GET", "/api/scenarios/..%2F..%2Fsecret", null).statusCode());
+        assertEquals(400, send("GET", "/api/scenarios/a%20b", null).statusCode());
+        assertEquals(400, send("PUT", "/api/scenarios/..", VALID_YAML).statusCode());
+    }
+
+    @Test
+    void forkCreatesUserCopyFromTemplate() throws Exception {
+        var resp = send("POST", "/api/scenarios/worker-crash-failover/fork",
+                "{\"id\":\"my-fork\"}");
+        assertEquals(200, resp.statusCode(), resp.body());
+        var got = send("GET", "/api/scenarios/my-fork", null);
+        assertEquals(200, got.statusCode());
+        assertTrue(((String) json(got).get("yaml")).contains("name:"));
+    }
+
+    @Test
+    void validateEndpointReturnsOkFlag() throws Exception {
+        var good = json(send("POST", "/api/scenarios/validate", VALID_YAML));
+        assertEquals(Boolean.TRUE, good.get("ok"));
+        var bad = json(send("POST", "/api/scenarios/validate", "name: [broken"));
+        assertEquals(Boolean.FALSE, bad.get("ok"));
+    }
+
+    @Test
+    void libraryNotConfiguredIs503() throws Exception {
+        try (ScenarioHost h2 = new ScenarioHost();
+             RestControlServer s2 = new RestControlServer(h2,
+                     RestControlServer.Auth.INSECURE, null)) {
+            int p2 = s2.start(0);
+            var resp = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + p2 + "/api/scenarios")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(503, resp.statusCode());
+        }
+    }
+
+    private static final String VALID_YAML = """
+            name: api-smoke
+            topology:
+              - id: zk
+                contract: registry
+                tier: virtual
+              - id: master
+                contract: scheduler
+                tier: virtual
+                sut: true
+                launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+                config: { dag.tasks: "a" }
+                exposes: [{ contract: scheduler, port: 0 }]
+                wiring:
+                  registry: { node: zk, contract: registry }
+              - id: workers
+                contract: worker
+                tier: virtual
+                count: 1
+                capacity: { slots: 1 }
+                wiring:
+                  registry: { node: zk, contract: registry }
+            behaviors:
+              profiles:
+                default: { duration: 3s, jitter: 0.0, successRate: 1.0 }
+              bindings:
+                - node: workers
+                  profile: default
+            timeline: []
+            assertions:
+              - noTaskLost: { requireAllSuccess: true }
+            """;
+}

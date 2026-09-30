@@ -43,7 +43,8 @@ public final class ScenarioLibrary {
     }
 
     public static boolean validId(String id) {
-        return id != null && !id.isBlank() && ID.matcher(id).matches();
+        return id != null && !id.isBlank() && ID.matcher(id).matches()
+                && !id.startsWith(".") && !id.contains("..");
     }
 
     /** 场景条目。{@code valid=false} 表示文件存在但解析/校验不过（列表不得因此 500）。 */
