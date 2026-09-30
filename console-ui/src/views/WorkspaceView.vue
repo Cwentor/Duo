@@ -6,6 +6,8 @@ import { ScenarioDoc, ScenarioView } from '../model/scenario'
 import CanvasEditor from '../components/CanvasEditor.vue'
 import PropertyPanel from '../components/PropertyPanel.vue'
 import YamlDrawer from '../components/YamlDrawer.vue'
+import InjectPanel from '../components/InjectPanel.vue'
+import ObservePanel from '../components/ObservePanel.vue'
 import { runtime } from '../stores/runtime'
 import { draftKey } from '../components/workspace-logic'
 
@@ -170,7 +172,10 @@ onBeforeUnmount(() => runtime.endPolling())
         :scenario-id="id"
         @select="(nid) => (selectedId = nid)"
       />
+      <InjectPanel v-if="selectedId" :node-id="selectedId" />
+      <aside v-else class="inject-hint"><p>点画布上的节点选择注入目标</p></aside>
     </div>
+    <ObservePanel v-if="mode === 'run'" />
     <div v-if="mode === 'run'" class="drawer-hint">编辑画布请先停止场景（运行态画布是只读投影）</div>
     <details class="drawer">
       <summary>YAML 视图 / 校验</summary>
@@ -195,4 +200,5 @@ onBeforeUnmount(() => runtime.endPolling())
 .down { color: #c0392b; font-size: 12px; }
 .warn { color: #d9a44a; font-size: 12px; }
 .primary { font-weight: bold; }
+.inject-hint { border-left: 1px solid #ccc; width: 260px; padding: 12px; color: #888; font-size: 13px; }
 </style>
