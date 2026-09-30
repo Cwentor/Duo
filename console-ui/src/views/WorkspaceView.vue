@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { ScenarioDoc, ScenarioView } from '../model/scenario'
 import CanvasEditor from '../components/CanvasEditor.vue'
 import PropertyPanel from '../components/PropertyPanel.vue'
 import YamlDrawer from '../components/YamlDrawer.vue'
+import { runtime } from '../stores/runtime'
 import { draftKey } from '../components/workspace-logic'
 
 const route = useRoute()
@@ -17,6 +18,7 @@ const yamlText = ref('')
 const error = ref('')
 const notice = ref('')
 const dirty = ref(false)
+const mode = ref<'edit' | 'run'>('edit')
 const newNode = ref<{ id: string; contract: string; tier: string }>({
   id: '', contract: 'registry', tier: 'virtual',
 })
@@ -92,6 +94,28 @@ function addNode() {
   selectedId.value = nid
   newNode.value = { id: '', contract: 'registry', tier: 'virtual' }
 }
+
+async function startScenario() {
+  if (!doc.value) return
+  notice.value = ''
+  try {
+    if (dirty.value) await save()
+    await runtime.start(doc.value.toString())
+    mode.value = 'run'
+  } catch (e: any) {
+    error.value = `启动失败: ${e?.message ?? e}`
+  }
+}
+
+async function stopScenario() {
+  try {
+    await runtime.stop()
+  } finally {
+    mode.value = 'edit'
+  }
+}
+
+onBeforeUnmount(() => runtime.endPolling())
 </script>
 
 <template>
@@ -99,8 +123,20 @@ function addNode() {
     <header class="toolbar">
       <strong>{{ id }}</strong>
       <span v-if="dirty" class="dirty">未保存</span>
-      <button @click="save">保存</button>
-      <button @click="validate">校验</button>
+      <template v-if="mode === 'edit'">
+        <button @click="save">保存</button>
+        <button @click="validate">校验</button>
+        <button class="primary" @click="startScenario">▶ 启动场景</button>
+      </template>
+      <template v-else>
+        <span class="state">{{ runtime.state }}</span>
+        <button @click="stopScenario">■ 停止</button>
+        <button @click="mode = 'edit'">编辑（停止以编辑）</button>
+      </template>
+      <span :class="runtime.connected ? 'ok' : 'down'">
+        {{ runtime.connected ? '● 已连接' : '● 连接断开' }}
+      </span>
+      <span v-if="runtime.dropped > 0" class="warn">已丢弃 {{ runtime.dropped }} 条事件</span>
       <input v-model="newNode.id" placeholder="新节点 id" class="new-id" />
       <select v-model="newNode.contract">
         <option v-for="c in CONTRACTS" :key="c" :value="c">{{ c }}</option>
@@ -112,7 +148,7 @@ function addNode() {
       <span v-if="notice" class="notice">{{ notice }}</span>
       <span v-if="error" class="error">{{ error }}</span>
     </header>
-    <div class="main">
+    <div v-if="mode === 'edit'" class="main">
       <CanvasEditor
         v-if="view"
         :view="view"
@@ -127,6 +163,15 @@ function addNode() {
         @remove="() => selected && mutate((d) => d.removeNode(selected!.id))"
       />
     </div>
+    <div v-else class="main run">
+      <CanvasEditor
+        v-if="view"
+        :view="view"
+        :scenario-id="id"
+        @select="(nid) => (selectedId = nid)"
+      />
+    </div>
+    <div v-if="mode === 'run'" class="drawer-hint">编辑画布请先停止场景（运行态画布是只读投影）</div>
     <details class="drawer">
       <summary>YAML 视图 / 校验</summary>
       <YamlDrawer :text="yamlText" :readonly="false" @apply="applyYaml" />
@@ -141,7 +186,13 @@ function addNode() {
 .main { display: flex; flex: 1; min-height: 0; }
 .main > :first-child { flex: 1; }
 .drawer { border-top: 1px solid #ccc; max-height: 40vh; display: flex; flex-direction: column; }
+.drawer-hint { padding: 4px 16px; color: #888; font-size: 12px; border-top: 1px dashed #ddd; }
 .dirty { color: #d9a44a; }
 .notice { color: #2e8b57; font-size: 12px; white-space: pre-line; }
 .error { color: #c0392b; font-size: 12px; }
+.state { color: #2e8b57; font-weight: bold; }
+.ok { color: #2e8b57; font-size: 12px; }
+.down { color: #c0392b; font-size: 12px; }
+.warn { color: #d9a44a; font-size: 12px; }
+.primary { font-weight: bold; }
 </style>
