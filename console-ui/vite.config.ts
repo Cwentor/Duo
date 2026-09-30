@@ -25,7 +25,8 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node',
+    // jsdom：session/window 语义（api 客户端 401 跳转、sessionStorage 会话）需要 DOM 环境
+    environment: 'jsdom',
     include: ['src/**/*.test.ts'],
   },
 })
