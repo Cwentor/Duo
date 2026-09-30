@@ -75,6 +75,17 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 `$env:duo.config` 语法**无效**（PS 解析为属性访问），须用
 `[Environment]::GetEnvironmentVariable('duo.config')`。
 
+### 1.4 console-ui 前端（M10 计划二）
+
+- 位置 `console-ui/`；Node 22+ 仅构建期。命令：`npm install`（首次）/ `npm test`（Vitest，jsdom 环境）/
+  `npm run build`（产物 → `duo-sim-control/target/classes/console`，`emptyOutDir`）。
+- **构建顺序**：`npm run build` 必须在 `mvnw` 之前（maven-resources 缺省不覆盖更新的目标文件；
+  `mvnw clean` 后需重新 npm build，否则 serve 出占位页）。
+- dev 模式：`npm run dev`（5173，proxy 到 127.0.0.1:7788 的 serve）。
+- 依赖纪律：新增 npm 依赖与 Java `-Dquality` 门禁天然隔离；但须说明用途，禁止顺手引。
+- 本机 npm 启用了 allow-scripts 安全策略：首次 `npm install` 后需 `npm approve-scripts esbuild`
+  （vite 构建依赖其二进制）。
+
 ---
 
 ## 2. 常用命令

@@ -39,6 +39,19 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      # M10 计划二：console-ui 前端（Node 仅构建期）。先 build 再 mvnw——
+      # maven-resources 缺省不覆盖更新的目标文件，SPA 产物不会被占位页反冲。
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console-ui/package-lock.json
+      - name: console-ui build (SPA into control classpath)
+        working-directory: console-ui
+        run: |
+          npm ci
+          npm test
+          npm run build
       # 无 Docker 档：显式关闭容器档（-Dduo.docker.enabled=false），保证「常规回归零 Docker 依赖」
       # 是**确定**的而不是「恰好这台机器没 Docker」
       - name: mvnw test
