@@ -454,6 +454,30 @@ public final class ScenarioHost implements AutoCloseable {
     }
 
     /**
+     * 手动清除一次热注入（M10 W-API-8）。时间线里带 duration 的动作由 {@code TimelineScheduler}
+     * 到期自动 clear；本方法是 Web 控制台「撤销注入」的控制面通路：薄委托
+     * {@code ScenarioRuntime.clear}（内核已有，零内核改动）。
+     *
+     * <p>不重复记日志——内核在 clear 路径上会发出 {@code sim.fault-cleared} 事实事件，
+     * 因果链由事件流承载（§12）；「场景未运行」由返回值显式携带，不静默。
+     */
+    public ScenarioRuntime.InjectionResult clear(FaultAction action) {
+        if (engine == null || state != State.RUNNING) {
+            return new ScenarioRuntime.InjectionResult(false, "scenario not running");
+        }
+        return engine.runtime().clear(action);
+    }
+
+    /** 事件缓冲丢弃计数（透传 {@code ScenarioEngine.droppedEvents()}，供 /events 暴露给控制台）。 */
+    public long droppedEvents() {
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = engine;
+        }
+        return eng == null ? 0L : eng.droppedEvents();
+    }
+
+    /**
      * 事件流快照（M8 指标层的取数口）。
      *
      * <p>与 {@link #eventsSince(int)} 的区别：这里返回**原始** {@code Event} 列表，
