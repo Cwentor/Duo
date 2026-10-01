@@ -9,7 +9,7 @@
   **M10 完成（2026-10-01）**：Web 控制台两份计划（Java 控制面 + console-ui 前端）均落地，见 §4「M10」；
   全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01 实测；11 条既有 + M9 门控 1 条，
   逐条可解释；此前口径 388/395/397 的订正史见 T7 行与各轮记录）；前端 `console-ui` 另有
-  Vitest **36 测 / 0 失败**（不在 Maven reactor 内）；
+  Vitest **46 测 / 0 失败**（不在 Maven reactor 内）；
   依赖门禁 8 模块零告警（第 11 轮，已进 CI）
 - 唯一保留项：M8 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现）；
   两处**有意不做**并已如实标注：`FrameConnection` 双重分配、对用户 SUT 的强杀（L-3）；
@@ -59,7 +59,7 @@
 | T4 | 行为可控 | ✅ **达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配；**行为模型已由 worker 与 engine 两侧消费（M5 第 4 轮 `VirtualEngine` 复用 `BehaviorResolver`）** | — |
 | T5 | 故障可注入 | ✅ **达成** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；`custom-hook` 已闭环；**`freeze`/`slow`/`resource-exhaust` 已落地（M5 第 4 轮）**：三者幂等且对未声明者显式拒绝 | 「动作 × 档位」成对场景集已在各 Provider 用例中成对落地（G5 已闭合） |
 | T6 | 真实反馈 | ✅ **达成** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档真 ZooKeeper 与真 PostgreSQL（M5 第 4 轮，CI container job 取证 skip=0） | 适配器未做（§17 决策：按需立专项，是非目标而非缺口） |
-| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01 实测：M10 计划一 +24、M9 守卫 1；第 33 轮实测 395〔第 13 轮 388，台账曾误记 406，2026-09-24 复核订正，见审计报告 §7.2(6)〕）；前端 `console-ui` 另有 Vitest 36 测；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
+| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01 实测：M10 计划一 +24、M9 守卫 1；第 33 轮实测 395〔第 13 轮 388，台账曾误记 406，2026-09-24 复核订正，见审计报告 §7.2(6)〕）；前端 `console-ui` 另有 Vitest 46 测；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | ✅ **达成** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；标准 Wrapper + LICENSE + 发布产物 + **依赖门禁（第 11 轮）** + CI 三 job 远端全绿 | — |
 
 **一句话结论（第 13 轮更新）**：**T1–T8 全部达成**，差距清单 **G1–G11 全部闭合**
@@ -406,7 +406,7 @@ components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control �
 | 计划 | 交付物 | 状态 | 取证 |
 | --- | --- | --- | --- |
 | 计划一（Java 控制面，T1–T10） | `ScenarioHost` 补 `clear`/`droppedEvents`；`ScenarioLibrary`（模板只读 + 用户库 CRUD/fork/id 白名单）；`/api/scenarios` 六端点；`/api/capabilities` + `/api/meta`；`/api/inject/clear`；`GET /diagnose`；`/events` 加 `next`/`dropped`；SPA 静态托管（CSP/nosniff）；`duo serve` 场景参数可选（IDLE）+ `--library-dir` | ✅ | 计划 `superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`；终审修复轮 `843f5c7`（I-1 双重编码 id 预检 400 / M-1 错误掩码 / M-6 负 since 400 / M-3 fork 缺省后缀 / M-4 serve 打印库路径）；control 46 测 |
-| 计划二（console-ui 前端，Task 1–11） | `console-ui/` 工程（Vue3+TS+Vite+Vitest）；API 客户端 + 会话 store（sessionStorage，401 回登录且草稿不丢）；三页路由（令牌页/场景库/工作区）；`ScenarioDoc` 模型层（YAML Document 受控编辑，未动子树注释保留）；画布 + 属性面板 + YAML 抽屉双向同步；运行模式（三路轮询 + 退避 + 实例故障推导）；注入面板（能力元数据驱动）+ 观测三 tab（事件流/断言/诊断链）；产物 CSP 兼容校验门；CI regression job 接入 node | ✅ | 计划 `superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`；终审 FIX_REQUIRED（0 Critical / 7 Important）→ 修复轮 `64f1162` → 复审 **CLEAN**（I-1~I-7 全 ADDRESSED，新增破坏 0）；Vitest 36 测 |
+| 计划二（console-ui 前端，Task 1–11） | `console-ui/` 工程（Vue3+TS+Vite+Vitest）；API 客户端 + 会话 store（sessionStorage，401 回登录且草稿不丢）；三页路由（令牌页/场景库/工作区）；`ScenarioDoc` 模型层（YAML Document 受控编辑，未动子树注释保留）；画布 + 属性面板 + YAML 抽屉双向同步；运行模式（三路轮询 + 退避 + 实例故障推导）；注入面板（能力元数据驱动）+ 观测三 tab（事件流/断言/诊断链）；产物 CSP 兼容校验门；CI regression job 接入 node | ✅ | 计划 `superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`；终审 FIX_REQUIRED（0 Critical / 7 Important）→ 修复轮 `64f1162` → 复审 **CLEAN**（I-1~I-7 全 ADDRESSED，新增破坏 0）；Vitest 46 测 |
 
 **验收判据**
 
@@ -416,7 +416,7 @@ components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control �
   事件游标/inject success/事件见 `sim.fault-injected`/诊断 chains=2 gaps=0/stop/删场景）。
 - ✅ **等价判据**：画布改动投影出的 YAML 与手写金标准场景语义等价（`ScenarioDoc` 属性化往返测试）。
 - ✅ **形态判据（G-W5）**：`duo serve` 单命令启动后浏览器全功能可用；全量回归绿（Java 423 +
-  Vitest 36）且 `-Dquality` 8 模块零告警；运行期 Java 依赖零新增。
+  Vitest 46）且 `-Dquality` 8 模块零告警；运行期 Java 依赖零新增。
 
 **规格修订记录（两处，均已回写设计文档）**
 
@@ -449,11 +449,11 @@ save 吞错不阻塞启动、`/workspace/:id` 路由参数变化不重载场景�
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ✅ **第 8 轮完成**（`-Drelease` 产出 8 对 sources/javadoc jar；缺省行为不变；`CHANGELOG.md` + 版本策略） | 已闭环 |
 | 7 | **M8 观测面** | ✅ **第 10 轮完成交付物 1/2/3**（`/metrics` + logback 双档 + `duo diagnose` 因果链；交付物 4「加速时钟评估」触发条件未出现，保持 ⏸ 待触发） | 已落地 |
 | 8 | **M7 质量门禁** | ✅ **第 11 轮完成**（`-Dquality` 依赖门禁收敛到零告警 + 进 CI `regression` job；JaCoCo 评估后决定不引，理由在案） | 已闭环 |
-| 9 | **M10 Web 控制台**（Java 控制面 + console-ui 前端） | ✅ **第 35 轮完成**（推翻 §7「精美 Web 控制台」非目标，D16；两份计划均落地，Java 423 测 + 前端 Vitest 36 测全绿，终审复审 CLEAN） | 已闭环 |
+| 9 | **M10 Web 控制台**（Java 控制面 + console-ui 前端） | ✅ **第 35 轮完成**（推翻 §7「精美 Web 控制台」非目标，D16；两份计划均落地，Java 423 测 + 前端 Vitest 46 测全绿，终审复审 CLEAN） | 已闭环 |
 
 **里程碑判定（第 12 轮收口，第 35 轮复核）**：T1–T8 的达成条件**全部满足**——
 M6 ✅ + M5 交付物 1–6 ✅ + M7（含质量门禁）✅ + M8 交付物 1/2/3 ✅ + M9 Phase A ✅ + M10 ✅。
-全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（第 35 轮实测，无 Docker 档）+ 前端 Vitest 36 测；
+全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（第 35 轮实测，无 Docker 档）+ 前端 Vitest 46 测；
 依赖门禁 **8 模块零告警**（CI `regression` job 每次构建都跑）。
 **结论：「最初的目标」八条已全部可验收。** 唯一保留项是 M8 交付物 4
 （触发条件未出现，属"等输入"而非"待施工"）。
@@ -508,7 +508,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | **T4** 行为可控 | 8 个行为字段全部可从 DSL 生效（含 `logLines`、百分号形态） | ✅ | `BehaviorProfile` 8 字段全集（M1）；`jitter: 20%` / `failAt: 60%` 与 `logLines` 由 `duo-sim-components` 用例覆盖（G7 闭合） |
 | **T5** 故障可注入 | 7 类动作全部有实现与场景级验收；实例级寻址无降级；`custom-hook` 可从 YAML 使用 | ✅ | 7 动作 = `crash`/`restart`/`freeze`/`slow`/`registry-flap`/`resource-exhaust`/`task-kill`，各 Provider 声明 `supportedFaults`，未声明者**显式抛** `UnsupportedOperationException`；`m5-custom-hook-acceptance.yaml` 端到端 |
 | **T6** 真实反馈 | embedded 档以上暴露真实第三方协议端口，SUT 无感知直连；交互型契约暴露 Duo 线协议真实端口 | ✅ | embedded 档真 ZK（Curator）/真 JDBC/真 K8s REST；container 档真 PostgreSQL 与真 ZK 容器（CI `container` job 实测绿） |
-| **T7** 秒级反馈回路 | 单 JVM 运行，容器档之外零 Docker 依赖 | ✅ | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01，M10 后）；前端 Vitest 36 测另计；`-Dduo.docker.enabled=false` 让"无 Docker"成为**确定事实**而非巧合 |
+| **T7** 秒级反馈回路 | 单 JVM 运行，容器档之外零 Docker 依赖 | ✅ | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01，M10 后）；前端 Vitest 46 测另计；`-Dduo.docker.enabled=false` 让"无 Docker"成为**确定事实**而非巧合 |
 | **T8** CI 友好 | JUnit5 扩展 + 断言库，场景文件可进版本库 | ✅ | `duo-sim-junit`（`@VirtualCluster` 扩展 + `DuoAssertions`）；场景 YAML 入版本库；CI 三 job 远端全绿 + **依赖门禁**（第 11 轮） |
 | **工程化** | 标准 Wrapper、LICENSE、发布产物（source/javadoc）、压测产物可追溯、依赖门禁 | ✅ | `mvnw`（3.9.11）+ `LICENSE`（Apache-2.0）+ `-Drelease` 8 对附件 jar + CI `scale` job 上传 artifact + `-Dquality` 依赖门禁（第 11 轮，CI 已接入） |
 
@@ -543,9 +543,10 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 计划一终审修复轮 | `843f5c7`（0 Critical / 1 Important / 8 Minor → 重分级后修复）：I-1 双重编码 id 预检解码 400；M-1 升 Important（`/api/inject/clear` 400 分支补 `sanitizeReason`）；M-6 升 Important（负 `since` 400，游标契约）；M-3/M-4 规格偏差升 Important（fork 缺省 `-copy` 后缀 / `serve` 打印 library 路径） |
 | 计划二（console-ui 前端，Task 1–11） | [`superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md)：Phase A＝脚手架/API 客户端+会话 store/路由三页+令牌页/`ScenarioDoc` 模型层/场景库页/构建接线+CI；Phase B＝工作区编辑模式（画布+属性面板+YAML 抽屉双向同步）/运行模式（三路轮询 store + 退避 + 实例故障推导）/注入面板+观测三 tab/产物 CSP 校验门/端到端冒烟+口径文档。**实施裁决两处**：① `@codemirror/state` 导出名是 `EditorState` 非 `State`；② 实例号在 `sourceId`（`<nodeId>-<index>` 形态）非 payload，`deriveInstanceFaults` 按取证实现 |
 | 计划二终审 + 修复轮 | 终审 verdict **FIX_REQUIRED**（0 Critical / 7 Important / 6 Minor，报告存 `.superpowers/ledger-m10-ui/final-review-report.md`）；修复轮 `64f1162`：I-1 退避死代码（`Promise.all` 三路各自 `.catch` ⇒ `failures` 永不递增 → 连接失败时固定 1s 无限轰打）/I-2 轮询僵尸链（`endPolling` 停不掉在途 tick → 代次防护）/I-3 切节点动作残留/I-4 实例故障灯从未接线/I-5 属性面板误清空/I-6 409 死胡同无「停止并替换」/I-7 `beforeunload` 缺失。**复审 CLEAN——I-1~I-7 全部 ADDRESSED，新增破坏 0**（原评审代理实跑 Vitest 25/25） |
-| **收尾轮补修 I-8**（真实浏览器实测取证） | 注入面板动作清单原按 `contract` 过滤 ⇒ ① `worker/real`（`supportedFaults=∅`）继承 `worker/virtual` 的 4 个动作，注入 `freeze` 实测回 `component does not implement FaultInjectable`；② **生命周期动作 `crash`/`restart` 从不出现**——内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**（`ScenarioValidator` 同口径），实测 `crash workers[2]` → `success:true` 而 UI 无从下达，**使规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)** 精确匹配 + `LIFECYCLE_ACTIONS` 常驻；`needsInstanceIndex` 要求 `instanceControl`；生命周期动作隐藏「撤销注入」；SUT 节点不渲染下拉。测试 3→14 例（RED 10 failed → GREEN 36/36）+ 真 serve/真 SPA 复验（画布见 `⚠ 1/4 实例故障`）。容器档 `restart()` 守卫按设计在实现层、元数据无法表达，有意不在前端硬编码 |
-| 末次验证（本轮） | Java 整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**；`-Dquality` **8 模块零告警**（parent 跳过 pom 项目）；前端 `npm test` **Vitest 36 测 / 0 失败**（8 文件）；`npm run build` + CSP 产物门 **9 文件合规**；计划二 Task 11 的 **11 步端到端冒烟全过** |
-| 文档 | 计划一/计划二两份计划（含规格修订记录）；本文件 §4 新增 M10 小节、§7 非目标加推翻注、§5 节奏表补第 9 行、§10 本条；`DECISIONS` D16 更新为**已兑现**；`docs/README.md` 计划表补 M9/M10 行与快照口径 397→423；`DEVELOPMENT.md` §3.2 分布 420→423 + 前端 25 测另计说明；`ARCHITECTURE.md` §12 控制面端点表补 M10 端点与新增 §12.2 控制台端点族；`CHANGELOG.md`；`README.md`/`README.en.md` 概览表与 T7 行口径 |
+| **收尾轮补修 I-8**（真实浏览器实测取证） | 注入面板动作清单原按 `contract` 过滤 ⇒ ① `worker/real`（`supportedFaults=∅`）继承 `worker/virtual` 的 4 个动作，注入 `freeze` 实测回 `component does not implement FaultInjectable`；② **生命周期动作 `crash`/`restart` 从不出现**——内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**（`ScenarioValidator` 同口径），实测 `crash workers[2]` → `success:true` 而 UI 无从下达，**使规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)** 精确匹配 + `LIFECYCLE_ACTIONS` 常驻；`needsInstanceIndex` 要求 `instanceControl`；SUT 节点不渲染下拉。测试 3→14 例（RED 10 failed → GREEN 36/36）+ 真 serve/真 SPA 复验（画布见 `⚠ 1/4 实例故障`）。容器档 `restart()` 守卫按设计在实现层、元数据无法表达，有意不在前端硬编码 |
+| **独立评审轮 I-9/I-10**（fresh-eyes subagent 审 I-8，verdict FIX_REQUIRED 0C/2I/4M） | 作者自审有盲区，此轮抓到两处真缺陷：**I-9 大小写敏感**——`/api/capabilities` 显式输出小写而 `/topology` 原样回显 YAML、DSL 侧 `Tier.fromYaml` 走 `toUpperCase`（大小写不敏感），故 `tier: Virtual` 是合法场景，`===` 比较令下拉**静默**退化成 `[crash,restart]`（内核照收 freeze/slow/resource-exhaust）＝I-8a 以静默形式复发；**I-10 清除判据错**——`ScenarioRuntime.clear` 不按类型分派、只要求 `FaultInjectable` 并调 `fi.clear(action)`，`VirtualFilestore` 声明 `supportedFaults()={crash}` 且其 `clear()` 显式接受 CRASH（实测 `clear crash` → `success:true`，`sim.filestore-crashed`→`sim.fault-cleared`），按动作名一律隐藏 crash 的清除按钮属相对上一版的**功能倒退**。修复＝`norm()` 归一双方比较 + `isClearable` 改判「档位是否声明此动作」；评审 Minor「能力清单加载失败静默降级」顺手修。测试 14→24 例（RED 6 failed/40 → GREEN **46/46**）+ 混合大小写场景真 serve/真 SPA 复验（`worker/Virtual` 下拉恢复 6 项；fs 选 crash 有清除、选 restart 无）。另 3 条 Minor 按流程 parked（容器档 restart 恒抛＝有意的元数据缺口；`supportedFaults` 尾随顺序随 JVM Set 迭代序；未知档位组合返回生命周期动作，今日不可达） |
+| 末次验证（本轮） | Java 整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**；`-Dquality` **8 模块零告警**（parent 跳过 pom 项目）；前端 `npm test` **Vitest 46 测 / 0 失败**（8 文件）；`npm run build` + CSP 产物门 **9 文件合规**；计划二 Task 11 的 **11 步端到端冒烟全过** |
+| 文档 | 计划一/计划二两份计划（含规格修订记录与收尾轮 I-8/I-9/I-10 补修记录）；本文件 §4 新增 M10 小节、§7 非目标加推翻注、§5 节奏表补第 9 行、§10 本条；`DECISIONS` D16 更新为**已兑现**；`docs/README.md` 计划表补 M9/M10 行与快照口径 397→423；`DEVELOPMENT.md` §3.2 分布 420→423 + 前端测试另计说明；`ARCHITECTURE.md` §12 控制面端点表补 M10 端点与新增 §12.2 控制台端点族；`CHANGELOG.md`；`README.md`/`README.en.md` 概览表与 T7 行口径 |
 
 ### 2026-09-25（第 34 轮）：M9 Phase A——首个真实第三方系统接入（DolphinScheduler 3.4.3）
 

@@ -4,13 +4,13 @@
 - 状态：**已实施完成（2026-10-01）**——Task 1–11 全部落地（脚手架 `c22d018` … 修复轮 `64f1162`），
   终审 FIX_REQUIRED（0 Critical / 7 Important / 6 Minor）→ 修复轮 → 复审 **CLEAN**
   （I-1~I-7 全 ADDRESSED，新增破坏 0）；末次验证 Java 整 reactor
-  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、前端 Vitest **36 测 / 0 失败**、
+  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、前端 Vitest **46 测 / 0 失败**、
   构建产物 CSP 门 9 文件合规、真实 `duo serve` 冒烟 11 步全过。
 - 收尾轮补修（2026-10-01，浏览器实测取证）：**I-8 注入面板动作清单与内核语义不符**——
   原按 `contract` 过滤导致 ① `worker/real` 继承 `worker/virtual` 的 4 个动作（注入必失败）；
   ② 生命周期动作 `crash`/`restart` 从不出现（内核不查 `supportedFaults`），
   使**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)**
-  精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 14 例（RED 10 failed → GREEN 36/36）。
+  精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 24 例（RED 10 failed → GREEN 46/46）。
 - 台账：`.superpowers/ledger-m10-ui/progress.md`（gitignore，不入库——本文状态行即入库留痕）
 - 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
   完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
@@ -67,10 +67,29 @@ Task 9 的动作下拉原实现只按 `contract` 过滤 `supportedFaults`，与�
 /`PostgresContainerStore` 类注释：换宿主端口会让 wire 永久挂起），**无法用 `CapabilityMetadata`
 表达**——保持元数据驱动，失败时 reason 显式回给用户（§12 不静默），不在 SPA 抄第二份档位名单。
 
-验证：`inject-logic.test.ts` 由 3 例扩到 14 例（新增 `availableActions` / `needsInstanceIndex`
-两组），先见 RED（10 failed / 25 passed）后 GREEN **36/36**；另经真实浏览器复验（workers 下拉含
-`crash` → 填实例 3 → 「已下达」→ 事件流见 `sim.fault-injected` + `sim.worker-instance-crashed`
-→ 画布实例故障灯 `⚠ 1/4 实例故障`；master 显示「SUT 节点不可注入」）。
+验证：`inject-logic.test.ts` 由 3 例扩到 24 例（新增 `availableActions` / `needsInstanceIndex` /
+`isClearable` 三组），先见 RED（10 failed / 25 passed）后 GREEN **46/46**；另经真实浏览器复验
+（workers 下拉含 `crash` → 填实例 3 → 「已下达」→ 事件流见 `sim.fault-injected` +
+`sim.worker-instance-crashed` → 画布实例故障灯 `⚠ 1/4 实例故障`；master 显示「SUT 节点不可注入」）。
+
+### I-9 / I-10（独立评审轮，2026-10-01）
+
+I-8 修完后交 fresh-eyes subagent 独立复审（只认源码 + 活体实测，不信提交信息），verdict
+**FIX_REQUIRED（0 Critical / 2 Important / 4 Minor）**——确实抓到两处真缺陷：
+
+| # | 症状 | 实测证据 | 修复 |
+| --- | --- | --- | --- |
+| I-9 | `(contract,tier)` 用 `===` 比较，而两侧大小写口径不同：`/api/capabilities` 显式小写，`/topology` 原样回显 YAML，DSL 侧 `Tier.fromYaml` 走 `toUpperCase`（大小写不敏感） | 场景写 `tier: Virtual`：拓扑回显 `tier=[Virtual]`，下拉**静默**只剩 `[crash,restart]`，而内核照收 `freeze`/`slow`/`resource-exhaust` —— I-8a 以**静默**形式复发（无报错、看着正常） | `norm()`（trim+toLowerCase）归一**双方**后比较 |
+| I-10 | 「撤销注入」按**动作名**一律隐藏 crash/restart，但 `ScenarioRuntime.clear` 不按类型分派、只要求 `FaultInjectable` 并调 `fi.clear(action)`；`VirtualFilestore` 声明 `supportedFaults()={crash}` 且 `clear()` 显式接受 CRASH | 实测 `clear crash` 于 fs → `{"success":true}`，事件 `sim.filestore-crashed` → `sim.fault-cleared`；而上一版（contract 过滤）确实提供该按钮 ⇒ **功能倒退** | `isClearable(type,node,caps)` 改判「该 (contract,tier) 是否声明此动作」；`restart` 无实现声明 ⇒ 恒不可清除 |
+
+顺带修评审 Minor：能力清单加载失败不再静默 `providers=[]`（旧行为会让下拉谎报「只有
+crash/restart」），改为面板显式提示失败原因（§12 不静默）。
+其余 3 条 Minor 按流程 **parked**（容器档 `restart` 恒抛＝有意的元数据缺口、已注释在案；
+`supportedFaults` 尾随顺序随 JVM `Set` 迭代序；未知档位组合返回生命周期动作——今日不可达）。
+
+验证：测试 14→24 例，RED `6 failed / 40 passed` → GREEN **46/46**；以混合大小写场景
+（`tier: Virtual`）真 serve + 真 SPA 复验：`worker/Virtual` 下拉恢复 6 项（I-9）；
+fs 选 `crash` 出现「撤销注入」、选 `restart` 不出现（I-10）。
 
 ---
 
