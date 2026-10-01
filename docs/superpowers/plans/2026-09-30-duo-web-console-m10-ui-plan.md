@@ -4,13 +4,13 @@
 - 状态：**已实施完成（2026-10-01）**——Task 1–11 全部落地（脚手架 `c22d018` … 修复轮 `64f1162`），
   终审 FIX_REQUIRED（0 Critical / 7 Important / 6 Minor）→ 修复轮 → 复审 **CLEAN**
   （I-1~I-7 全 ADDRESSED，新增破坏 0）；末次验证 Java 整 reactor
-  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、前端 Vitest **35 测 / 0 失败**、
+  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、前端 Vitest **36 测 / 0 失败**、
   构建产物 CSP 门 9 文件合规、真实 `duo serve` 冒烟 11 步全过。
 - 收尾轮补修（2026-10-01，浏览器实测取证）：**I-8 注入面板动作清单与内核语义不符**——
   原按 `contract` 过滤导致 ① `worker/real` 继承 `worker/virtual` 的 4 个动作（注入必失败）；
   ② 生命周期动作 `crash`/`restart` 从不出现（内核不查 `supportedFaults`），
   使**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)**
-  精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 13 例（RED 10 failed → GREEN 35/35）。
+  精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 14 例（RED 10 failed → GREEN 36/36）。
 - 台账：`.superpowers/ledger-m10-ui/progress.md`（gitignore，不入库——本文状态行即入库留痕）
 - 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
   完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
@@ -67,8 +67,8 @@ Task 9 的动作下拉原实现只按 `contract` 过滤 `supportedFaults`，与�
 /`PostgresContainerStore` 类注释：换宿主端口会让 wire 永久挂起），**无法用 `CapabilityMetadata`
 表达**——保持元数据驱动，失败时 reason 显式回给用户（§12 不静默），不在 SPA 抄第二份档位名单。
 
-验证：`inject-logic.test.ts` 由 3 例扩到 13 例（新增 `availableActions` / `needsInstanceIndex`
-两组），先见 RED（10 failed / 25 passed）后 GREEN **35/35**；另经真实浏览器复验（workers 下拉含
+验证：`inject-logic.test.ts` 由 3 例扩到 14 例（新增 `availableActions` / `needsInstanceIndex`
+两组），先见 RED（10 failed / 25 passed）后 GREEN **36/36**；另经真实浏览器复验（workers 下拉含
 `crash` → 填实例 3 → 「已下达」→ 事件流见 `sim.fault-injected` + `sim.worker-instance-crashed`
 → 画布实例故障灯 `⚠ 1/4 实例故障`；master 显示「SUT 节点不可注入」）。
 

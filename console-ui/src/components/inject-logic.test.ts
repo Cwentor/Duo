@@ -10,6 +10,10 @@ const CAPS = [
   { contract: 'scheduler', tier: 'virtual', supportedFaults: ['freeze'], instanceControl: false },
   { contract: 'registry', tier: 'virtual', supportedFaults: ['registry-flap'], instanceControl: false },
   { contract: 'registry', tier: 'container', supportedFaults: [], instanceControl: false },
+  // 实测这一行把 `crash` 也声明进了 supportedFaults（与生命周期动作重叠）——去重路径的
+  // 唯一真实夹具，缺了它下面「没有重复 crash」的断言会因为命中「未知 (contract,tier)」
+  // 分支而**因错误的理由通过**。
+  { contract: 'filestore', tier: 'virtual', supportedFaults: ['crash'], instanceControl: false },
 ]
 
 describe('buildFaultAction', () => {
@@ -55,8 +59,15 @@ describe('availableActions', () => {
     expect(availableActions({ contract: 'registry', tier: 'container' }, CAPS)).toEqual(['crash', 'restart'])
   })
 
+  it('filestore/virtual 把 crash 也声明进 supportedFaults 时不出现重复项', () => {
+    const a = availableActions({ contract: 'filestore', tier: 'virtual' }, CAPS)
+    expect(a).toEqual(['crash', 'restart'])
+    expect(a.filter((x) => x === 'crash')).toHaveLength(1)
+  })
+
   it('未知 (contract,tier) 不返回任何档位动作，不误给别的档位', () => {
-    expect(availableActions({ contract: 'filestore', tier: 'virtual' }, CAPS)).toEqual(['crash', 'restart'])
+    // 用一个**夹具里不存在**的组合，确保走的是「无匹配行」分支，而非碰巧命中某行的空 supportedFaults
+    expect(availableActions({ contract: 'message', tier: 'container' }, CAPS)).toEqual(['crash', 'restart'])
   })
 
   it('LIFECYCLE_ACTIONS 即 crash/restart', () => {

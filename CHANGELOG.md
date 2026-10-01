@@ -31,7 +31,7 @@
   观测三 tab＝事件流 live（1s 轮询 + 退避 + 丢弃计数可见）/断言/诊断链）。构建产物直出
   `duo-sim-control/target/classes/console`（`npm run build` 内置 CSP 兼容门：禁内联脚本/外域资源），
   CI regression job 接入 node 构建 + Vitest。端到端冒烟 11 步全过（fork→改→存→启动→注入→
-  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 35 测全绿（含终审
+  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 36 测全绿（含终审
   修复轮 `64f1162`：轮询退避落效/僵尸链代次防护/注入面板切节点刷新/实例故障灯接线/属性面板
   误清空/409「停止并替换」确认/beforeunload 拦截；复审 CLEAN，I-1~I-7 全 ADDRESSED，新增破坏 0）。
   **收尾轮补修 I-8（2026-10-01，真实浏览器实测取证）**：注入面板动作清单原按 `contract` 过滤
@@ -41,7 +41,7 @@
   故下拉里从不出现——**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**
   （实测内核接受 `crash workers[2]` → `success:true` 而 UI 无从下达）。现按 **(contract,tier)**
   精确匹配 + 补常驻生命周期动作；无 `instanceControl` 的档位不再索要实例号；生命周期动作隐藏
-  「撤销注入」；SUT 节点不渲染下拉。`inject-logic.test.ts` 3→13 例（RED 10 failed → GREEN 35/35），
+  「撤销注入」；SUT 节点不渲染下拉。`inject-logic.test.ts` 3→14 例（RED 10 failed → GREEN 36/36），
   并经真 serve + 真 SPA 复验（crash→实例 3→「已下达」→ 事件流见 `sim.fault-injected` +
   `sim.worker-instance-crashed` → 画布 `⚠ 1/4 实例故障`）。容器档 `restart()` 不可用按设计
   下沉实现层守卫、无法用元数据表达，**有意不在前端硬编码**（失败 reason 显式回给用户）。

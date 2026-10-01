@@ -68,7 +68,7 @@
 | M5–M8 收尾 | 见 [`ROADMAP.md`](ROADMAP.md) §4 各阶段交付物与状态表 | M5/M6/M7/M8 均已实施完成并验收（G1–G11 全部闭合；M8 交付物 4 待触发） |
 | M7 依赖门禁基线 | [`plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) | 已落地并进 CI（2026-09-19 第 11 轮），8 模块零告警 |
 | M9 真实第三方接入 | [`plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md`](superpowers/plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md) | Phase A 已实施完成并验收（2026-09-25，v1.4）；Phase B 未启动 |
-| M10 Web 控制台 | 计划一 [`plans/2026-09-30-duo-web-console-m10-java-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md)（Java 控制面，T1–T10）· 计划二 [`plans/2026-09-30-duo-web-console-m10-ui-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md)（console-ui 前端，Task 1–11） | **两份计划均已实施完成**（2026-10-01）：计划一终审修复轮 `843f5c7`、计划二终审修复轮 `64f1162`（复审 CLEAN，I-1~I-7 全 ADDRESSED）；末次验证 Java 423 测 + 前端 Vitest 35 测全绿 |
+| M10 Web 控制台 | 计划一 [`plans/2026-09-30-duo-web-console-m10-java-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md)（Java 控制面，T1–T10）· 计划二 [`plans/2026-09-30-duo-web-console-m10-ui-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md)（console-ui 前端，Task 1–11） | **两份计划均已实施完成**（2026-10-01）：计划一终审修复轮 `843f5c7`、计划二终审修复轮 `64f1162`（复审 CLEAN，I-1~I-7 全 ADDRESSED）；末次验证 Java 423 测 + 前端 Vitest 36 测全绿 |
 
 ### 3.3 验收与复验记录
 
@@ -87,7 +87,7 @@
 
 > **快照语义**：验收记录中的测试合计值（213 / 219 / 221 / 226 / **258** / **263** / **280** / **366** / **388** …）都是**对应提交那一代**的实测数，
 > 不是可复算到任意 HEAD 的不变量。当前 HEAD 的实测值（**423 测 / 0 失败 / 0 错误 / 12 skip**，2026-10-01 实测，含 M10 计划一）见 [`../README.md`](../README.md) 顶部，
-> 逐模块分布见 [`DEVELOPMENT.md`](DEVELOPMENT.md) §3.2；前端 `console-ui` 另有 Vitest 35 测（不在 Maven reactor 内，见 §1.4）。
+> 逐模块分布见 [`DEVELOPMENT.md`](DEVELOPMENT.md) §3.2；前端 `console-ui` 另有 Vitest 36 测（不在 Maven reactor 内，见 §1.4）。
 
 ## 4. 文档维护约定
 

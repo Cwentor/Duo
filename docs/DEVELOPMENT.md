@@ -176,7 +176,7 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 | `duo-sim-examples` | 54 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻。M10 计划一 +2：CLI serve 可选场景/help 文案） |
 | **合计（reactor 内 8 模块）** | **423** | **12** |
 
-> **前端测试另计**：`console-ui` 的 Vitest **35 测 / 0 失败**（8 文件；不在上表——上表只统计 Maven reactor
+> **前端测试另计**：`console-ui` 的 Vitest **36 测 / 0 失败**（8 文件；不在上表——上表只统计 Maven reactor
 > 内的 8 个 Java 模块）。命令见 §1.4；CI `regression` job 在 `mvnw` 之前先跑 `npm ci && npm test && npm run build`。
 
 > **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
