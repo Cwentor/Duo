@@ -121,15 +121,15 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 | [`duo-sim-components`](duo-sim-components/README.md) | virtual 档组件：`VirtualWorker`（内嵌 TaskStub 行为模型）、`VirtualRegistry`、`VirtualScheduler`、`VirtualEngine`、`VirtualFilestore`、`VirtualMessageBroker`、`VirtualResourceManager` | `VirtualWorker` `VirtualRegistry` `VirtualScheduler` `VirtualEngine` `BehaviorProfile` `BehaviorResolver` |
 | [`duo-sim-embedded`](duo-sim-embedded/README.md) | embedded/container 档：Curator TestingServer、H2、Fabric8 K8s Mock、Testcontainers ZK/PostgreSQL | `CuratorRegistry` `H2Store` `PostgresContainerStore` `Fabric8K8sMock` `ZookeeperContainerRegistry` |
 | [`duo-sim-junit`](duo-sim-junit/README.md) | JUnit5 扩展 `@VirtualCluster` + 编程式断言 `DuoAssertions` | `VirtualCluster` `VirtualClusterExtension` `DuoAssertions` |
-| [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI 控制面（热注入、状态、事件、断言、拓扑） | `ScenarioHost` `RestControlServer` `DuoCli` |
-| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、**worker 侧真实 SUT `RealWorkerSut`**（注册/心跳/领取执行回报/断连自愈）、金标准场景与全部验收测试 | `DemoScheduler` `DemoRealWorker` `RealWorkerSut` |
+| [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI 控制面（热注入、状态、事件、断言、拓扑、指标、诊断链）＋ **M10 Web 控制台后端**（`/api/**` 场景库与能力元数据、`/console/**` SPA 托管） | `ScenarioHost` `RestControlServer` `DuoCli` `ScenarioLibrary` `MetricsCollector` `FaultDiagnostics` |
+| [`duo-sim-examples`](duo-sim-examples/README.md) | 参考 SUT `demo-scheduler`、`demo real worker`、**worker 侧真实 SUT `RealWorkerSut`**（注册/心跳/领取执行回报/断连自愈）、金标准场景与跨模块验收测试 | `DemoScheduler` `DemoRealWorker` `RealWorkerSut` |
 
 模块依赖方向（**无环**）：
 
 ```
 protocol ← components / examples
 kernel   ← scenario / junit / control / embedded / components
-examples ← 聚合全部（junit / control 的集成测试落在 examples，避免模块循环依赖）
+examples ← 聚合全部（junit 的集成测试落在 examples，避免模块循环依赖）
 ```
 
 > 测试归属口径：`duo-sim-control` 的契约测试（`ScenarioHostTest` / `RestControlServerTest`）在**本模块**
@@ -300,8 +300,10 @@ class MyScenarioTest {
 
 > `scheduler` 两档共用同一套 DAG/重试/失败转移实现：`SchedulerStateMachine` 与 `DispatchSelector` 位于
 > `duo-sim-components`（M5 第 4 轮由 `duo-sim-examples` 迁入，18 条测试随实现迁移）。
-> 故障动作支持矩阵：`freeze` = worker + engine + scheduler；`slow` = worker + engine；
-> `resource-exhaust` = worker + engine + resource（见 [架构说明](docs/ARCHITECTURE.md) §5.4）。
+> 故障动作支持矩阵：`freeze` = worker + engine + scheduler + message；`slow` = worker + engine；
+> `resource-exhaust` = worker + engine + resource。`crash` 是生命周期动作，对任意可 `stop(CRASH)`
+> 的组件都可用；`VirtualFilestore` 声明 `supportedFaults={crash}` 表达的是**另一条语义**——挂载丢失
+> （见 [架构说明](docs/ARCHITECTURE.md) §5.4）。
 
 **换档矩阵**（同一条链路，谁是 SUT 可以换）：
 

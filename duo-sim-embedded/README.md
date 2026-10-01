@@ -4,7 +4,7 @@
 
 - 依赖：`duo-sim-kernel`、`curator-framework`/`curator-test`、`h2`、`kubernetes-server-mock`（Fabric8）、`testcontainers`、
   `testcontainers-postgresql` + `org.postgresql:postgresql`
-- 测试：55 条，其中 **10 条容器档用例在无 Docker 时按设计 skip**（4 条 ZookeeperContainer + 6 条 PostgresContainer；`.\mvnw -o -pl duo-sim-embedded -am test`）；`-Dduo.docker.enabled=false` 可**确定性**关闭容器档（CI regression job 用）
+- 测试：57 条，其中 **10 条容器档用例在无 Docker 时按设计 skip**（4 条 ZookeeperContainer + 6 条 PostgresContainer；`.\mvnw -o -pl duo-sim-embedded -am test`）；`-Dduo.docker.enabled=false` 可**确定性**关闭容器档（CI regression job 用）。2026-10-01 实测
 - SPI 注册：`CuratorRegistryProvider`、`H2StoreProvider`、`Fabric8K8sMockProvider`、`ZookeeperContainerProvider`、`PostgresContainerStoreProvider`
 
 ## 实现
@@ -39,8 +39,8 @@
 
 ## 门控
 
-容器档用例标 `@EnabledIf(dockerAvailable)`；同时有 **15 条不标门控**的守卫用例
-（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 10）
+容器档用例标 `@EnabledIf(dockerAvailable)`；同时有 **16 条不标门控**的守卫用例
+（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 11）
 离线验证「不支持＝显式拒绝」这一安全属性——**安全属性不能只被门控覆盖**（M4 独立验收教训）。
 
 → [架构说明 · 双面实现](../docs/ARCHITECTURE.md#53-双面实现third_party--interfacedirecttrue-并存) · [开发指南 · 依赖纪律](../docs/DEVELOPMENT.md#5-模块依赖纪律)

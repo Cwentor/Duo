@@ -3,7 +3,7 @@
 **virtual 档组件库**：进程内状态机与 Duo 协议组件。
 
 - 依赖：`duo-sim-kernel`、`duo-sim-protocol`
-- 测试：111 条（`./mvnw -o -pl duo-sim-components -am test`），含由 `examples` 迁入的调度状态机 18 条
+- 测试：120 条（`./mvnw -o -pl duo-sim-components -am test`；2026-10-01 实测），含由 `examples` 迁入的调度状态机 18 条
 - SPI 注册（`META-INF/services/io.duo.sim.kernel.spi.ComponentProvider`）：
   `VirtualRegistryProvider`、`VirtualWorkerProvider`、`VirtualSchedulerProvider`、`VirtualEngineProvider`、
   `VirtualFilestoreProvider`、`VirtualMessageBrokerProvider`、`VirtualResourceProvider`
@@ -16,8 +16,8 @@
 | `VirtualWorker` | `worker` / `virtual` | `DUO_PORT` + `instanceControl` + `task-kill`/`freeze`/`slow`/`resource-exhaust` | 每实例一个虚拟线程；心跳/槽位/任务收发；内嵌 `TaskStub` 行为模型；`task-kill` 终止在途任务并立即回报 `CANCELLED`；**满载派发显式拒绝**（`TaskStatus.REJECTED` + `sim.worker-task-rejected`，不得静默丢弃——G9）；槽位计数原子化，受理/拒绝后立即上报槽位 |
 | `VirtualScheduler` | `scheduler` / `virtual` | `DUO_PORT` + `freeze` | 与 real 档 `DemoScheduler` **同源**（共用 `SchedulerStateMachine`/`DispatchSelector`）：DAG 依赖、重试、失败转移；发布 `sut.scheduler-started`/`sut.task-*`/`sut.failover` 等调度事实（**无选主语义**）；把自身端点注册为 registry 的 `"scheduler"` 端点，优雅停止时删除 `/duo/endpoints/scheduler`。**必须有一条 DIRECT registry 接线**（缺绑定＝启动期显式失败） |
 | `VirtualEngine` | `engine` / `virtual` | `DUO_PORT` + `freeze`/`slow`/`resource-exhaust` | DUO_PORT **服务端**：首帧必须 `TaskDispatch`，其后 `TaskCancel`；另有进程内 `EngineContract.submit(taskName, cpu, memGB)` 直连路径；拒绝原因按序显式给出 `resource exhausted` → `engine frozen` → `no free slot`；`capacity.slots` 缺省＝`capacity.cpu`；复用共享 `BehaviorResolver`/`BehaviorProfile` |
-| `VirtualFilestore` | `filestore` / `virtual` | `FS_PATH` + `interfaceDirect` | 自持临时根目录（或 `filestore.root`）；`resolve()` 拒绝 `../` 逃逸；读/删不存在的文件**显式失败**（`UncheckedIOException`，cause 为 `NoSuchFileException`）；`supportedFaults` 为空 |
-| `VirtualMessageBroker` | `message` / `virtual` | `NONE` + `interfaceDirect` | 每主题 FIFO：`publish`/`drain`/`depth`/`subscribe`（**只读观察**）/`topics()`；超过 `message.maxDepthPerTopic`（缺省 10000）显式抛 `ComponentException`；`supportedFaults` 为空 |
+| `VirtualFilestore` | `filestore` / `virtual` | `FS_PATH` + `interfaceDirect` + `crash` | 自持临时根目录（或 `filestore.root`）；`resolve()` 拒绝 `../` 逃逸；读/删不存在的文件**显式失败**（`UncheckedIOException`，cause 为 `NoSuchFileException`）；`crash`＝**挂载丢失**（读写显式失败、`health()` DOWN、数据仍在盘上），`clear` 后 `sim.filestore-mount-restored`（M5 交付物 6） |
+| `VirtualMessageBroker` | `message` / `virtual` | `NONE` + `interfaceDirect` + `freeze` | 每主题 FIFO：`publish`/`drain`/`depth`/`subscribe`（**只读观察**）/`topics()`；超过 `message.maxDepthPerTopic`（缺省 10000）显式抛 `ComponentException`；`freeze`＝冻结期 `publish` 显式拒绝（`message broker frozen`）、存量消息不丢、只影响写路径，`clear` 后 `sim.message-resumed`（M5 交付物 6） |
 | `VirtualResourceManager` | `resource` / `virtual` | `NONE` + `interfaceDirect` + `resource-exhaust` | 配额分配器；不足时报 `insufficient resource: requested ... remaining ...`；注入耗尽后对外可见配额为 0 并拒绝分配，注入/清除幂等 |
 
 > M5 第 4 轮故障动作（`VirtualWorker`/`VirtualEngine` 上实现，`freeze` 另在 `VirtualScheduler`、

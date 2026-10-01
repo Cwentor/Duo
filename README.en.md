@@ -130,15 +130,15 @@ pitfalls). Module READMEs are maintained in Chinese:
 | [`duo-sim-components`](duo-sim-components/README.md) | virtual-tier components: `VirtualWorker` (embedded TaskStub behavior model), `VirtualRegistry`, `VirtualScheduler`, `VirtualEngine`, `VirtualFilestore`, `VirtualMessageBroker`, `VirtualResourceManager` | `VirtualWorker` `VirtualRegistry` `VirtualScheduler` `VirtualEngine` `BehaviorProfile` `BehaviorResolver` |
 | [`duo-sim-embedded`](duo-sim-embedded/README.md) | embedded/container tiers: Curator TestingServer, H2, Fabric8 K8s Mock, Testcontainers ZK/PostgreSQL | `CuratorRegistry` `H2Store` `PostgresContainerStore` `Fabric8K8sMock` `ZookeeperContainerRegistry` |
 | [`duo-sim-junit`](duo-sim-junit/README.md) | JUnit 5 extension `@VirtualCluster` + programmatic assertions `DuoAssertions` | `VirtualCluster` `VirtualClusterExtension` `DuoAssertions` |
-| [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI control plane (hot inject, status, events, assertions, topology) | `ScenarioHost` `RestControlServer` `DuoCli` |
-| [`duo-sim-examples`](duo-sim-examples/README.md) | reference SUT `demo-scheduler`, `demo real worker`, **worker-side real SUT `RealWorkerSut`** (register/heartbeat/claim/report + disconnect self-healing), gold-standard scenarios and all acceptance tests | `DemoScheduler` `DemoRealWorker` `RealWorkerSut` |
+| [`duo-sim-control`](duo-sim-control/README.md) | REST + CLI control plane (hot inject, status, events, assertions, topology, metrics, diagnostic chain) + **M10 Web-console backend** (`/api/**` scenario library and capability metadata, `/console/**` SPA hosting) | `ScenarioHost` `RestControlServer` `DuoCli` `ScenarioLibrary` `MetricsCollector` `FaultDiagnostics` |
+| [`duo-sim-examples`](duo-sim-examples/README.md) | reference SUT `demo-scheduler`, `demo real worker`, **worker-side real SUT `RealWorkerSut`** (register/heartbeat/claim/report + disconnect self-healing), gold-standard scenarios and cross-module acceptance tests | `DemoScheduler` `DemoRealWorker` `RealWorkerSut` |
 
 Module dependency direction (**acyclic**):
 
 ```
 protocol ← components / examples
 kernel   ← scenario / junit / control / embedded / components
-examples ← aggregates everything (junit / control integration tests live in examples, avoiding module cycles)
+examples ← aggregates everything (junit integration tests live in examples, avoiding module cycles)
 ```
 
 > **Test-ownership convention**: `duo-sim-control`'s contract tests (`ScenarioHostTest` /
@@ -326,7 +326,9 @@ class MyScenarioTest {
 > Both scheduler tiers share one DAG/retry/failover implementation: `SchedulerStateMachine` and
 > `DispatchSelector` live in `duo-sim-components` (moved there from `duo-sim-examples` in M5
 > round 4, with 18 tests migrating alongside). Fault-action support matrix: `freeze` = worker +
-> engine + scheduler; `slow` = worker + engine; `resource-exhaust` = worker + engine + resource
+> engine + scheduler + message; `slow` = worker + engine; `resource-exhaust` = worker + engine +
+> resource. `crash` is a lifecycle action, available on any component that can `stop(CRASH)`;
+> `VirtualFilestore` declaring `supportedFaults={crash}` means a *different* semantic — mount lost
 > (see [Architecture](docs/ARCHITECTURE.md) §5.4).
 
 **Tier-swap matrix** (same pipeline; who plays the SUT can change):

@@ -182,11 +182,11 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 > **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
 > `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试
 > 不在自己模块里，所以 366 + 25 = 391"的换算——那段**已经过时且是错的**：`ScenarioHostTest`
-> 与 `RestControlServerTest` 第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（10）
+> 与 `RestControlServerTest` 第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（15）
 > 留在 examples（它编排 `DemoScheduler` 场景，与示例强耦合）。三段合计仍然对得上，
 > 但**归属已经清楚**，无需再叠加口径；上表直接就是全量数字。
 >
-> ⚠️ **注意 `duo-sim-examples` 的 1 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
+> ⚠️ **注意 `duo-sim-examples` 的 2 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
 > 带两个档（`scale-1k.yaml` / `scale-10k.yaml`），`@EnabledIfSystemProperty(duo.scale=true)`
 > 关闭时 JUnit 计 **1** 条 skip 而不是 2 条（参数化整体被禁用）。所以"skip=1"说的是
 > "压测门控关着"，不是"只跳了一个档"。M9 的 `DsFailoverAcceptanceTest` 同为
@@ -314,7 +314,7 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
-| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 15 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 10）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
+| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 16 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 11）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
 | 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
 | **依赖门禁** | `-Dquality` 激活 `dependency:analyze-only`（绑 `verify`），`failOnWarning=true`——**新增一条"未声明/未使用"告警即构建失败**；缺省不激活 ⇒ 常规回归零开销 | M7 交付物 4（第 11 轮）；基线取证见 [`superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) |

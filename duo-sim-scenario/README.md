@@ -3,7 +3,7 @@
 **场景层**：YAML 解析与校验（规则 1–8）、场景编排与生命周期、时间线故障注入、事件录制、自定义钩子。
 
 - 依赖：`duo-sim-kernel`、`snakeyaml`、`jackson-databind`
-- 测试：47 条（`.\mvnw -o -pl duo-sim-scenario -am test`）
+- 测试：55 条（`.\mvnw -o -pl duo-sim-scenario -am test`；2026-10-01 实测）
 
 ## 关键类
 

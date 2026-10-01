@@ -3,7 +3,7 @@
 **仿真内核**：SPI、契约注册表与能力元数据、组件管理器、实例寻址、事件总线、wiring 接线、SUT 适配面、断言内核。
 
 - 依赖：**零第三方依赖**（`pom.xml` 无 `<dependencies>`）——内核必须能独立演进
-- 测试：76 条（`.\mvnw -o -pl duo-sim-kernel -am test`）
+- 测试：79 条（`.\mvnw -o -pl duo-sim-kernel -am test`；2026-10-01 实测）
 
 ## 包结构
 
