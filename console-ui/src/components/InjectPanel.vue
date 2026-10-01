@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue'
 import { api, CapabilityRow } from '../api/client'
 import { runtime } from '../stores/runtime'
-import { buildFaultAction, COMPONENT_SCOPED } from './inject-logic'
+import {
+  availableActions, buildFaultAction, needsInstanceIndex, isClearable, COMPONENT_SCOPED,
+} from './inject-logic'
 
 const props = defineProps<{ nodeId: string }>()
 
@@ -12,7 +14,7 @@ const instance = ref<number | null>(null)
 const result = ref('')
 const providers = ref<CapabilityRow[]>([])
 
-// 能力清单全量拉一次，按**当前选中节点**的契约实时过滤——切节点下拉即时跟随（终审 I-3）
+// 能力清单全量拉一次，按**当前选中节点的 (contract,tier)** 实时过滤——切节点下拉即时跟随（终审 I-3）
 async function loadCapabilities() {
   try {
     providers.value = (await api.capabilities()).providers
@@ -22,13 +24,29 @@ async function loadCapabilities() {
 }
 loadCapabilities()
 
-const actions = computed(() =>
-  providers.value
-    .filter((p) => p.contract === nodeContract() && p.supportedFaults.length > 0)
-    .flatMap((p) => p.supportedFaults))
+// 终审发现（2026-10-01）：原实现只按 contract 过滤 ⇒ ① worker/real 继承 worker/virtual
+// 的 4 个动作，注入必失败（实测 freeze → "component does not implement FaultInjectable"）；
+// ② crash/restart 是生命周期动作、不依赖 supportedFaults，因而从不出现 ⇒ G-W2 冒烟
+// 第 5 步「注入 crash」在 UI 上根本无路可走。现按 (contract,tier) 精确匹配 + 补生命周期动作。
+const actions = computed(() => {
+  const n = node.value
+  if (!n) return []
+  return availableActions({ contract: n.contract, tier: n.tier, sut: n.sut }, providers.value)
+})
 
-function nodeContract(): string {
-  return node.value?.contract ?? ''
+// 是否向用户索要实例号：仅当该档位组件实现 InstanceControl 且动作非组件级
+const askInstance = computed(() => {
+  const n = node.value
+  if (!n) return false
+  const ic = providers.value.some((p) => p.contract === n.contract && p.tier === n.tier
+    && p.instanceControl)
+  return needsInstanceIndex(action.value, ic)
+})
+
+// 动作切换时重置实例号，避免带着上一个动作的残留值提交（终审 I-3 同族问题）
+function onActionChange() {
+  instance.value = null
+  result.value = ''
 }
 
 async function inject() {
@@ -59,20 +77,23 @@ async function clear() {
     <h3>注入 · {{ nodeId }}</h3>
     <p v-if="node" class="meta">{{ node.contract }} / {{ node.tier }}
       <span v-if="node.healthy === false" class="warn">（组件异常）</span></p>
-    <label>动作
-      <select v-model="action">
-        <option v-for="a in actions" :key="a" :value="a">
-          {{ a }}{{ COMPONENT_SCOPED.has(a) ? '（组件级）' : '' }}
-        </option>
-      </select>
-    </label>
-    <label v-if="action && !COMPONENT_SCOPED.has(action)">实例号（1 起）
-      <input type="number" min="1" v-model.number="instance" />
-    </label>
-    <div>
-      <button :disabled="!action" @click="inject">⚡ 立即注入</button>
-      <button :disabled="!action" @click="clear">撤销注入</button>
-    </div>
+    <p v-if="node?.sut" class="warn">SUT 节点不可注入（§7.2）</p>
+    <template v-else>
+      <label>动作
+        <select v-model="action" @change="onActionChange">
+          <option v-for="a in actions" :key="a" :value="a">
+            {{ a }}{{ COMPONENT_SCOPED.has(a) ? '（组件级）' : '' }}
+          </option>
+        </select>
+      </label>
+      <label v-if="askInstance">实例号（1 起）
+        <input type="number" min="1" v-model.number="instance" />
+      </label>
+      <div>
+        <button :disabled="!action" @click="inject">⚡ 立即注入</button>
+        <button v-if="action && isClearable(action)" :disabled="!action" @click="clear">撤销注入</button>
+      </div>
+    </template>
     <p v-if="result">{{ result }}</p>
   </aside>
 </template>
