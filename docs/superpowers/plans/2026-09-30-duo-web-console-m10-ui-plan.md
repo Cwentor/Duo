@@ -1,5 +1,20 @@
 # Duo Web 控制台 M10 · 计划二：console-ui 前端 实施计划
 
+- 日期：2026-09-30（**实施完成 2026-10-01**）
+- 状态：**已实施完成（2026-10-01）**——Task 1–11 全部落地（脚手架 `c22d018` … 修复轮 `64f1162`），
+  终审 FIX_REQUIRED（0 Critical / 7 Important / 6 Minor）→ 修复轮 → 复审 **CLEAN**
+  （I-1~I-7 全 ADDRESSED，新增破坏 0）；末次验证 Java 整 reactor
+  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、前端 Vitest **35 测 / 0 失败**、
+  构建产物 CSP 门 9 文件合规、真实 `duo serve` 冒烟 11 步全过。
+- 收尾轮补修（2026-10-01，浏览器实测取证）：**I-8 注入面板动作清单与内核语义不符**——
+  原按 `contract` 过滤导致 ① `worker/real` 继承 `worker/virtual` 的 4 个动作（注入必失败）；
+  ② 生命周期动作 `crash`/`restart` 从不出现（内核不查 `supportedFaults`），
+  使**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)**
+  精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 13 例（RED 10 failed → GREEN 35/35）。
+- 台账：`.superpowers/ledger-m10-ui/progress.md`（gitignore，不入库——本文状态行即入库留痕）
+- 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
+  完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
+
 > 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [ ]` 勾选跟踪。
 > 前置：计划一（Java 控制面）已落地（dev 分支 `843f5c7`，423 测全绿）——所有前端消费的 HTTP 契约已存在并被契约测试钉住。
 
@@ -34,6 +49,28 @@
 ## 规格修订记录（本计划与规格的唯一偏差）
 
 - **§11 E2E**：规格承诺「Playwright 一条金标准冒烟链」。实施裁决：**不引 Playwright**（浏览器下载 ~150MB、CI 复杂度，对一条冒烟不成比例），改为「构建产物 + serve 真实冒烟清单（手动执行，Task 11）」——与计划一 Task 10 的 E2E 冒烟同型。规格 §11 已同步加注。
+
+## 收尾轮补修（2026-10-01，浏览器实测取证 —— 非规格偏差，是实现缺陷）
+
+Task 9 的动作下拉原实现只按 `contract` 过滤 `supportedFaults`，与内核真实语义不符，两处后果
+均由真 serve + 真 SPA 实测钉住：
+
+| # | 症状 | 实测证据 | 修复 |
+| --- | --- | --- | --- |
+| I-8a | 按 `contract` 过滤 ⇒ 同一契约不同档位能力串味 | `worker/real` 的 `supportedFaults=∅`，面板却继承了 `worker/virtual` 的 4 个动作；对非 SUT 的 real worker 注入 `freeze` 回 `{"success":false,"reason":"dispatch threw: component does not implement FaultInjectable: freeze"}`（`ScenarioRuntime.dispatch` default 分支要求实现 FaultInjectable） | 改按 **(contract,tier)** 精确匹配 |
+| I-8b | 只看 `supportedFaults` ⇒ 生命周期动作从不出现 | `crash`/`restart` 走 `ScenarioRuntime.dispatch` 的 `stop/restart(StopMode.CRASH)` 分支、**不查 supportedFaults**（`ScenarioValidator` 同口径 `!lifecycle && !supportedFaults.contains(...)`）；实测 `crash workers[2]` → `{"success":true}`，但下拉里**没有 crash**——**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走** | 补 `LIFECYCLE_ACTIONS`（crash/restart）常驻非 SUT 节点 |
+| I-8c | 无 `instanceControl` 的档位仍索要实例号 | `ScenarioRuntime.asInstanceControl` 对未实现者抛 `no instance control` | `needsInstanceIndex(type, instanceControl)` 要求二者同时成立 |
+| I-8d | 生命周期动作也给了「撤销注入」 | `ScenarioRuntime.clear` 只对 FaultInjectable 有效；该文件注释明言生命周期「不可清除」 | `isClearable` 对 crash/restart 隐藏按钮 |
+| I-8e | SUT 节点仍渲染动作下拉 | `precheck` 先拦 `target must not be SUT`（§7.2） | SUT 节点显示说明、不渲染下拉 |
+
+**有意不硬编码**：容器档 `restart()` 不可用这一事实按设计下沉在实现层守卫（`ZookeeperContainerRegistry`
+/`PostgresContainerStore` 类注释：换宿主端口会让 wire 永久挂起），**无法用 `CapabilityMetadata`
+表达**——保持元数据驱动，失败时 reason 显式回给用户（§12 不静默），不在 SPA 抄第二份档位名单。
+
+验证：`inject-logic.test.ts` 由 3 例扩到 13 例（新增 `availableActions` / `needsInstanceIndex`
+两组），先见 RED（10 failed / 25 passed）后 GREEN **35/35**；另经真实浏览器复验（workers 下拉含
+`crash` → 填实例 3 → 「已下达」→ 事件流见 `sim.fault-injected` + `sim.worker-instance-crashed`
+→ 画布实例故障灯 `⚠ 1/4 实例故障`；master 显示「SUT 节点不可注入」）。
 
 ---
 
@@ -1808,6 +1845,14 @@ async function clear() {
 ```
 
 （`faults`/`nodeContract` 的契约来源也可以由父组件传入 `TopologyNode`——执行者以最小改动为准，但**能力下拉必须来自 `/api/capabilities`**，不许写死动作清单。）
+
+> ⚠️ **上面这段 `InjectPanel.vue` 伪码的实现有缺陷，交付以 `inject-logic.ts` 的
+> `availableActions(node, caps)` 为准**（详见文首「收尾轮补修 I-8a~I-8e」）：
+> `.filter(p => p.contract === nodeContract())` **只按契约过滤**，后果① `worker/real`
+> （`supportedFaults=∅`）会继承 `worker/virtual` 的 4 个动作，注入实测失败；
+> 后果② `crash`/`restart` 是生命周期动作、内核 `dispatch` **不查 `supportedFaults`**，
+> 因而从不出现——**G-W2 门槛判据第 5 步「注入 crash」在 UI 上无路可走**。
+> 正确做法＝按 `(contract, tier)` 精确匹配，并把 `LIFECYCLE_ACTIONS` 常驻非 SUT 节点。
 
 `console-ui/src/components/ObservePanel.vue`：
 

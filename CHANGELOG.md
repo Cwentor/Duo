@@ -31,7 +31,20 @@
   观测三 tab＝事件流 live（1s 轮询 + 退避 + 丢弃计数可见）/断言/诊断链）。构建产物直出
   `duo-sim-control/target/classes/console`（`npm run build` 内置 CSP 兼容门：禁内联脚本/外域资源），
   CI regression job 接入 node 构建 + Vitest。端到端冒烟 11 步全过（fork→改→存→启动→注入→
-  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 24 测全绿。
+  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 35 测全绿（含终审
+  修复轮 `64f1162`：轮询退避落效/僵尸链代次防护/注入面板切节点刷新/实例故障灯接线/属性面板
+  误清空/409「停止并替换」确认/beforeunload 拦截；复审 CLEAN，I-1~I-7 全 ADDRESSED，新增破坏 0）。
+  **收尾轮补修 I-8（2026-10-01，真实浏览器实测取证）**：注入面板动作清单原按 `contract` 过滤
+  ⇒ ① `worker/real`（`supportedFaults=∅`）继承 `worker/virtual` 的 4 个动作，注入
+  `freeze` 回 `component does not implement FaultInjectable`；② `crash`/`restart` 是**生命周期
+  动作**，内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**，
+  故下拉里从不出现——**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**
+  （实测内核接受 `crash workers[2]` → `success:true` 而 UI 无从下达）。现按 **(contract,tier)**
+  精确匹配 + 补常驻生命周期动作；无 `instanceControl` 的档位不再索要实例号；生命周期动作隐藏
+  「撤销注入」；SUT 节点不渲染下拉。`inject-logic.test.ts` 3→13 例（RED 10 failed → GREEN 35/35），
+  并经真 serve + 真 SPA 复验（crash→实例 3→「已下达」→ 事件流见 `sim.fault-injected` +
+  `sim.worker-instance-crashed` → 画布 `⚠ 1/4 实例故障`）。容器档 `restart()` 不可用按设计
+  下沉实现层守卫、无法用元数据表达，**有意不在前端硬编码**（失败 reason 显式回给用户）。
 - **M10 计划一：Web 控制台 Java 控制面（D16，2026-10-01）**：`duo serve` 场景参数改为**可选**
   （无参数＝IDLE 态启动，浏览器打开 `http://127.0.0.1:<port>/` 即控制台入口）+ `--library-dir`
   场景库目录（缺省 `./duo-console-library`）。新端点族（全部过既有 Bearer/回环校验管道）：
@@ -43,8 +56,9 @@
   （`/console/**`，CSP `default-src 'self'` + nosniff，穿越显式拒绝）。**顺手修复**：
   `respond()` 对不可序列化响应体原会静默吞掉异常 ⇒ 客户端挂死，现显式回 500。
   设计文档 `docs/superpowers/specs/2026-09-30-duo-web-console-design.md`；计划一
-  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+23 测，全量 420 全绿）；
-  计划二（console-ui 前端）待启动。内核/场景/组件模块零改动。
+  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+24 测，全量 423 全绿）；
+  计划二 `docs/superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`（console-ui 前端，
+  见上条）。内核/场景/组件模块零改动。
 
 - **M9 Phase A：首个真实第三方系统接入（DolphinScheduler 3.4.3，第 34 轮）**：DS standalone 以
   external SUT 形态接入，registry 由缺省 jdbc 翻转到 Duo 的 embedded 真 ZK（CuratorRegistry），

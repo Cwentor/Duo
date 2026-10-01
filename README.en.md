@@ -29,15 +29,15 @@
 | --- | --- |
 | Version | `0.1.0-SNAPSHOT` (`io.duo:duo-sim-parent`) |
 | Tech stack | Java 21 (LTS) · Maven multi-module · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
-| Stage status | **M0–M8 all implemented and accepted; gap list G1–G11 fully closed** (the only registered exception: M8 deliverable 4, "accelerated-clock evaluation", still awaiting its trigger condition); **M9 Phase A complete (2026-09-25): the first real third-party system, DolphinScheduler 3.4.3, ran the registry-flap drill all green**; M9 Phase B (the "session-survivable" fault surface needed for DS re-registration) not started — scheduled for a later round |
-| Latest full regression | 2026-09-26 · `.\mvnw.cmd -o -B test` → **397 tests / 0 failures / 0 errors / 12 skips** (per-module breakdown in the [Development Guide §3.2](docs/DEVELOPMENT.md); every skip itemized and explainable: container tier 10 + stress test 1 + M9 real-SUT drill gate 1) |
+| Stage status | **M0–M8 all implemented and accepted; gap list G1–G11 fully closed** (the only registered exception: M8 deliverable 4, "accelerated-clock evaluation", still awaiting its trigger condition); **M9 Phase A complete (2026-09-25): the first real third-party system, DolphinScheduler 3.4.3, ran the registry-flap drill all green**; M9 Phase B (the "session-survivable" fault surface needed for DS re-registration) not started — scheduled for a later round; **M10 complete (2026-10-01): the Web console (Java control-plane `/api/**` + the `console-ui` Vue 3 SPA, served same-origin by `duo serve`)** |
+| Latest full regression | 2026-10-01 · `.\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"` → **423 tests / 0 failures / 0 errors / 12 skips** (per-module breakdown in the [Development Guide §3.2](docs/DEVELOPMENT.md); every skip itemized and explainable: container tier 10 + stress test 1 + M9 real-SUT drill gate 1); frontend `console-ui` Vitest **25 tests / 0 failures** (counted separately — not part of the Maven reactor) |
 | Quality gate | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → dependency analysis "zero undeclared / zero unused" (wired into CI) |
 | Design basis | [Design document v1.0 (frozen)](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
 **Milestone progress**: `M0` kernel skeleton ✅ · `M1` scenarios & injection ✅ · `M2` embedded
 middleware ✅ · `M3` control plane ✅ · `M4` scale & bridging ✅ · `M5` contract & tier completion ✅ ·
 `M6` external SUT ✅ · `M7` engineering & CI ✅ · `M8` observability ✅ ·
-`M9` real third-party integration (Phase A ✅ · Phase B not started)
+`M9` real third-party integration (Phase A ✅ · Phase B not started) · `M10` Web console ✅ (Java control plane + console-ui SPA)
 
 ## Table of Contents
 
@@ -174,7 +174,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # JAVA_HOME is all you need; Maven 3.9.11
 ### 5.2 Build & Test
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 397 tests (12 design-gated skips: container 10 + stress 1 + M9 real-SUT drill 1)
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 423 tests (12 design-gated skips: container 10 + stress 1 + M9 real-SUT drill 1)
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                       # thousand/ten-thousand-worker heartbeat stress (≥ 5 min, > 1 GB heap)
 ./mvnw -o install -DskipTests                        # install into the local repo (required before CLI drills)
@@ -184,7 +184,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) has three jobs:
 
 | job | trigger | content |
 | --- | --- | --- |
-| `regression` | push / PR | no-Docker full regression + dependency quality gate (`-Dquality`) + visible skip inventory |
+| `regression` | push / PR | console-ui build + Vitest (Node 22: `npm ci` → `npm test` → `npm run build`) → no-Docker full regression + dependency quality gate (`-Dquality`) + visible skip inventory |
 | `container` | push / PR | with Docker: runs the container tier and asserts **skip=0** (real PostgreSQL 6/6 + real ZooKeeper 4/4) |
 | `scale` | nightly / manual | thousand/ten-thousand-worker heartbeat stress, artifacts archived (`duo-sim-examples/build/scale/*.json`; a missing artifact fails the job) |
 
@@ -402,9 +402,10 @@ Field reference, validation rules and assertion semantics:
 | 4 Controllable behavior (task-stub scripts) | ✅ achieved | `BehaviorProfile` full 8-field set (M1) |
 | 5 Faults injectable (timeline + hot inject) | ✅ achieved | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` landed; **M5 round 4** added `freeze` (worker/engine/scheduler), `slow` (worker/engine), `resource-exhaust` (worker/engine/resource) — all idempotent, all declaring `supportedFaults` |
 | 6 Real feedback (real protocol ports) | ✅ achieved | the embedded tier exposes real ZK/JDBC/K8s ports; interactive contracts speak the Duo wire protocol (**the worker side is real protocol too**: `RealWorkerSut` registers/heartbeats/claims/reports over `FrameConnection`); the container tier adds real PostgreSQL + real ZooKeeper, **five evidenced green runs on the CI `container` job** (latest: run `36115793273`, all three jobs green; the 10 container cases skip by design when no Docker is present locally) |
-| 7 Second-level feedback loop (single JVM, zero Docker) | ✅ achieved | full regression **397 tests / 0 failures / 0 errors / 12 skips** (10 container-tier cases due to no local Docker, 1 stress switch off, 1 `-Dduo.ds=true` real-SUT drill gate off — its always-on guard `DsFailoverDrillGuardTest` runs ungated in the regular regression; `-Dduo.docker.enabled=false` turns "no Docker" into a fact rather than an accident) |
+| 7 Second-level feedback loop (single JVM, zero Docker) | ✅ achieved | full regression **423 tests / 0 failures / 0 errors / 12 skips** (10 container-tier cases due to no local Docker, 1 stress switch off, 1 `-Dduo.ds=true` real-SUT drill gate off — its always-on guard `DsFailoverDrillGuardTest` runs ungated in the regular regression; `-Dduo.docker.enabled=false` turns "no Docker" into a fact rather than an accident) |
 | 8 CI-friendly (JUnit 5 + assertions + scenarios in version control) | ✅ achieved | extension + assertion libraries, standard Wrapper, three CI jobs (M7; remote continuously green), release artifacts (source/javadoc + CHANGELOG), and the **dependency quality gate (`-Dquality`, round 11, wired into CI)** |
 | — Observability (design §11, M8) | ✅ achieved | all three channels landed: event-stream recording (pre-existing) + logs (`logback.xml`/`logback-test.xml`, `io.duo.sim.fault` causal chain) + metrics (`/metrics`, 19 metric families); single-command causal-chain export via `duo diagnose` |
+| — Web console (M10; D16 overturns the "polished Web console" non-goal) | ✅ achieved | Java control plane: `/api/scenarios` (scenario library CRUD/fork/validate), `/api/capabilities`, `/api/meta`, `/api/inject/clear`, `GET /diagnose`, `/events` cursor `next`/`dropped`, SPA static hosting (`/console/**`, CSP `default-src 'self'`); `console-ui` (Vue 3 + TS + Vite, Node build-time only) ships three pages — token/login, scenario library, workspace (canvas + property panel + YAML drawer, edit⇄run dual mode, injection panel, three observation tabs); artifacts are embedded into the `duo-sim-control` classpath and served same-origin by `duo serve`. **Zero kernel/scenario module changes**; Java 423 tests + frontend Vitest 25 tests all green |
 
 **One-sentence summary**: goals 1/4/5/6/7/8 and observability are achieved; what remains for 2/3 is
 **breadth**, not capability — the gap list (G1–G11) is fully closed, and the only registered open

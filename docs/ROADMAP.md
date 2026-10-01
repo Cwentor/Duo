@@ -1,23 +1,28 @@
 # Duo 发展规划 —— 如何达成最初的目标
 
-- 日期：2026-09-25（**第 34 轮更新**：M9 Phase A 真实系统接入完成；此前第 13 轮基线 2026-09-20）
+- 日期：2026-10-01（**第 35 轮更新**：M10 Web 控制台两份计划均落地；此前第 34 轮 2026-09-25
+  M9 Phase A、第 13 轮基线 2026-09-20）
 - 基线：`0.1.0-SNAPSHOT`；**M0–M8 均已完成并验收，差距清单 G1–G12 全部闭合**；
   **M9 Phase A 完成（2026-09-25）**：首个真实第三方系统（DolphinScheduler 3.4.3）registry-flap
   端到端演练全绿（55.51s），语义发现与断言改判见
   [`superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md)；
-  全量回归 **397 测 / 0 失败 / 0 错误 / 12 skip**（2026-09-25 实测；11 条既有 + M9 门控 1 条，
-  逐条可解释；此前口径 388/395 的订正史见 T7 行与各轮记录）；
-  依赖门禁 9 模块零告警（第 11 轮，已进 CI）
+  **M10 完成（2026-10-01）**：Web 控制台两份计划（Java 控制面 + console-ui 前端）均落地，见 §4「M10」；
+  全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01 实测；11 条既有 + M9 门控 1 条，
+  逐条可解释；此前口径 388/395/397 的订正史见 T7 行与各轮记录）；前端 `console-ui` 另有
+  Vitest **35 测 / 0 失败**（不在 Maven reactor 内）；
+  依赖门禁 8 模块零告警（第 11 轮，已进 CI）
 - 唯一保留项：M8 交付物 4「加速时钟评估」（触发条件"小时级长稳场景 + virtual 档"未出现）；
   两处**有意不做**并已如实标注：`FrameConnection` 双重分配、对用户 SUT 的强杀（L-3）；
   M9 Phase B（DS 重注册路径所需的"会话可存活"故障面）未启动，属后续轮次
 - 依据：设计文档 v1.0 §2（目标与非目标）、§13（测试策略）、§14（分阶段计划）、§16（风险）、§17（开放问题）；
+  M10 设计依据另有 [`superpowers/specs/2026-09-30-duo-web-console-design.md`](superpowers/specs/2026-09-30-duo-web-console-design.md)；
   安全审计 [`security-audit-2026-09-20.md`](security-audit-2026-09-20.md)（整改台账见其 §7，
   第二轮补充整改与"第一轮台账串号"的更正见 §7.2；独立复核记录
   [`security-audit-2026-09-20-recheck.md`](security-audit-2026-09-20-recheck.md)）
-- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D15 已全部拍板，无悬空决策；D13＝真实 SUT 演练
+- 决策台账：[`DECISIONS.md`](DECISIONS.md)（D1–D16 已全部拍板，无悬空决策；D13＝真实 SUT 演练
   断言以观测语义为准，2026-09-25 新增；D14＝CI 不归档事件录制（维持审计 M-8）、D15＝SUT 拆卸时
-  在途任务滞留 PENDING 定性，2026-09-26 新增）
+  在途任务滞留 PENDING 定性，2026-09-26 新增；D16＝Web 控制台立项，推翻 §7「精美 Web 控制台」
+  非目标，2026-10-01 新增并同日兑现）
 
 ---
 
@@ -54,7 +59,7 @@
 | T4 | 行为可控 | ✅ **达成** | `BehaviorProfile` 8 字段全集（duration/jitter/successRate/failAt/exception/logLines/neverReport/progress）+ 四级匹配；**行为模型已由 worker 与 engine 两侧消费（M5 第 4 轮 `VirtualEngine` 复用 `BehaviorResolver`）** | — |
 | T5 | 故障可注入 | ✅ **达成** | 时间线（`TimelineScheduler`，duration 到期自动 clear）+ 热注入（`ScenarioRuntime`，M3 REST/CLI 包装）；实例级寻址无降级；`crash`/`restart`/`registry-flap`/`task-kill` 已落地；`custom-hook` 已闭环；**`freeze`/`slow`/`resource-exhaust` 已落地（M5 第 4 轮）**：三者幂等且对未声明者显式拒绝 | 「动作 × 档位」成对场景集已在各 Provider 用例中成对落地（G5 已闭合） |
 | T6 | 真实反馈 | ✅ **达成** | embedded 档暴露真实 ZK 端口（SUT 用真实 Curator 客户端）/JDBC URL/K8s REST；Duo 线协议帧+8 报文；container 档真 ZooKeeper 与真 PostgreSQL（M5 第 4 轮，CI container job 取证 skip=0） | 适配器未做（§17 决策：按需立专项，是非目标而非缺口） |
-| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **395 测 / 0 失败 / 0 错误 / 11 skip**（第 33 轮实测：control 契约测试归属本模块后、删 1 条恒真用例；第 13 轮实测 388〔台账曾误记 406，2026-09-24 复核订正，见审计报告 §7.2(6)〕、396 是第 32 轮口径）；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
+| T7 | 秒级反馈回路 | ✅ **达成** | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01 实测：M10 计划一 +24、M9 守卫 1；第 33 轮实测 395〔第 13 轮 388，台账曾误记 406，2026-09-24 复核订正，见审计报告 §7.2(6)〕）；前端 `console-ui` 另有 Vitest 35 测；常规档零 Docker 依赖；万级规模单 JVM 实测 9,928 HB/s | — |
 | T8 | CI 友好 | ✅ **达成** | `@VirtualCluster` 扩展 + `DuoAssertions` + YAML 断言双轨；场景文件入版本库；标准 Wrapper + LICENSE + 发布产物 + **依赖门禁（第 11 轮）** + CI 三 job 远端全绿 | — |
 
 **一句话结论（第 13 轮更新）**：**T1–T8 全部达成**，差距清单 **G1–G11 全部闭合**
@@ -384,6 +389,50 @@ components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control �
 但若同一进程内场景重启，计数继续累加而不归零（口径见 `docs/METRICS.md`）；本机 Docker 不可用，
 10 个容器测试 skip（CI 覆盖）。
 
+### M10 — Web 控制台 ✅ **已实施完成（2026-10-01）**
+
+**为什么做**：CLI/配置文件操作体验是采用门槛——完成一次「改场景 → 跑 → 注入 → 看反应」需要多终端
+多命令协同。Web 控制台是同一条能力面的**可视化入口**，不替代 CLI（CLI 仍是 CI/自动化的一等公民）。
+本阶段**推翻 §7 非目标「精美 Web 控制台」**（决策 D16），但能力边界不推翻：**零内核改动**、
+运行期零新 Java 依赖、`-Dquality` 门禁口径不破坏。
+
+**技术路线（方案二）**：前端独立工程（Vue3+Vite，Node 仅**构建期**），构建产物内嵌
+`duo-sim-control` classpath，运行期仍是一条 `java` 命令；事件流用**轮询不用 SSE**
+（`EventSource` 无法携带 Bearer 头，与既有认证模型冲突）；控制台专属端点收进 `/api/` 前缀
+（核心端点被 CLI 依赖，签名冻结）。
+
+**交付物**（两份计划各自独立产出可运行、可测试的软件）
+
+| 计划 | 交付物 | 状态 | 取证 |
+| --- | --- | --- | --- |
+| 计划一（Java 控制面，T1–T10） | `ScenarioHost` 补 `clear`/`droppedEvents`；`ScenarioLibrary`（模板只读 + 用户库 CRUD/fork/id 白名单）；`/api/scenarios` 六端点；`/api/capabilities` + `/api/meta`；`/api/inject/clear`；`GET /diagnose`；`/events` 加 `next`/`dropped`；SPA 静态托管（CSP/nosniff）；`duo serve` 场景参数可选（IDLE）+ `--library-dir` | ✅ | 计划 `superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`；终审修复轮 `843f5c7`（I-1 双重编码 id 预检 400 / M-1 错误掩码 / M-6 负 since 400 / M-3 fork 缺省后缀 / M-4 serve 打印库路径）；control 46 测 |
+| 计划二（console-ui 前端，Task 1–11） | `console-ui/` 工程（Vue3+TS+Vite+Vitest）；API 客户端 + 会话 store（sessionStorage，401 回登录且草稿不丢）；三页路由（令牌页/场景库/工作区）；`ScenarioDoc` 模型层（YAML Document 受控编辑，未动子树注释保留）；画布 + 属性面板 + YAML 抽屉双向同步；运行模式（三路轮询 + 退避 + 实例故障推导）；注入面板（能力元数据驱动）+ 观测三 tab（事件流/断言/诊断链）；产物 CSP 兼容校验门；CI regression job 接入 node | ✅ | 计划 `superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`；终审 FIX_REQUIRED（0 Critical / 7 Important）→ 修复轮 `64f1162` → 复审 **CLEAN**（I-1~I-7 全 ADDRESSED，新增破坏 0）；Vitest 35 测 |
+
+**验收判据**
+
+- ✅ **G-W2 门槛判据**：从模板 fork → 画布改 worker 数 → 启动 → 注入 crash → 事件流看到 SUT 反应
+  → 断言可见，**全程零终端命令**（除启动 `serve` 本身）；机器可执行版＝`docs/DEVELOPMENT.md`
+  §1.4 的 **11 步端到端冒烟清单**（计划二 Task 11 全过：meta/fork/改存/validate/启动 RUNNING/
+  事件游标/inject success/事件见 `sim.fault-injected`/诊断 chains=2 gaps=0/stop/删场景）。
+- ✅ **等价判据**：画布改动投影出的 YAML 与手写金标准场景语义等价（`ScenarioDoc` 属性化往返测试）。
+- ✅ **形态判据（G-W5）**：`duo serve` 单命令启动后浏览器全功能可用；全量回归绿（Java 423 +
+  Vitest 35）且 `-Dquality` 8 模块零告警；运行期 Java 依赖零新增。
+
+**规格修订记录（两处，均已回写设计文档）**
+
+1. **§6.2 `GET /topology` 零改动**：实施核对发现响应已含每节点 `id/contract/tier/sut/count/hosted/
+   healthy/endpoints`（`ScenarioHost.topology()`）；实例粒度健康数需新增内核 API，违反零内核改动。
+   **决定：v1 对 `/topology` 零改动**，实例级状态灯由前端从事件流推导（`deriveInstanceFaults`，
+   按 `sourceId` 的 `<nodeId>-<index>` 形态取键）。
+2. **§11 E2E 不引 Playwright**：浏览器下载（~150MB）与 CI 复杂度对一条冒烟链不成比例，改为
+   「构建产物 + `duo serve` 真实冒烟清单（11 步，手动执行）」，与计划一 Task 10 的 E2E 冒烟同型。
+
+**已知边界（v1 有意不做，规格 §13）**：指标图表页 · 远程访问/反向代理 · SSE · 多场景并行运行管理 ·
+时间线待发条目视图 · 移动端/多用户/国际化 · 画布布局进 YAML · 替代 CLI/REST/JUnit 入口 ·
+external SUT 的可视化代起。另有 6 条 Minor 级工程债按「不阻塞验收」搁置在案（计划二 ledger）：
+save 吞错不阻塞启动、`/workspace/:id` 路由参数变化不重载场景、非 JSON 错误响应丢状态码、
+`runtime.events` 数组只增不减、运行模式仍可改拓扑、库页导入导出/另存未落地。
+
 ---
 
 ## 5. 建议节奏与优先级
@@ -400,11 +449,12 @@ components 120 / embedded 55+10 skip / examples 52+1 skip；junit 与 control �
 | 6 | **M7 的发布配置**（source/javadoc/版本策略/CHANGELOG） | ✅ **第 8 轮完成**（`-Drelease` 产出 8 对 sources/javadoc jar；缺省行为不变；`CHANGELOG.md` + 版本策略） | 已闭环 |
 | 7 | **M8 观测面** | ✅ **第 10 轮完成交付物 1/2/3**（`/metrics` + logback 双档 + `duo diagnose` 因果链；交付物 4「加速时钟评估」触发条件未出现，保持 ⏸ 待触发） | 已落地 |
 | 8 | **M7 质量门禁** | ✅ **第 11 轮完成**（`-Dquality` 依赖门禁收敛到零告警 + 进 CI `regression` job；JaCoCo 评估后决定不引，理由在案） | 已闭环 |
+| 9 | **M10 Web 控制台**（Java 控制面 + console-ui 前端） | ✅ **第 35 轮完成**（推翻 §7「精美 Web 控制台」非目标，D16；两份计划均落地，Java 423 测 + 前端 Vitest 35 测全绿，终审复审 CLEAN） | 已闭环 |
 
-**里程碑判定（第 12 轮收口）**：T1–T8 的达成条件**全部满足**——
-M6 ✅ + M5 交付物 1–6 ✅ + M7（含质量门禁）✅ + M8 交付物 1/2/3 ✅。
-全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**（第 11 轮实测，无 Docker 档）；
-依赖门禁 **9 模块零告警**（CI `regression` job 每次构建都跑）。
+**里程碑判定（第 12 轮收口，第 35 轮复核）**：T1–T8 的达成条件**全部满足**——
+M6 ✅ + M5 交付物 1–6 ✅ + M7（含质量门禁）✅ + M8 交付物 1/2/3 ✅ + M9 Phase A ✅ + M10 ✅。
+全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（第 35 轮实测，无 Docker 档）+ 前端 Vitest 35 测；
+依赖门禁 **8 模块零告警**（CI `regression` job 每次构建都跑）。
 **结论：「最初的目标」八条已全部可验收。** 唯一保留项是 M8 交付物 4
 （触发条件未出现，属"等输入"而非"待施工"）。
 
@@ -440,7 +490,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 性能压测数字的真实性承诺 | 虚拟心跳吞吐仅作参考（当前报告已标注「绝对值随机器浮动」） |
 | external SUT 内部事实的全量可观测 | 只承诺替身侧旁路事件；日志/指标侧车与自定义探针是扩展点 |
 | SUT 作为故障注入目标 | in-process 无法安全强杀；唯一豁免是 `custom-hook` 协作式操作 |
-| 精美 Web 控制台 | 仅薄层 CLI/REST；拓扑视图保持极简 |
+| ~~精美 Web 控制台~~ | **已推翻（D16，2026-10-01）**：M10 交付 Web 控制台——原理由「仅薄层 CLI/REST；拓扑视图保持极简」被采用门槛（CLI/配置文件操作体验）否决。**推翻的只是「不建控制台」，能力边界不推翻**：零内核改动、运行期零新 Java 依赖、`-Dquality` 门禁口径不变；控制台不替代 CLI/REST/JUnit 既有入口 |
 
 ---
 
@@ -458,7 +508,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | **T4** 行为可控 | 8 个行为字段全部可从 DSL 生效（含 `logLines`、百分号形态） | ✅ | `BehaviorProfile` 8 字段全集（M1）；`jitter: 20%` / `failAt: 60%` 与 `logLines` 由 `duo-sim-components` 用例覆盖（G7 闭合） |
 | **T5** 故障可注入 | 7 类动作全部有实现与场景级验收；实例级寻址无降级；`custom-hook` 可从 YAML 使用 | ✅ | 7 动作 = `crash`/`restart`/`freeze`/`slow`/`registry-flap`/`resource-exhaust`/`task-kill`，各 Provider 声明 `supportedFaults`，未声明者**显式抛** `UnsupportedOperationException`；`m5-custom-hook-acceptance.yaml` 端到端 |
 | **T6** 真实反馈 | embedded 档以上暴露真实第三方协议端口，SUT 无感知直连；交互型契约暴露 Duo 线协议真实端口 | ✅ | embedded 档真 ZK（Curator）/真 JDBC/真 K8s REST；container 档真 PostgreSQL 与真 ZK 容器（CI `container` job 实测绿） |
-| **T7** 秒级反馈回路 | 单 JVM 运行，容器档之外零 Docker 依赖 | ✅ | 全量回归 **366 测 / 0 失败 / 0 错误 / 11 skip**；`-Dduo.docker.enabled=false` 让"无 Docker"成为**确定事实**而非巧合 |
+| **T7** 秒级反馈回路 | 单 JVM 运行，容器档之外零 Docker 依赖 | ✅ | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（2026-10-01，M10 后）；前端 Vitest 35 测另计；`-Dduo.docker.enabled=false` 让"无 Docker"成为**确定事实**而非巧合 |
 | **T8** CI 友好 | JUnit5 扩展 + 断言库，场景文件可进版本库 | ✅ | `duo-sim-junit`（`@VirtualCluster` 扩展 + `DuoAssertions`）；场景 YAML 入版本库；CI 三 job 远端全绿 + **依赖门禁**（第 11 轮） |
 | **工程化** | 标准 Wrapper、LICENSE、发布产物（source/javadoc）、压测产物可追溯、依赖门禁 | ✅ | `mvnw`（3.9.11）+ `LICENSE`（Apache-2.0）+ `-Drelease` 8 对附件 jar + CI `scale` job 上传 artifact + `-Dquality` 依赖门禁（第 11 轮，CI 已接入） |
 
@@ -482,6 +532,20 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 ---
 
 ## 10. 进展记录
+
+### 2026-10-01（第 35 轮）：M10 Web 控制台——两份计划落地（D16）
+
+| 项 | 结果 |
+| --- | --- |
+| 触发 | 头脑风暴拍板（优先级 B「降低上手门槛」＞ A「自用演练驾驶舱」＞ C「对外演示」）；**推翻 §7 非目标「精美 Web 控制台」**，登记 **DECISIONS D16**；设计文档 [`superpowers/specs/2026-09-30-duo-web-console-design.md`](superpowers/specs/2026-09-30-duo-web-console-design.md)（G-W1~G-W5） |
+| 计划一（Java 控制面，T1–T10） | [`superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md)：`ScenarioHost.clear/droppedEvents` 薄通路 → `ScenarioLibrary`（模板只读 + 用户库 CRUD/fork/id 白名单/外部输入档校验）→ `/api/scenarios` 六端点 → `/api/capabilities` + `/api/meta` → `/api/inject/clear` → `GET /diagnose` 一等端点 → SPA 静态托管（CSP/nosniff）→ `duo serve` 场景参数可选（IDLE 态 + `--library-dir`）→ 口径文档。**零内核/场景模块改动** |
+| 计划一实施中暴露的真实缺陷 | `/diagnose` 直序 `Report` 时 `Event.timestamp` 为 `java.time.Instant`，Jackson 无 JSR-310 模块抛 `InvalidDefinitionException`——被 `respond()` 的 `catch (IOException)` **静默吞掉** ⇒ 客户端永久挂死（测试挂 13 分钟取证）。修复＝① `Report`→手工 JSON 安全 Map；② `respond()` 补 `JacksonException` 显式 500（防全端点类挂死，§12「不静默」的镜像落地） |
+| 计划一终审修复轮 | `843f5c7`（0 Critical / 1 Important / 8 Minor → 重分级后修复）：I-1 双重编码 id 预检解码 400；M-1 升 Important（`/api/inject/clear` 400 分支补 `sanitizeReason`）；M-6 升 Important（负 `since` 400，游标契约）；M-3/M-4 规格偏差升 Important（fork 缺省 `-copy` 后缀 / `serve` 打印 library 路径） |
+| 计划二（console-ui 前端，Task 1–11） | [`superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md)：Phase A＝脚手架/API 客户端+会话 store/路由三页+令牌页/`ScenarioDoc` 模型层/场景库页/构建接线+CI；Phase B＝工作区编辑模式（画布+属性面板+YAML 抽屉双向同步）/运行模式（三路轮询 store + 退避 + 实例故障推导）/注入面板+观测三 tab/产物 CSP 校验门/端到端冒烟+口径文档。**实施裁决两处**：① `@codemirror/state` 导出名是 `EditorState` 非 `State`；② 实例号在 `sourceId`（`<nodeId>-<index>` 形态）非 payload，`deriveInstanceFaults` 按取证实现 |
+| 计划二终审 + 修复轮 | 终审 verdict **FIX_REQUIRED**（0 Critical / 7 Important / 6 Minor，报告存 `.superpowers/ledger-m10-ui/final-review-report.md`）；修复轮 `64f1162`：I-1 退避死代码（`Promise.all` 三路各自 `.catch` ⇒ `failures` 永不递增 → 连接失败时固定 1s 无限轰打）/I-2 轮询僵尸链（`endPolling` 停不掉在途 tick → 代次防护）/I-3 切节点动作残留/I-4 实例故障灯从未接线/I-5 属性面板误清空/I-6 409 死胡同无「停止并替换」/I-7 `beforeunload` 缺失。**复审 CLEAN——I-1~I-7 全部 ADDRESSED，新增破坏 0**（原评审代理实跑 Vitest 25/25） |
+| **收尾轮补修 I-8**（真实浏览器实测取证） | 注入面板动作清单原按 `contract` 过滤 ⇒ ① `worker/real`（`supportedFaults=∅`）继承 `worker/virtual` 的 4 个动作，注入 `freeze` 实测回 `component does not implement FaultInjectable`；② **生命周期动作 `crash`/`restart` 从不出现**——内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**（`ScenarioValidator` 同口径），实测 `crash workers[2]` → `success:true` 而 UI 无从下达，**使规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)** 精确匹配 + `LIFECYCLE_ACTIONS` 常驻；`needsInstanceIndex` 要求 `instanceControl`；生命周期动作隐藏「撤销注入」；SUT 节点不渲染下拉。测试 3→13 例（RED 10 failed → GREEN 35/35）+ 真 serve/真 SPA 复验（画布见 `⚠ 1/4 实例故障`）。容器档 `restart()` 守卫按设计在实现层、元数据无法表达，有意不在前端硬编码 |
+| 末次验证（本轮） | Java 整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**；`-Dquality` **8 模块零告警**（parent 跳过 pom 项目）；前端 `npm test` **Vitest 35 测 / 0 失败**（8 文件）；`npm run build` + CSP 产物门 **9 文件合规**；计划二 Task 11 的 **11 步端到端冒烟全过** |
+| 文档 | 计划一/计划二两份计划（含规格修订记录）；本文件 §4 新增 M10 小节、§7 非目标加推翻注、§5 节奏表补第 9 行、§10 本条；`DECISIONS` D16 更新为**已兑现**；`docs/README.md` 计划表补 M9/M10 行与快照口径 397→423；`DEVELOPMENT.md` §3.2 分布 420→423 + 前端 25 测另计说明；`ARCHITECTURE.md` §12 控制面端点表补 M10 端点与新增 §12.2 控制台端点族；`CHANGELOG.md`；`README.md`/`README.en.md` 概览表与 T7 行口径 |
 
 ### 2026-09-25（第 34 轮）：M9 Phase A——首个真实第三方系统接入（DolphinScheduler 3.4.3）
 
@@ -570,7 +634,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | **真修复 3 处** | protocol 显式声明 `jackson-annotations`、control 显式声明 `jackson-core`、examples 显式声明 `curator-test`——这三条此前都**靠传递依赖编译**，上游改版即断（analyze 正是靠"用过但没声明"把它们逼出来的） |
 | 逐条豁免 4 类（有意保留） | ① logback/h2/postgresql：运行期必需但源码不 import（ServiceLoader / `DriverManager` 按 URL 反射加载）；② `junit-jupiter` 是**空壳聚合件**，被 import 的是 api/params/engine；③ embedded 档承载的第三方服务的**传递件**（zk/curator-client/fabric8/*）不必抄进本仓 POM——要求"你承载的服务的全部库都写进你的 POM"等于把上游依赖树抄一遍；④ examples 是**端到端宿主/示例**模块，`src/main` 只有资源，"compile 依赖只在测试里用到"是正常形态。每条豁免都写在 `pom.xml` 里并附理由注释 |
 | 门禁强度 | `failOnWarning=true`：本轮已把 9 个模块收敛到**零告警**，因此"新增一条告警"＝构建失败（§12 不静默）。`ignoreNonCompileDirectives` 在 3.8.1 上**是未知参数**（实测 `[WARNING] Parameter ... is unknown`）——已删除，避免留一条"看着在配、其实没生效"的假配置 |
-| 实测终态 | `mvnw -o -B "-Dquality" "-DskipTests" verify` → **7 × `No dependency problems found` + parent(pom packaging 按设计跳过) + BUILD SUCCESS**；配套全量回归 `mvnw -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（依赖调整后零变化） |
+| 实测终态 | `mvnw -o -B "-Dquality" "-DskipTests" verify` → **7 × `No dependency problems found` + parent(pom packaging 按设计跳过) + BUILD SUCCESS**；配套全量回归 `mvnw -o -B test` → **366 测 / 0 失败 / 0 错误 / 11 skip / BUILD SUCCESS**（依赖调整后零变化）。**口径演进**：M10 后同一命令实测 **8 × `No dependency problems found`**（reactor 内 jar 模块数随 M10 增至 8）+ 全量 423 测，见 §4「M10」与 §10 第 35 轮 |
 | CI | `.github/workflows/ci.yml` 的 `regression` job 新增 `dependency gate (no unused/undeclared deps)`：`./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests verify`（测试已在上一步跑过，门禁只跑 `analyze-only`，几乎不增加墙钟时间） |
 | 未做（下一轮） | M8 交付物 4「加速时钟评估」（触发条件未出现，属"等输入"）；指标口径扩充（时延直方图/SUT 队列深度——**需先定口径**，不为凑指标拍脑袋）；examples 的 real worker `SutMain` 示例（真实缺口，非阻塞） |
 

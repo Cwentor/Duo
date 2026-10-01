@@ -27,14 +27,14 @@
 | --- | --- |
 | 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
 | 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
-| 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次 |
-| 最近全量回归 | 2026-09-26 · `.\mvnw.cmd -o -B test` → **397 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1） |
+| 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次；**M10 完成（2026-10-01）：Web 控制台（Java 控制面 `/api/**` + `console-ui` Vue3 SPA，`duo serve` 同源托管）** |
+| 最近全量回归 | 2026-10-01 · `.\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"` → **423 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1）；前端 `console-ui` Vitest **35 测 / 0 失败**（另计，不在 Maven reactor 内） |
 | 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
 | 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
 **里程碑进度**：`M0` 内核骨架 ✅ · `M1` 场景与注入 ✅ · `M2` 嵌入中间件 ✅ · `M3` 控制面 ✅ ·
 `M4` 规模与桥接 ✅ · `M5` 契约与档位补全 ✅ · `M6` external SUT ✅ · `M7` 工程化与 CI ✅ · `M8` 观测面 ✅ ·
-`M9` 真实第三方接入（Phase A ✅ · Phase B 未启动）
+`M9` 真实第三方接入（Phase A ✅ · Phase B 未启动） · `M10` Web 控制台 ✅（Java 控制面 + console-ui SPA）
 
 ## 目录
 
@@ -163,7 +163,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 397 测（12 条设计门控 skip：容器档 10 + 压测 1 + M9 真实 SUT 演练 1）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 423 测（12 条设计门控 skip：容器档 10 + 压测 1 + M9 真实 SUT 演练 1）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
@@ -173,7 +173,7 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）分三个 job：
 
 | job | 触发 | 内容 |
 | --- | --- | --- |
-| `regression` | push / PR | 无 Docker 全量回归 + 依赖门禁（`-Dquality`）+ skip 清单可见 |
+| `regression` | push / PR | console-ui 构建 + Vitest（Node 22，`npm ci` → `npm test` → `npm run build`）→ 无 Docker 全量回归 + 依赖门禁（`-Dquality`）+ skip 清单可见 |
 | `container` | push / PR | 有 Docker，跑容器档并断言 **skip=0**（真 PostgreSQL 6/6 + 真 ZK 4/4） |
 | `scale` | nightly / 手动 | 千/万 Worker 心跳压测，产物留档（`duo-sim-examples/build/scale/*.json`，产物缺失即红） |
 
@@ -374,9 +374,10 @@ assertions:
 | 4 行为可控（任务桩剧本） | ✅ 已达成 | `BehaviorProfile` 8 字段全集（M1） |
 | 5 故障可注入（时间线 + 热注入） | ✅ 已达成 | `crash`/`restart`/`registry-flap`/`task-kill`/`custom-hook` 已落地；**M5 第 4 轮**补齐 `freeze`（worker/engine/scheduler）、`slow`（worker/engine）、`resource-exhaust`（worker/engine/resource），均幂等且已声明 `supportedFaults` |
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 五次取证为绿**（最近一次 run `36115793273` 三作业全绿；本机无 Docker 时 10 条容器用例按设计 skip） |
-| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **397 测 / 0 失败 / 0 错误 / 12 skip**（10 条容器档因本机无 Docker、1 条未开压测开关、1 条未开 `-Dduo.ds=true` 真实 SUT 演练门控——其常驻守卫 `DsFailoverDrillGuardTest` 无门控进常规回归；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
+| 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（10 条容器档因本机无 Docker、1 条未开压测开关、1 条未开 `-Dduo.ds=true` 真实 SUT 演练门控——其常驻守卫 `DsFailoverDrillGuardTest` 无门控进常规回归；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
 | — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
+| — Web 控制台（M10，D16 推翻「精美 Web 控制台」非目标） | ✅ 已达成 | Java 控制面 `/api/scenarios`（场景库 CRUD/fork/校验）、`/api/capabilities`、`/api/meta`、`/api/inject/clear`、`GET /diagnose`、`/events` 游标 `next`/`dropped`、SPA 静态托管（`/console/**`，CSP `default-src 'self'`）；`console-ui`（Vue3+TS+Vite，构建期 Node）三页＝令牌页/场景库/工作区（画布+属性面板+YAML 抽屉，编辑⇄运行双模式、注入面板、观测三 tab）；产物内嵌 `duo-sim-control` classpath，`duo serve` 同源托管。**内核/场景模块零改动**；Java 423 测 + 前端 Vitest 35 测全绿 |
 
 **一句话总结**：1/4/5/6/7/8 与观测面已达成；2/3 剩的是**广度**而非能力——
 缺口清单（G1–G11）已全部闭合，唯一登记在案的保留项是 M8 交付物 4「加速时钟评估」

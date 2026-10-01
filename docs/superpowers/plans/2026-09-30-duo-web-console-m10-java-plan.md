@@ -1,5 +1,14 @@
 # Duo Web 控制台 M10 · 计划一：Java 控制面扩展 实施计划
 
+- 日期：2026-09-30（**实施完成 2026-10-01**）
+- 状态：**已实施完成（2026-10-01）**——T1–T10 全部落地，终审修复轮 `843f5c7`
+  （I-1 双重编码 id 预检 400 / M-1 升 Important 补 `sanitizeReason` / M-6 升 Important 负 `since` 400 /
+  M-3 fork 缺省后缀 / M-4 `serve` 打印库路径）；末次验证 Java 整 reactor
+  **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、`-Dquality` 8 模块零告警。
+- 台账：`.superpowers/ledger-m10-java/progress.md`（gitignore，不入库——本文状态行即入库留痕）
+- 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
+  完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
+
 > 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [ ]` 勾选跟踪。
 > 计划二（console-ui 前端工程）在本计划全部落地后另行编写——两份计划各自独立产出可运行、可测试的软件。
 

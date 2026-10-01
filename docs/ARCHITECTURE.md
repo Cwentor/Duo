@@ -470,19 +470,46 @@ DuoCli ──┬── 同进程模式（run --keep 注册进程级 attach 表�
               ScenarioEngine（内核）
 ```
 
-REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 外全部要求 `Authorization: Bearer <token>`，
-且 `Host`/`Origin` 必须回环——见下方「控制面信任模型」）：
+REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 与 `/console/**` 静态资源外，
+**全部端点一律要求** `Authorization: Bearer <token>`，且 `Host`/`Origin` 必须回环——见下方
+「控制面信任模型」；**M10 起**另有 `/api/**` 控制台端点族，见 §12.2）：
 
 | 端点 | 方法 | 说明 | 错误 |
 | --- | --- | --- | --- |
 | `/health` | GET | 服务存活（**唯一免认证**端点，供探针使用） | — |
 | `/scenario` | POST / DELETE | 启动（body＝YAML 文本，**按外部输入档校验**）/ 停止（立即返回，不等 SUT 收尾） | 400 解析/校验失败、401 缺令牌、403 跨站/非回环 Host、409 已在运行、413 body 超限 |
-| `/scenario/status` | GET | 状态/断言/注入失败 | 401、409 未启动 |
-| `/events?since=N` | GET | 事件增量 | 400 `since` 非整数、401 |
+| `/scenario/status` | GET | 状态/断言/注入失败/告警（`warnings`，M10 新增） | 401、409 未启动 |
+| `/events?since=N` | GET | 事件增量；响应含 `since`/`next`/`dropped`/`events`（`next = since + events.size()`，M10 新增游标与丢弃计数，向后兼容） | 400 `since` 非整数或为负、401 |
 | `/inject` | POST | body＝`FaultAction` JSON | 400 解析失败、401、404 未知 target、409 未运行、405 方法不符 |
 | `/assertions` | GET | 断言与注入失败明细 | 401、409 未启动 |
 | `/topology` | GET | 节点/契约/档位/实例/在线状态 | 401、409 未启动 |
 | `/metrics` | GET | Prometheus 抓取 | 401 |
+| `/diagnose` | GET | 诊断链一等端点（M10；复用 `FaultDiagnostics`，`Report` 手工转 JSON 安全 Map） | 401、409 未启动 |
+| `/console/**` | GET | SPA 静态托管（M10；classpath `/console`，无扩展名回 `index.html`，`CSP default-src 'self'` + `nosniff`） | 404 未知扩展名/穿越 |
+
+### 12.2 控制台端点族（M10，`/api/` 前缀）
+
+**为什么单起一个前缀**：`/scenario`、`/inject` 等核心端点被 CLI 依赖，签名冻结；控制台专属面
+收进 `/api/`，与既有端点互不干扰。**全部过同一条 `guard(ex, false)` 管道**（Bearer + 回环
+Host/Origin），错误映射沿用既有口径：`IllegalArgumentException`→400、`IllegalStateException`→405、
+`NoSuchFileException`→404。
+
+| 端点 | 方法 | 说明 | 错误 |
+| --- | --- | --- | --- |
+| `/api/scenarios` | GET | 场景库列表，`{"templates":[…],"user":[…]}` | 401、503 未配置库 |
+| `/api/scenarios/{id}` | GET / PUT / DELETE | 读（`{id,template,yaml}`）/ 存（body＝YAML，**过外部输入档校验**，失败带逐条 `errors`）/ 删 | 400 坏 id 或校验不过、401、404 不存在、405 模板只读、503 |
+| `/api/scenarios/{id}/fork` | POST | body＝`{"id":"new-id"}`，从模板或用户场景复制进用户库 | 400 body/新 id 非法、401、404 源不存在、405 目标已存在（含与模板撞名）、503 |
+| `/api/scenarios/validate` | POST | body＝YAML 文本，返回 `{ok,errors:[…]}`（外部输入档全量校验，**不落盘**） | 400、401、503 |
+| `/api/capabilities` | GET | 能力元数据 `{"providers":[{contract,tier,impl,default,supportedFaults,…}]}`（ServiceLoader 直读，枚举按 DSL 方言转小写） | 401 |
+| `/api/meta` | GET | serve 自述 `{version,auth,libraryDir,eventBufferMax}`（`libraryDir` 为绝对路径） | 401 |
+| `/api/inject/clear` | POST | body＝`FaultAction` JSON，手动清除一次热注入（薄委托 `ScenarioRuntime.clear`） | 400、401、404 未知 target、409 未运行、405 |
+
+**库 id 白名单与路径穿越**（规格 §7 安全口径）：`ScenarioLibrary.validId` 只接受
+`[A-Za-z0-9._-]+`——路径分隔符、`..`、点号开头、空串一律 400，且**路由前先解码再逐段校验**
+（`..%2F..%2Fsecret` 形态在原实现里会落成结构性 404，现为 400）；写入严格限定在
+`--library-dir` 内，模板目录（classpath `/console-templates/`）只读。**外部输入档收窄延伸到库**：
+经 Web 上传的 YAML 不因「存成了文件」而升档——`PUT /api/scenarios/{id}` 与 `POST /scenario`
+同档（规则 1–8 + 9–11）。
 
 ### 12.1 控制面信任模型（安全审计 2026-09-20 C-1/H-1/H-2/M-4）
 
