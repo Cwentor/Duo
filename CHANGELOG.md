@@ -40,8 +40,9 @@
   动作**，内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**，
   故下拉里从不出现——**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**
   （实测内核接受 `crash workers[2]` → `success:true` 而 UI 无从下达）。现按 **(contract,tier)**
-  精确匹配 + 补常驻生命周期动作；无 `instanceControl` 的档位不再索要实例号；生命周期动作隐藏
-  「撤销注入」；SUT 节点不渲染下拉。`inject-logic.test.ts` 3→14 例（RED 10 failed → GREEN 36/36），
+  精确匹配 + 补常驻生命周期动作；无 `instanceControl` 的档位不再索要实例号；SUT 节点不渲染下拉
+  （「撤销注入」的显隐判据随后在 I-10 修正，见下）。`inject-logic.test.ts` 3→14 例
+  （RED 10 failed → GREEN 36/36），
   并经真 serve + 真 SPA 复验（crash→实例 3→「已下达」→ 事件流见 `sim.fault-injected` +
   `sim.worker-instance-crashed` → 画布 `⚠ 1/4 实例故障`）。容器档 `restart()` 不可用按设计
   下沉实现层守卫、无法用元数据表达，**有意不在前端硬编码**（失败 reason 显式回给用户）。
