@@ -1723,6 +1723,8 @@ void statusExposesWarnings() throws Exception {
   实施计划 `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（计划一）
   与计划二（console-ui 前端，待计划一落地后编写）。
 ```
+> 注（2026-10-01 收尾）：上段是**当时**要写进 `DECISIONS.md` 的提案文本，已按计划执行；
+> 计划二已落地，`DECISIONS.md` D16 的实际条文为「已兑现」并把两份计划都列为落地点。
 
 `README.md` §5.3 标题下方补一句（英文版同步）：
 
