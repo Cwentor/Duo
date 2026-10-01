@@ -1,15 +1,20 @@
 # Duo Web 控制台 M10 · 计划一：Java 控制面扩展 实施计划
 
 - 日期：2026-09-30（**实施完成 2026-10-01**）
-- 状态：**已实施完成（2026-10-01）**——T1–T10 全部落地，终审修复轮 `843f5c7`
+- 状态：**已实施完成（2026-10-01）**——T1–T10 全部落地（50/50 步骤已勾选），终审修复轮 `843f5c7`
   （I-1 双重编码 id 预检 400 / M-1 升 Important 补 `sanitizeReason` / M-6 升 Important 负 `since` 400 /
   M-3 fork 缺省后缀 / M-4 `serve` 打印库路径）；末次验证 Java 整 reactor
   **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**、`-Dquality` 8 模块零告警。
+- 完成判据（2026-10-01 独立复核重跑实测）：整 reactor **423/0/0/12 BUILD SUCCESS**、
+  `-Dquality` **8 × "No dependency problems found" + BUILD SUCCESS**、`git diff` 对
+  kernel/scenario/components/examples/junit/protocol/embedded 的 `src/main` **空 diff**、
+  计划提交区间 **无任何 pom.xml 改动**（零新依赖），真 `duo serve` 冒烟逐端点通过。
+- 勾选口径（2026-10-01 起）：下文步骤以 `- [x]` 表示**已落地**，未落地步骤（含后续如再追加的）
+  仍为 `- [ ]`——可直接按勾选状态查看进度。**仅凭勾选不足以判定完成**：口径仍以本状态行
+  + 上条完成判据的实测数字为准。历史 m0–m9 各计划保留其原勾选形态，不回填。
 - 台账：`.superpowers/ledger-m10-java/progress.md`（gitignore，不入库——本文状态行即入库留痕）
-- 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
-  完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
 
-> 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [ ]` 勾选跟踪。
+> 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [x]`/`- [ ]` 勾选跟踪。
 > 计划二（console-ui 前端工程）在本计划全部落地后另行编写——两份计划各自独立产出可运行、可测试的软件。
 
 **Goal:** 为 Web 控制台补齐 Java 侧 API 面：场景库 CRUD/fork/校验、能力元数据、手动清除注入、诊断链一等端点、SPA 静态托管、`/events` 游标扩展、CLI `serve` 无场景启动。
@@ -27,7 +32,7 @@
 ## Global Constraints（逐字来自规格，所有任务默认隐含）
 
 - 零内核/场景模块改动：`duo-sim-kernel`、`duo-sim-scenario`、`duo-sim-components`、`duo-sim-examples`、`duo-sim-junit`、`duo-sim-protocol`、`duo-sim-embedded` 的 `src/main` 一律不动（examples 的测试仅 Task 9 允许追加）。
-- 零新 Java 运行期依赖；`-Dquality` 依赖门禁必须保持 9 模块零告警（新 import 只能来自已在 pom 声明的工件）。
+- 零新 Java 运行期依赖；`-Dquality` 依赖门禁必须保持 8 模块零告警（新 import 只能来自已在 pom 声明的工件）。
 - 所有非 `/health`、非静态资源端点必须过 `guard(ex, false)`（Bearer + 回环 Host/Origin）；静态资源与 `/health` 同档免令牌但同样过 `guard(ex, true)`。
 - 请求体上限 1 MiB 沿用 `readBody`/`rejectTooLarge`；错误响应一律 `sanitizeReason` 掩码，令牌与临时路径不得出现在任何响应。
 - 端点只监听 `127.0.0.1`（`start(int)` 现状，不动）。
@@ -55,7 +60,7 @@
 - Consumes: `ScenarioEngine.droppedEvents()`（`duo-sim-scenario`，已存在，:137）、`ScenarioEngine.runtime()`（:667）→ `ScenarioRuntime.clear(FaultAction)`（`duo-sim-kernel`，:108）、`ScenarioRuntime.InjectionResult(boolean success, String reason)`。
 - Produces: `public ScenarioRuntime.InjectionResult clear(FaultAction action)`、`public long droppedEvents()`（Task 2、Task 6 依赖这两个签名）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```java
 package io.duo.sim.control;
@@ -157,12 +162,12 @@ class ScenarioHostFaultControlTest {
 
 （`ScenarioRuntime` 需要 import `io.duo.sim.kernel.core.ScenarioRuntime`。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=ScenarioHostFaultControlTest" "-Dduo.docker.enabled=false"`
 Expected: **编译失败**，`cannot find symbol: method clear(FaultAction)` 与 `method droppedEvents()`。
 
-- [ ] **Step 3: 最小实现**（在 `ScenarioHost.java` 的 `inject` 方法之后追加）
+- [x] **Step 3: 最小实现**（在 `ScenarioHost.java` 的 `inject` 方法之后追加）
 
 ```java
 /**
@@ -192,12 +197,12 @@ public long droppedEvents() {
 
 （`engine`/`state` 是本类既有私有字段，`FaultLog`/`ScenarioRuntime`/`ScenarioEngine` 本类已 import。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=ScenarioHostFaultControlTest" "-Dduo.docker.enabled=false"`
 Expected: PASS（2 tests）。
 
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"    # 预期：397+2 全绿，skip 仍为 12
@@ -218,7 +223,7 @@ git commit -m "feat(control): ScenarioHost 补手动 clear 与 droppedEvents 薄
 - Consumes: Task 1 的 `host.droppedEvents()`；既有 `host.eventsSince(int)`。
 - Produces: 响应体 `{"since": N, "next": M, "dropped": D, "events": [...]}`（`next = since + events.size()`）——计划二前端轮询依赖该契约。
 
-- [ ] **Step 1: 写失败测试**（追加到 `RestControlServerTest`，自包含，不依赖本类既有 helper 字段）
+- [x] **Step 1: 写失败测试**（追加到 `RestControlServerTest`，自包含，不依赖本类既有 helper 字段）
 
 ```java
 @Test
@@ -287,12 +292,12 @@ void eventsResponseCarriesNextCursorAndDropCounter() throws Exception {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestControlServerTest#eventsResponseCarriesNextCursorAndDropCounter" "-Dduo.docker.enabled=false"`
 Expected: FAIL——`next must equal since + events.size(): expected 1 but was null`（旧响应无 `next`）。
 
-- [ ] **Step 3: 最小实现**（`/events` context 的 `respond(ex, 200, Map.of("since", since, "events", events))` 改为）
+- [x] **Step 3: 最小实现**（`/events` context 的 `respond(ex, 200, Map.of("since", since, "events", events))` 改为）
 
 ```java
 var body = new java.util.LinkedHashMap<String, Object>();
@@ -303,8 +308,8 @@ body.put("events", events);
 respond(ex, 200, body);
 ```
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -336,7 +341,7 @@ git commit -m "feat(rest): /events 响应加 next 游标与 dropped 丢弃计数
   - `String fork(String sourceId, String newId)`——返回新 id；源不存在 → `NoSuchFileException`；newId 坏 → `IllegalArgumentException`；newId 已存在（含与模板撞名）→ `IllegalStateException`
   - `Path userDir()`、`static boolean validId(String id)`、`List<String> validateYaml(String yaml)`（外部输入档全量校验，返回错误清单；合法 = 空表）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```java
 package io.duo.sim.control.library;
@@ -455,12 +460,12 @@ class ScenarioLibraryTest {
 
 （`assertDoesNotThrow` 需要 `import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;`。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=ScenarioLibraryTest" "-Dduo.docker.enabled=false"`
 Expected: **编译失败**，`cannot find symbol: class ScenarioLibrary`。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `ScenarioLibrary.java`：
 
@@ -702,8 +707,8 @@ assertions:
 
 （`name:` 字段相应改为 `worker-freeze-demo`。）
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（5 tests）。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（5 tests）。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -732,7 +737,7 @@ git commit -m "feat(control): ScenarioLibrary 模板+用户库（id 白名单/�
   - 未配置库（旧构造器）→ `503 {"error":"scenario library not configured (pass --library-dir to serve)"}`
   - 异常映射沿用既有口径：`IllegalArgumentException`→400、`IllegalStateException`→405、`NoSuchFileException`→404。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```java
 package io.duo.sim.control.rest;
@@ -917,12 +922,12 @@ class RestConsoleApiTest {
 
 （注：`send` helper 里的首个 `if (body != null)` 占位分支是**写作失误**，执行者直接以其中的 `switch (method)` 版本为准——即 `send` 只含 `var req = switch (method) {...}` 与 `return client.send(...)` 两段。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestConsoleApiTest" "-Dduo.docker.enabled=false"`
 Expected: **编译失败**，`cannot find symbol: constructor RestControlServer(..., ScenarioLibrary)`（以及 404 on /api/scenarios——编译过后）。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `RestControlServer.java` 三处改动：
 
@@ -1068,8 +1073,8 @@ private static final String LIBRARY_NOT_CONFIGURED =
 
 （`NoSuchFileException` 需要 `import java.nio.file.NoSuchFileException;`；`ScenarioLibrary` 需要 `import io.duo.sim.control.library.ScenarioLibrary;`。）
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（7 tests）。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（7 tests）。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1089,7 +1094,7 @@ git commit -m "feat(rest): /api/scenarios 六端点（list/get/put/delete/fork/v
 - Consumes: `ServiceLoader.load(ComponentProvider.class)`（`io.duo.sim.kernel.spi.ComponentProvider`：`contract()/tier()/implName()/isDefault()/metadata()`）；`CapabilityMetadata` record 六字段；`ScenarioLibrary.userDir()`；`EventRecorder.MAX_BUFFERED_EVENTS`（`duo-sim-scenario` :34，public）。
 - Produces（计划二注入面板数据源）: `GET /api/capabilities` → `200 {"providers":[{"contract":…,"tier":…,"impl":…,"default":bool,"supportedFaults":[…],"endpointShape":…,"interfaceDirect":bool,"instanceControl":bool}]}`；`GET /api/meta` → `200 {"version":…,"auth":"TOKEN"|"INSECURE","libraryDir":…,"eventBufferMax":500000}`。
 
-- [ ] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`）
+- [x] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`）
 
 ```java
 @Test
@@ -1119,12 +1124,12 @@ void metaDescribesServeEnvironment() throws Exception {
 
 （`libraryDir` 断言基于 `ScenarioLibrary` 构造器 `toAbsolutePath().normalize()`，必为绝对路径。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestConsoleApiTest#capabilitiesListsProvidersWithSupportedFaults+metaDescribesServeEnvironment" "-Dduo.docker.enabled=false"`
 Expected: FAIL（404 on 两个端点）。
 
-- [ ] **Step 3: 最小实现**（`registerRoutes()` 追加）
+- [x] **Step 3: 最小实现**（`registerRoutes()` 追加）
 
 ```java
 // M10 W-API-7：能力元数据（注入面板「动作×契约」下拉的唯一数据源，前端不写死）。
@@ -1165,8 +1170,8 @@ server.createContext("/api/meta", ex -> {
 
 （需要 `import java.util.ArrayList;`（若未有）；`EventRecorder` 所在包以实际为准——若不在 `io.duo.sim.scenario`，用全限定名修正 import。）
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1186,7 +1191,7 @@ git commit -m "feat(rest): /api/capabilities 能力元数据 + /api/meta serve �
 - Consumes: Task 1 的 `host.clear(FaultAction)`；既有 `/inject` 的 body 解析与错误映射模式。
 - Produces: `POST /api/inject/clear`（body=FaultAction JSON，与 `/inject` 同构）→ `200 {"success":bool,"reason":…}`；未运行 409；坏 body/NPE 400。
 
-- [ ] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`；需要先启动场景——沿用本测试类的 `host`/`server` 夹具，POST `FAST_SCENARIO` 等运行后操作；`FAST_SCENARIO` 从 `RestControlServerTest` 复制为私有常量，或引用 `RestControlServerTest.FAST_SCENARIO` 若执行者确认其为 package 可见）
+- [x] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`；需要先启动场景——沿用本测试类的 `host`/`server` 夹具，POST `FAST_SCENARIO` 等运行后操作；`FAST_SCENARIO` 从 `RestControlServerTest` 复制为私有常量，或引用 `RestControlServerTest.FAST_SCENARIO` 若执行者确认其为 package 可见）
 
 ```java
 @Test
@@ -1257,12 +1262,12 @@ private static final String CLEAR_SCENARIO = """
 
 （`FaultAction` JSON 的 `target` 字段名以内核 `FaultAction` record 为准：执行者若发现反序列化报缺字段，读 `duo-sim-kernel/src/main/java/io/duo/sim/kernel/api/FaultAction.java` 对齐字段名——`/inject` 既有用例（`RestControlServerTest` 内）里有可直接照抄的请求体。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestConsoleApiTest#clearInjectionAfterInjecting" "-Dduo.docker.enabled=false"`
 Expected: FAIL（404 on /api/inject/clear）。
 
-- [ ] **Step 3: 最小实现**（`registerRoutes()` 追加，错误映射与 `/inject` 逐行同构）
+- [x] **Step 3: 最小实现**（`registerRoutes()` 追加，错误映射与 `/inject` 逐行同构）
 
 ```java
 // M10 W-API-8：手动清除注入（与 /inject 同构的 body 与错误映射；薄委托 host.clear）。
@@ -1297,8 +1302,8 @@ server.createContext("/api/inject/clear", ex -> {
 });
 ```
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1318,7 +1323,7 @@ git commit -m "feat(rest): /api/inject/clear 手动清除注入——M10 计划�
 - Consumes: `FaultDiagnostics.analyze(List<Map<String,Object>> rawEvents, List<Map<String,Object>> assertionDetails) → Report`（`duo-sim-control` :139，Report 为 record 可被 Jackson 直序）；`host.eventsSince(0)`、`host.assertions()`。
 - Produces: `GET /diagnose` → `200 Report JSON`（四段：chains/assertions/eventsTotal/…）；未启动 409；断链段由 `FaultDiagnostics` 既有 gaps 语义呈现 `MISSING`（零新逻辑）。
 
-- [ ] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`）
+- [x] **Step 1: 写失败测试**（追加到 `RestConsoleApiTest`）
 
 ```java
 @Test
@@ -1351,12 +1356,12 @@ void diagnoseReturnsChainsAfterInjection() throws Exception {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestConsoleApiTest#diagnoseReturnsChainsAfterInjection" "-Dduo.docker.enabled=false"`
 Expected: FAIL（404）。
 
-- [ ] **Step 3: 最小实现**（`registerRoutes()` 追加）
+- [x] **Step 3: 最小实现**（`registerRoutes()` 追加）
 
 ```java
 // M10 W-API-8/10：诊断链服务端一等化——复用 CLI `duo diagnose` 同一套 FaultDiagnostics，
@@ -1383,8 +1388,8 @@ server.createContext("/diagnose", ex -> {
 });
 ```
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1405,7 +1410,7 @@ git commit -m "feat(rest): GET /diagnose 诊断链一等端点——复用 Fault
 - Consumes: classpath 资源 `/console/**`；既有 `guard(ex, true)` 免令牌通道。
 - Produces（计划二前端构建产物落点契约）: `GET /` 与 `GET /console/**` → 静态文件（MIME：html/js/css/svg/json/png/ico/map/woff2）；无扩展名路径 404 时回退 `index.html`（SPA 路由 fallback）；全部静态响应带 `Content-Security-Policy: default-src 'self'` 与 `X-Content-Type-Options: nosniff`。
 
-- [ ] **Step 1: 写占位页**（`duo-sim-control/src/main/resources/console/index.html`）
+- [x] **Step 1: 写占位页**（`duo-sim-control/src/main/resources/console/index.html`）
 
 ```html
 <!DOCTYPE html>
@@ -1421,7 +1426,7 @@ git commit -m "feat(rest): GET /diagnose 诊断链一等端点——复用 Fault
 </html>
 ```
 
-- [ ] **Step 2: 写失败测试**（追加到 `RestConsoleApiTest`）
+- [x] **Step 2: 写失败测试**（追加到 `RestConsoleApiTest`）
 
 ```java
 @Test
@@ -1456,12 +1461,12 @@ void staticAssetsServedWithCspAndTraversalRejected() throws Exception {
 }
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-control -am test "-Dtest=RestConsoleApiTest#staticAssetsServedWithCspAndTraversalRejected" "-Dduo.docker.enabled=false"`
 Expected: FAIL（`/console/index.html` 404——无托管）。
 
-- [ ] **Step 4: 最小实现**（`registerRoutes()` 追加）
+- [x] **Step 4: 最小实现**（`registerRoutes()` 追加）
 
 ```java
 // M10 W-API-11：SPA 静态托管。静态资源是构建产物、不含机密 → 与 /health 同档免令牌
@@ -1538,8 +1543,8 @@ private void serveConsoleAsset(HttpExchange ex, String path) throws java.io.IOEx
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
-- [ ] **Step 6: 整 reactor 回归 + Commit**
+- [x] **Step 5: 跑测试确认通过**（同 Step 2 命令）Expected: PASS。
+- [x] **Step 6: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1559,7 +1564,7 @@ git commit -m "feat(rest): SPA 静态托管（classpath /console + SPA fallback�
 - Consumes: Task 3/4 的 `ScenarioLibrary(Path)` 与 `RestControlServer(host, auth, token, library)`。
 - Produces: `serve [scenario.yaml] [--port N] [--token T | --token-file F | --insecure-no-auth] [--library-dir D]`——无场景参数时以 IDLE 态启动（`ScenarioHost.State.IDLE`），控制台为主要入口；带参数用法原样保留。`--library-dir` 缺省 `./duo-console-library`。
 
-- [ ] **Step 1: 写失败测试**（追加到 `DuoCliTest`）
+- [x] **Step 1: 写失败测试**（追加到 `DuoCliTest`）
 
 ```java
 @Test
@@ -1592,12 +1597,12 @@ private static String captureStdout(java.util.function.Supplier<Integer> action)
 
 （`help` 输出若走 `System.err`，把 capture 目标换成 `System.err`——以 `DuoCli` 现有 help 实现为准；执行者先读 :531 附近确认输出流。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\mvnw.cmd -o -B -pl duo-sim-examples -am test "-Dtest=DuoCliTest" "-Dduo.docker.enabled=false"`
 Expected: FAIL——`serve` 无参数时当前直接 `return 1`（`usage` 分支），`helpListsOptionalScenarioArgument` 断言 help 文本不含新形态。
 
-- [ ] **Step 3: 最小实现**（`cmdServe` 改造）
+- [x] **Step 3: 最小实现**（`cmdServe` 改造）
 
 ```java
 // ---- serve [yaml] [--port N] [--token T | --token-file F | --insecure-no-auth] [--library-dir D] ----
@@ -1646,8 +1651,8 @@ private static int cmdServe(List<String> args) throws Exception {
 
 （注释处「与现状逐行相同」的认证解析段，执行者**原样保留** `cmdServe` 里 :155-176 的既有代码，不重写。help 文本 :531 行同步改为 `serve [scenario.yaml] [--port N] [--token T | --token-file F | --insecure-no-auth] [--library-dir D]`。需要 `import io.duo.sim.control.library.ScenarioLibrary;`。）
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（既有用例零回归 + 2 条新用例）。
-- [ ] **Step 5: 整 reactor 回归 + Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2 命令）Expected: PASS（既有用例零回归 + 2 条新用例）。
+- [x] **Step 5: 整 reactor 回归 + Commit**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
@@ -1664,16 +1669,16 @@ git commit -m "feat(cli): serve 场景参数可选（IDLE 态 + 控制台入口�
 - Modify: `docs/DECISIONS.md`（D16 登记）
 - Modify: `README.md` §5.3 与 `README.en.md` 对应行（控制台入口一句）
 
-- [ ] **Step 1: 全量回归 + 依赖门禁**
+- [x] **Step 1: 全量回归 + 依赖门禁**
 
 ```bash
 .\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"
 # 预期：397+（2+1+5+7+2+1+1+1+2）≈ 419 测 / 0 失败 / 0 错误 / 12 skip（实测数字以输出为准，提交信息按实测写）
 .\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify
-# 预期：9 × No dependency problems found + BUILD SUCCESS
+# 预期：8 × No dependency problems found + BUILD SUCCESS（parent 聚合模块不产出检查）
 ```
 
-- [ ] **Step 2: 核对 `/scenario/status` 含 `warnings`（规格 §6.2 收尾项）**
+- [x] **Step 2: 核对 `/scenario/status` 含 `warnings`（规格 §6.2 收尾项）**
 
 读 `ScenarioHost.status()`（`duo-sim-control/.../ScenarioHost.java` :385）的返回 Map：
 
@@ -1695,7 +1700,7 @@ void statusExposesWarnings() throws Exception {
 
 - 若**不含** → 在 `status()` 的返回 Map 加一行 `m.put("warnings", warnings());`（warnings 语义：外部进程遗留等警告，规格 §6.2），再跑上述用例。
 
-- [ ] **Step 3: 口径文档**（三处，内容如下）
+- [x] **Step 3: 口径文档**（三处，内容如下）
 
 `CHANGELOG.md` 未发布段追加：
 
@@ -1732,7 +1737,7 @@ void statusExposesWarnings() throws Exception {
 > **M10 起**：`duo serve` 支持[无场景参数](docs/superpowers/specs/2026-09-30-duo-web-console-design.md)以 IDLE 态启动，浏览器打开 `http://127.0.0.1:<port>/` 即 Web 控制台（场景库/画布编辑/注入/观测）。CLI 与 REST 原用法不变。
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add CHANGELOG.md docs/DECISIONS.md README.md README.en.md

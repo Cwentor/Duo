@@ -149,7 +149,8 @@ Duo/
 
 对齐现有分层（契约测试在 `duo-sim-control/src/test`，编排验收在 examples，397 测基线做加法）：
 
-- **Java 侧（进常规回归，`-Dquality` 口径不变）**：场景库七端点契约测试（含路径遍历防护、模板不可删/拒写、外部输入档拒绝、fork 语义）；`/diagnose` 复用 `FaultDiagnostics` 既有验收语义；`/events` 扩展字段向后兼容；`/api/capabilities` 与 `ContractRegistry` 声明矩阵一致；`/api/meta`、`/api/inject/clear`、`/topology` 扩展各自契约用例；静态资源托管（SPA fallback/MIME/CSP 头）；安全回归（静态资源免令牌但 API 全 401、CSP 存在性、库目录逃逸拒绝）。预计新增 30–40 条用例。
+- **Java 侧（进常规回归，`-Dquality` 口径不变）**：场景库端点契约测试（六端点 list/get/put/delete/fork/validate，含路径遍历防护、模板不可删/拒写、外部输入档拒绝、fork 语义）；`/diagnose` 复用 `FaultDiagnostics` 既有验收语义；`/events` 扩展字段向后兼容；`/api/capabilities` 与 `ContractRegistry` 声明矩阵一致；`/api/meta`、`/api/inject/clear`、`/topology` 扩展各自契约用例；静态资源托管（SPA fallback/MIME/CSP 头）；安全回归（静态资源免令牌但 API 全 401、CSP 存在性、库目录逃逸拒绝）。
+  - **修订（2026-10-01，计划一实施核对）**：① 上句原写「七端点」，§6.1 与实现均为**六**个场景库端点（`/api/scenarios` list/get/put/delete、`/api/scenarios/{id}/fork`、`/api/scenarios/validate`；`/api/capabilities`、`/api/meta`、`/api/inject/clear`、`/diagnose` 不计入该族），已订正。② 原估「预计新增 30–40 条用例」，**实测新增 24 条**（`ScenarioHostFaultControlTest` 2 + `ScenarioLibraryTest` 5 + `RestConsoleApiTest` 15 + `RestControlServerTest` +2；examples 侧 `DuoCliTest` +2）——低估值不影响覆盖口径（397 → 423 全绿），以实测为准。③ 401 覆盖说明：新增 `/api/**` 端点族由 `guard(ex, false)` 强制令牌，既有 401 用例（`everyEndpointRequiresTheBearerToken`）覆盖的是冻结的核心端点面，新增端点族的 401 经 `duo serve` TOKEN 模式实测确认（无令牌 401 / 带令牌 200），未额外落测试用例，此处如实登记。
 - **前端侧（console-ui 工程）**：Vitest 单测覆盖纯逻辑层（YAML round-trip、快速校验规则、画布模型投影）；Playwright E2E 只做一条金标准冒烟链（编辑→启动→注入→观测），诚实标注不做全 UI 覆盖。
   - **修订（2026-10-01，计划二实施裁决）**：不引 Playwright（浏览器下载与 CI 复杂度对一条冒烟不成比例），改为「构建产物 + `duo serve` 真实冒烟清单（11 步：令牌→库→编辑→启动→注入→观测→停止→清理）」，与计划一 Task 10 的 E2E 冒烟同型；实现于计划二 Task 11（清单见 `docs/DEVELOPMENT.md` §1.4）。
 - **CI**：`regression` job 加 node build + 前端单测步骤；`container`/`scale` job 不动。

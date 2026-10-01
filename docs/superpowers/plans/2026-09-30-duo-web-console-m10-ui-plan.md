@@ -12,10 +12,11 @@
   使**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**。现按 **(contract,tier)**
   精确匹配 + 补生命周期动作；`inject-logic.test.ts` 扩到 24 例（RED 10 failed → GREEN 46/46）。
 - 台账：`.superpowers/ledger-m10-ui/progress.md`（gitignore，不入库——本文状态行即入库留痕）
-- 备注：下文步骤保留 `- [ ]` 原样作为**步骤模板**（与 m0–m9 各计划同例：勾选状态不作完成台账，
-  完成口径以本状态行 + 提交历史 + 上述实测数字为准）。
+- 勾选口径（2026-10-01 起）：下文步骤以 `- [x]` 表示**已落地**，未落地步骤（含后续如再追加的）
+  仍为 `- [ ]`——可直接按勾选状态查看进度。**仅凭勾选不足以判定完成**：口径仍以本状态行
+  + 上述实测数字 + 提交历史为准。历史 m0–m9 各计划保留其原勾选形态，不回填。
 
-> 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [ ]` 勾选跟踪。
+> 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [x]`/`- [ ]` 勾选跟踪。
 > 前置：计划一（Java 控制面）已落地（dev 分支 `843f5c7`，423 测全绿）——所有前端消费的 HTTP 契约已存在并被契约测试钉住。
 
 **Goal:** 交付 console-ui 前端（Vue3 SPA）：场景库、工作区（画布编辑/运行双模式）、注入面板、实时观测，构建产物内嵌 `duo-sim-control` 由 `duo serve` 同源托管。
@@ -104,7 +105,7 @@ fs 选 `crash` 出现「撤销注入」、选 `restart` 不出现（I-10）。
 **Interfaces:**
 - Produces: 可 `npm install && npm run build && npm test` 的工程；`build.outDir` 已指向 `../duo-sim-control/target/classes/console`（Task 10 消费）；App.vue 渲染 `<router-view/>`（Task 2 消费）。
 
-- [ ] **Step 1: 写 package.json 与配置**
+- [x] **Step 1: 写 package.json 与配置**
 
 `console-ui/package.json`：
 
@@ -261,7 +262,7 @@ node_modules/
 dist/
 ```
 
-- [ ] **Step 2: 写冒烟测试**
+- [x] **Step 2: 写冒烟测试**
 
 `console-ui/src/__tests__/smoke.test.ts`：
 
@@ -275,13 +276,13 @@ describe('工程冒烟', () => {
 })
 ```
 
-- [ ] **Step 3: 安装并验证**
+- [x] **Step 3: 安装并验证**
 
 Run: `cd console-ui && npm install && npm test`
 Expected: `1 passed`。再 `npm run build`——Expected: 产物落在 `duo-sim-control/target/classes/console/`（index.html + assets）。
 （此步同时验证 npm 依赖解析与构建链，是 Phase A 的先决条件；失败先修环境，不带病前进。）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add console-ui
@@ -311,7 +312,7 @@ git commit -m "feat(console-ui): Vite+Vue3+TS 工程脚手架（outDir 直指 co
     - `diagnose(): Promise<DiagnoseReport>`
   - 类型 `MetaInfo / ScenarioEntry / CapabilityRow / FaultAction / EventsPage / StatusInfo / TopologyNode / DiagnoseReport` 定义在同文件 `types` 段（字段与计划一 REST 契约一一对齐，见 Task 2 Step 1 代码）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `console-ui/src/stores/session.test.ts`：
 
@@ -382,12 +383,12 @@ describe('api client', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd console-ui && npm test`
 Expected: FAIL——`Cannot find module '../stores/session'`、`Cannot find module '../api/client'`。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `console-ui/src/stores/session.ts`：
 
@@ -512,8 +513,8 @@ export const api = {
 
 （TS 严格模式下 `(init?.headers as any)` 若触发 lint 级别报错，改为显式 `Record<string, string>` 合并——以 `npm test`/`vue-tsc` 不跑、`vite build` 通过为准；本工程不做独立类型检查门禁，`vite build` 内部转译即验证。）
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2）Expected: 5 passed。
-- [ ] **Step 5: Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2）Expected: 5 passed。
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src
@@ -529,7 +530,7 @@ git commit -m "feat(console-ui): API 客户端（Bearer/401 回登录）+ 会话
 **Interfaces:**
 - Produces: 路由 `/login`、`/library`、`/workspace/:id`；全局前置守卫：未持 token 且目标非 `/login` ⇒ 重定向 `/login`；`LoginView` 成功后取 `/api/meta` 与 `/health` 探测并跳 `/library`。
 
-- [ ] **Step 1: 实现 router 守卫与三个视图**
+- [x] **Step 1: 实现 router 守卫与三个视图**
 
 `console-ui/src/router.ts`（替换 Task 1 版本）：
 
@@ -613,13 +614,13 @@ async function login() {
 <template><main><h2>工作区</h2><p>Task 7 实现</p></main></template>
 ```
 
-- [ ] **Step 2: 手动验证（dev 模式）**
+- [x] **Step 2: 手动验证（dev 模式）**
 
 Run: `cd console-ui && npm run dev`（另终端 `duo serve --port 7788 --insecure-no-auth --library-dir /tmp/lib`）
 Expected: 浏览器 `http://localhost:5173/` → 重定向 `#/login`；INSECURE 模式随意输令牌（后端不校验）→ 进入 `#/library` 占位页。
 （INSECURE 下 `/api/meta` 返回 `auth: INSECURE`；TOKEN 模式输错令牌显示错误。两条路径都点一遍。）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add console-ui/src
@@ -643,7 +644,7 @@ git commit -m "feat(console-ui): 路由守卫 + 令牌页——M10 计划二 Tas
     - `toString(): string`（Document 序列化；**只重排被改动的子树**）
     - `rawText(): string`（原始文本透传，供「未做画布改动」时零损耗）
 
-- [ ] **Step 1: 写失败测试**（Review Focus #1 + #4 的模型半边）
+- [x] **Step 1: 写失败测试**（Review Focus #1 + #4 的模型半边）
 
 `console-ui/src/model/scenario.test.ts`：
 
@@ -748,12 +749,12 @@ describe('ScenarioDoc', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd console-ui && npm test`
 Expected: FAIL——`Cannot find module './scenario'`。
 
-- [ ] **Step 3: 实现**（基于 `yaml` 包 Document API——CST 保留未动子树的注释）
+- [x] **Step 3: 实现**（基于 `yaml` 包 Document API——CST 保留未动子树的注释）
 
 `console-ui/src/model/scenario.ts`：
 
@@ -907,8 +908,8 @@ function recordOf<T = string>(v: any, map?: (x: any) => T): Record<string, T> {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**（同 Step 2）Expected: 6 passed。
-- [ ] **Step 5: Commit**
+- [x] **Step 4: 跑测试确认通过**（同 Step 2）Expected: 6 passed。
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src/model
@@ -925,7 +926,7 @@ git commit -m "feat(console-ui): ScenarioDoc 模型层（yaml Document 受控编
 - Consumes: `api.listScenarios/forkScenario/deleteScenario`（Task 2）、router `/workspace/:id`（Task 3）。
 - Produces: `forkTargetId(sourceId, existingIds)` 纯函数（缺省 `{source}-copy`，撞名追加 `-2`/`-3`…）——导出自 `views/library-logic.ts`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `console-ui/src/views/library-logic.test.ts`：
 
@@ -944,8 +945,8 @@ describe('forkTargetId', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**（模块不存在）
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**（模块不存在）
+- [x] **Step 3: 实现**
 
 `console-ui/src/views/library-logic.ts`：
 
@@ -1058,12 +1059,12 @@ function open(s: ScenarioEntry) {
 </style>
 ```
 
-- [ ] **Step 4: 跑测试确认通过 + 手动验证**
+- [x] **Step 4: 跑测试确认通过 + 手动验证**
 
 Run: `cd console-ui && npm test` → Expected: 全绿。
 手动：`npm run dev` + serve → 库页列出 2 模板；fork → 跳工作区占位页；serve 端 `GET /api/scenarios` 出现新 id。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src
@@ -1080,7 +1081,7 @@ git commit -m "feat(console-ui): 场景库页（模板/用户库/fork/删除）�
 **Interfaces:**
 - Produces: CI regression job＝`node 22 → npm ci → npm test → npm run build → mvnw test`；本地等价命令写入 DEVELOPMENT。
 
-- [ ] **Step 1: 本地全链验证**
+- [x] **Step 1: 本地全链验证**
 
 ```bash
 cd console-ui && npm run build && cd ..
@@ -1091,7 +1092,7 @@ JAVA_HOME="C:/Users/cwt15/devtools/jdk-21.0.12.1+1" ./mvnw -o -B -pl duo-sim-con
 
 Expected: `target/classes/console/index.html` 为 SPA 产物（含 `<div id="app">` 与 assets 引用）；浏览器看到库页而非占位文案。
 
-- [ ] **Step 2: CI 接线**（`.github/workflows/ci.yml` 的 `regression` job，在 mvnw 步骤**之前**插入）
+- [x] **Step 2: CI 接线**（`.github/workflows/ci.yml` 的 `regression` job，在 mvnw 步骤**之前**插入）
 
 ```yaml
       - name: Setup Node for console-ui
@@ -1110,7 +1111,7 @@ Expected: `target/classes/console/index.html` 为 SPA 产物（含 `<div id="app
 
 （注：`actions/setup-node` 必须按仓库安全纪律 pin 到 commit SHA——执行者从 `actions/checkout` 现有写法旁查同一 SHA 源，或取官方 v4 当前 SHA，逐字登记在 PR 描述。`npm ci` 需要 `console-ui/package-lock.json` 入库——Task 1 已 `npm install` 生成，确认 `git add` 过。）
 
-- [ ] **Step 3: DEVELOPMENT.md 登记**（新小节 §1.4「console-ui 前端」）
+- [x] **Step 3: DEVELOPMENT.md 登记**（新小节 §1.4「console-ui 前端」）
 
 ```markdown
 ### 1.4 console-ui 前端（M10 计划二）
@@ -1123,7 +1124,7 @@ Expected: `target/classes/console/index.html` 为 SPA 产物（含 `<div id="app
 - 依赖纪律：新增 npm 依赖与 Java `-Dquality` 门禁天然隔离；但须说明用途，禁止顺手引。
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/ci.yml docs/DEVELOPMENT.md console-ui
@@ -1150,7 +1151,7 @@ git commit -m "build(ci): regression job 接入 console-ui 构建+Vitest；DEVEL
   - `YamlDrawer` props：`text: string`；emits：`apply(text)`。CodeMirror 6 + lang-yaml；只读/可编辑切换。
   - `workspace-logic.ts`：`layoutKey(id)`、`draftKey(id)`、`loadLayout/saveLayout`、`isAssetPath`（无扩展名判定，SPA fallback 同语义）。
 
-- [ ] **Step 1: 写失败测试**（纯逻辑：布局/草稿键与 Review Focus #4 的 doc 驱动半边）
+- [x] **Step 1: 写失败测试**（纯逻辑：布局/草稿键与 Review Focus #4 的 doc 驱动半边）
 
 `console-ui/src/components/workspace-logic.test.ts`：
 
@@ -1175,8 +1176,8 @@ describe('workspace-logic', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**（模块不存在）
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**（模块不存在）
+- [x] **Step 3: 实现**
 
 `console-ui/src/components/workspace-logic.ts`：
 
@@ -1504,12 +1505,12 @@ async function validate() {
 </style>
 ```
 
-- [ ] **Step 4: 跑测试确认通过 + 手动验证**
+- [x] **Step 4: 跑测试确认通过 + 手动验证**
 
 Run: `cd console-ui && npm test` → 全绿。
 手动：dev 模式打开库页 fork → 工作区：画布显示 3 节点与接线；选中 master 改 tier → YAML 抽屉跟随；抽屉手改语法错误 → 报错且画布保持；保存后 serve 端 `GET /api/scenarios/<id>` 内容更新；刷新页面草稿恢复。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src console-ui/package.json
@@ -1532,7 +1533,7 @@ git commit -m "feat(console-ui): 工作区编辑模式（画布+属性面板+YAM
   - `start(yaml): Promise<void>`、`stop(): Promise<void>`、`beginPolling(): void`、`endPolling(): void`
   - 轮询节奏：正常 1s；连续失败退避 1s→2s→5s 封顶；`connected` 反映最近一次轮询成败。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `console-ui/src/stores/runtime.test.ts`：
 
@@ -1586,8 +1587,8 @@ describe('runtime store 逻辑', () => {
 
 （事件 payload 的实例号字段名以计划一 `/events` 实际 payload 为准——执行者先 `curl serve/events` 看一条 `sim.worker-instance-crashed` 的 payload 键名，对齐 `deriveInstanceFaults` 的取键；测试与实现同步改，不许猜。）
 
-- [ ] **Step 2: 跑测试确认失败**（模块不存在）
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**（模块不存在）
+- [x] **Step 3: 实现**
 
 `console-ui/src/stores/runtime.ts`：
 
@@ -1722,12 +1723,12 @@ async function stopScenario() {
 <span v-if="runtime.dropped > 0" class="warn">已丢弃 {{ runtime.dropped }} 条事件</span>
 ```
 
-- [ ] **Step 4: 跑测试确认通过 + 手动验证**
+- [x] **Step 4: 跑测试确认通过 + 手动验证**
 
 Run: `cd console-ui && npm test` → 全绿。
 手动：dev 模式 fork 模板 → 启动场景 → 模式切运行、状态条 RUNNING、事件数增长；停止回编辑态。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src
@@ -1745,7 +1746,7 @@ git commit -m "feat(console-ui): 运行模式（启停 + 三路轮询 store + �
 - Consumes: `runtime`（Task 8）、`api.inject/clearInject/diagnose`、`api.capabilities()`。
 - Produces: `buildFaultAction(type, nodeId, instanceIndex|null)` 纯函数（组件级动作自动不带 instanceIndex——计划一实测语义）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `console-ui/src/components/inject-logic.test.ts`：
 
@@ -1769,8 +1770,8 @@ describe('buildFaultAction', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**（模块不存在）
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**（模块不存在）
+- [x] **Step 3: 实现**
 
 `console-ui/src/components/inject-logic.ts`：
 
@@ -1966,12 +1967,12 @@ async function refreshDiagnose() {
 </template>
 ```
 
-- [ ] **Step 4: 跑测试确认通过 + 手动验证**
+- [x] **Step 4: 跑测试确认通过 + 手动验证**
 
 Run: `cd console-ui && npm test` → 全绿。
 手动（dev + serve）：启动模板场景 → 点 workers → 选 crash → 实例 3 → 立即注入 → 事件流出现 `sim.fault-injected` 与组件反应；撤销注入（freeze 场景）→ `sim.fault-cleared`；诊断链 tab 出注入链与 SUT 事实；断言 tab 在场景收口后出 PASS/FAIL。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add console-ui/src
@@ -1987,7 +1988,7 @@ git commit -m "feat(console-ui): 注入面板（能力驱动）+ 观测三 tab�
 **Interfaces:**
 - Produces: `check-dist.mjs` 退出码反映产物合规性——CI 与本地 build 的强制门。
 
-- [ ] **Step 1: 写校验脚本**
+- [x] **Step 1: 写校验脚本**
 
 `console-ui/scripts/check-dist.mjs`：
 
@@ -2029,12 +2030,12 @@ if (!readFileSync(join(dist, 'index.html'), 'utf8').includes('Duo Console')) {
 process.exit(failed ? 1 : 0)
 ```
 
-- [ ] **Step 2: 验证**
+- [x] **Step 2: 验证**
 
 Run: `cd console-ui && npm run build`
 Expected: `vite build` 成功 + 校验脚本退出 0（无 FAIL 行）。产物确认落在 `duo-sim-control/target/classes/console/`。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add console-ui
@@ -2046,7 +2047,7 @@ git commit -m "feat(console-ui): 产物 CSP 兼容校验脚本（内联脚本/�
 **Files:**
 - Modify: `docs/DEVELOPMENT.md`（§1.4 补冒烟清单）、`docs/superpowers/specs/2026-09-30-duo-web-console-design.md`（§11 E2E 修订注）、`CHANGELOG.md`（计划二条目）
 
-- [ ] **Step 1: 全量回归 + 门禁**
+- [x] **Step 1: 全量回归 + 门禁**
 
 ```bash
 cd console-ui && npm test && npm run build && cd ..
@@ -2055,7 +2056,7 @@ JAVA_HOME="C:/Users/cwt15/devtools/jdk-21.0.12.1+1" ./mvnw -o -B "-Dquality" "-D
 # 预期：Java 423 测全绿（前端 Vitest 另计）；门禁 8 模块零告警
 ```
 
-- [ ] **Step 2: 真实 serve 冒烟（验收判据 G-W2 的机器可执行版）**
+- [x] **Step 2: 真实 serve 冒烟（验收判据 G-W2 的机器可执行版）**
 
 ```bash
 duo serve --port 0 --token <T> --library-dir ./duo-console-library
@@ -2068,9 +2069,9 @@ duo serve --port 0 --token <T> --library-dir ./duo-console-library
 #  ⑥ 全程零终端命令（除启动 serve 本身）——G-W2 判据
 ```
 
-- [ ] **Step 3: 口径文档**（CHANGELOG 追加 + 规格 §11 加注 + DEVELOPMENT §1.4 补冒烟清单，内容按上述实际执行结果写，数字按实测）
+- [x] **Step 3: 口径文档**（CHANGELOG 追加 + 规格 §11 加注 + DEVELOPMENT §1.4 补冒烟清单，内容按上述实际执行结果写，数字按实测）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs CHANGELOG.md
