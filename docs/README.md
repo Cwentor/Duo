@@ -60,14 +60,14 @@
 
 | 阶段 | 计划 | 状态 |
 | --- | --- | --- |
-| M0 内核骨架 | [`plans/2026-09-13-duo-m0-kernel-plan.md`](superpowers/plans/2026-09-13-duo-m0-kernel-plan.md) | 已实施完成（`TierSwapAcceptanceTest` 通过；⚠️ 计划文件状态行未回填，仍写「待用户批准」——以验收测试与提交记录为准） |
-| M1 场景与注入 | [`plans/2026-09-13-duo-m1-timeline-plan.md`](superpowers/plans/2026-09-13-duo-m1-timeline-plan.md) | 已实施完成并验收通过（`d377829` T23；⚠️ 同上，状态行未回填） |
-| M2 嵌入中间件 | [`plans/2026-09-14-duo-m2-embedded-plan.md`](superpowers/plans/2026-09-14-duo-m2-embedded-plan.md) | 已实施完成并验收通过 |
-| M3 控制面 | [`plans/2026-09-14-duo-m3-control-plan.md`](superpowers/plans/2026-09-14-duo-m3-control-plan.md) | 已实施完成，M3 验收通过（2026-09-15） |
-| M4 规模与桥接 | [`plans/2026-09-15-duo-m4-scale-bridge-plan.md`](superpowers/plans/2026-09-15-duo-m4-scale-bridge-plan.md) | 已实施完成，M4 关闭（2026-09-15） |
+| M0 内核骨架 | [`plans/2026-09-13-duo-m0-kernel-plan.md`](superpowers/plans/2026-09-13-duo-m0-kernel-plan.md) | 已实施完成并验收通过（2026-09-13 `29b1a42`，`TierSwapAcceptanceTest` 两档位全绿；✅ 状态行 + T1–T15 逐任务落地表已回填 2026-10-01） |
+| M1 场景与注入 | [`plans/2026-09-13-duo-m1-timeline-plan.md`](superpowers/plans/2026-09-13-duo-m1-timeline-plan.md) | 已实施完成并验收通过（2026-09-14 `d377829` T23；✅ 状态行 + T16–T23 逐任务落地表已回填 2026-10-01） |
+| M2 嵌入中间件 | [`plans/2026-09-14-duo-m2-embedded-plan.md`](superpowers/plans/2026-09-14-duo-m2-embedded-plan.md) | 已实施完成并验收通过（2026-09-15 `cd002e8`；✅ T24–T31 逐任务落地表已回填 2026-10-01） |
+| M3 控制面 | [`plans/2026-09-14-duo-m3-control-plan.md`](superpowers/plans/2026-09-14-duo-m3-control-plan.md) | 已实施完成，M3 验收通过（2026-09-15；✅ T32–T35 逐任务落地表已回填 2026-10-01） |
+| M4 规模与桥接 | [`plans/2026-09-15-duo-m4-scale-bridge-plan.md`](superpowers/plans/2026-09-15-duo-m4-scale-bridge-plan.md) | 已实施完成，M4 关闭（2026-09-15；✅ T36–T39 逐任务落地表已回填 2026-10-01，§1~§4 原文未动） |
 | M5–M8 收尾 | 见 [`ROADMAP.md`](ROADMAP.md) §4 各阶段交付物与状态表 | M5/M6/M7/M8 均已实施完成并验收（G1–G11 全部闭合；M8 交付物 4 待触发） |
-| M7 依赖门禁基线 | [`plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) | 已落地并进 CI（2026-09-19 第 11 轮），8 模块零告警 |
-| M9 真实第三方接入 | [`plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md`](superpowers/plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md) | Phase A 已实施完成并验收（2026-09-25，v1.4）；Phase B 未启动 |
+| M7 依赖门禁基线 | [`plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) | 已落地并进 CI（2026-09-19 第 11 轮）；**2026-10-01 复核实测 8 × 零告警，与基线逐字一致**（见文末 §复核） |
+| M9 真实第三方接入 | [`plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md`](superpowers/plans/2026-09-25-duo-m9-dolphinscheduler-integration-plan.md) | Phase A 已实施完成并验收（2026-09-25 `e80deb4`，v1.4；✅ 状态行 + T-M9-0~4 逐任务落地表已回填 2026-10-01）；Phase B 未启动（§7 登记项，不排期） |
 | M10 Web 控制台 | 计划一 [`plans/2026-09-30-duo-web-console-m10-java-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md)（Java 控制面，T1–T10）· 计划二 [`plans/2026-09-30-duo-web-console-m10-ui-plan.md`](superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md)（console-ui 前端，Task 1–11） | **两份计划均已实施完成**（2026-10-01）：计划一终审修复轮 `843f5c7`、计划二终审修复轮 `64f1162`（复审 CLEAN，I-1~I-7 全 ADDRESSED）；末次验证 Java 423 测 + 前端 Vitest 46 测全绿 |
 
 ### 3.3 验收与复验记录
@@ -98,3 +98,7 @@
 4. **数字口径**：测试数、吞吐等实测值必须标注**提交号或快照时间**，且可从产物复算（见 M3 记录的「口径说明」）。
 5. **改代码同步文档**：按 §2 表格的「何时需要改它」一列执行；新增 DSL 字段必须同时更新
    [`SCENARIO-DSL.md`](SCENARIO-DSL.md) 与校验规则说明。
+6. **计划进度口径**：计划文档的状态行 + 逐任务落地表是**入库留痕**，勾选/`✅` 表示**已落地**，
+   可据此直接查看进度；但**仅凭勾选不足以判定完成**——完成口径仍以状态行的实测数字、
+   完成判据与提交历史为准。M0–M10 均已回填（2026-10-01）；回填一律**追加**，不改写已执行
+   步骤的原始承诺文本（历史文本保留以便追溯）。

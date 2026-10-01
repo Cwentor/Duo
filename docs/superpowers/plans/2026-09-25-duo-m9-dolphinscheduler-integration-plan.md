@@ -4,7 +4,14 @@
 - 依据：设计文档 v1.0 §17 开放问题 1（第三方 SUT 协议适配器——「出现真实第三方接入需求时立专项」）、§16 风险 1（协议版本耦合）、§2 非目标（external SUT 内部事实的全量可观测 / SUT 非故障注入目标）；M4 验收记录 §三 D5（触发条件与专项范围）；决策 D1①、D9、D10/D11、D12
 - 触发：2026-09-25 项目所有者将达成口径改判为「接真实系统」（此前口径＝设计 §2 的 T1–T8，已达成并于当日独立现跑取证 395/0/0/11）——**本计划即 §17 开放问题 1 悬置多年的触发条件的兑现**
 - 前置：M0–M8 全部验收、G1–G12 全部闭合；M6 external SUT 机制（代起/attach、端点告知双途径、`tcp`/`http` ready 探针、`sut.exited`/`sut.crashed` 事实、「场景结束不杀进程」）已验收——Phase A 预期**零内核改动**
-- 状态：**T-M9-0 spike 已完成（2026-09-25，Go）**——形态拍板 standalone、冒烟通过；T-M9-1~4 待实施（Phase A 排期；Phase B 只登记触发条件，不排期）
+- 状态：**Phase A 已实施完成并验收通过（2026-09-25）；Phase B 未启动（仅 §7 登记，不排期）**。
+  原状态行「T-M9-1~4 待实施」为 T-M9-0 spike 当日的文本；本条为 **2026-10-01 回填**——
+  T-M9-1~4 已于 2026-09-25 执行完毕（drill 全绿 55.51s，提交 `e80deb4`），
+  验收记录 [`../acceptance/2026-09-25-m9-ds-registry-flap-drill.md`](../acceptance/2026-09-25-m9-ds-registry-flap-drill.md)；
+  执行事实与判据改判见文末 v1.2/v1.3/v1.4。原状态行保留以便追溯——自本条起，本计划状态行以
+  **实际收尾状态**为准（同 M2 勘误先例）。
+- 进度：**[回填] T-M9-0~T-M9-4 全部已落地（5/5，Phase A 口径）**——逐任务落地位置与证据见文末附录
+  「任务落地状态（2026-10-01 回填）」。Phase B 为**登记项**（§7），不属本计划实施范围，不计欠账。
 
 ---
 
@@ -109,6 +116,21 @@ T-M9-0（spike → Go/No-Go + 形态拍板）→ T-M9-1 ∥ T-M9-2 → T-M9-3 �
 ---
 
 ## 修订记录
+
+- **回填（2026-10-01，进度可视）**：本节为**追溯性补记**，不改动 §1~§7 的原始承诺文本
+  （同 M2 勘误、M4 v1.1 先例），仅为逐任务进度提供可视入口。T-M9-0~T-M9-4 落地状态如下：
+
+  | # | 状态 | 落地位置（实测） | 对应证据（实测） |
+  | --- | --- | --- | --- |
+  | T-M9-0 | ✅ | 形态拍板 **standalone-server**（D-M9-2 正向落定，无需 pseudo-cluster 回退）；环境工件在 `devtools`（JDK 11、DS 3.4.3、`ds-launch-standalone.ps1`） | v1.1 冒烟通过（UI HTTP 200、admin 登录 `code=0`） |
+  | T-M9-1 | ✅ | `duo-sim-examples/src/test/resources/scenarios/m9-ds-failover.yaml`（**测试资源**，非计划预想的 `src/main`）；DS conf 指向 Duo ZK | `DsFailoverDrillGuardTest`（物化模板 + 全规则校验） |
+  | T-M9-2 | ✅ | `DsFailoverAcceptanceTest` 编排层（DS OpenAPI 登录 → 项目 + 最小 DAG → 触发 → 轮询终态）；**D-M9-6 改判**：shell→**HTTP 任务链**（Windows 实测否定 task-shell） | 同一脚本可重复跑通「创建 → 触发 → SUCCESS」（drill 全绿） |
+  | T-M9-3 | ✅ | 断言与旁路观测（**语义改判**：DS 整服闪断后受控自停 exit 0，断言按实测语义改写）；负例验证 `duo.ds.noflap` | 正例全绿 55.51s；负例 `-Dduo.ds.noflap=true` 跑红 119.9s（防空真得证） |
+  | T-M9-4 | ✅ | `-Dduo.ds=true` 门控 + `DsFailoverDrillGuardTest`（**无门控**常驻）+ 验收记录 `2026-09-25-m9-ds-registry-flap-drill.md` | 常规回归零污染；**Phase A 关闭** |
+
+  **实测完成判据（2026-10-01 复核）**：Phase A 判据 A1–A6 已逐条闭环（v1.3「判据字面缺口补齐」）；
+  常规回归 **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**（DS 门控用例 skip 且逐条可见）。
+  **Phase B（§7 适配器专项）为登记项，触发条件未出现，不排期、不计欠账。**
 
 - **v1（2026-09-25）**：初稿（T-M9-0~4 + D-M9-1~6）。依据当日 grill 共识：达成口径改判「接真实系统」（Q1）、三个登记在案项判边界决策非欠账（Q2）、选型 DolphinScheduler 3.4.3（Q4）、Phase A 整体 SUT 先行 + Phase B 适配器跟进（Q5）、(a) 里程碑判定与 (c) 专项完成判定双口径（Q6）。
   - DS 事实基线：[3.4.3 为当前最新稳定版](https://github.com/apache/dolphinscheduler/releases)；[standalone 官方文档](https://github.com/apache/dolphinscheduler/blob/dev/docs/docs/en/guide/installation/standalone.md)（默认内嵌 ZooKeeper Testing Server + 内存 H2、停止即清库、JDK 1.8 or 11、最小插件集 task-shell + storage-hdfs、UI 端口 12345）。

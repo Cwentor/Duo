@@ -12,6 +12,9 @@
 > **勘误（2026-09-18）**：上文状态行为**2026-09-18 补记**——原文为「v2 已按自审修订……待批准后开工」，
 > 是 M2 开工前的文本，M2 实际已于 2026-09-15 完成并验收（`cd002e8`，验收记录见 M3 验收记录 §前置说明）。
 > 保留原文以便追溯；自本条起，所有计划文档的状态行以**实际收尾状态**为准。
+>
+> **进度回填（2026-10-01）**：**[回填] T24–T31 全部已落地（8/8）**——逐任务落地位置与证据见文末
+> 附录「任务落地状态（2026-10-01 回填）」。本回填不改动 §1~§6 的原始承诺文本（同 M4 v1.1 先例）。
 
 ---
 
@@ -112,6 +115,24 @@ T24 → T25 → T26 →（T27/T28 可并行）→ T29 → T30 → T31。每任�
 ---
 
 ## 附录：修订记录
+
+- **回填（2026-10-01，进度可视）**：本节为**追溯性补记**，不改动 §1~§6 的原始承诺文本
+  （同 M4 v1.1 先例）。T24–T31 逐任务落地状态如下：
+
+  | # | 状态 | 落地位置（实测） | 对应测试（实测） |
+  | --- | --- | --- | --- |
+  | T24 | ✅ | `embedded/registry/CuratorRegistry`（TestingServer 启停 + wire 端口 + `RegistryContract` 门面） | `CuratorRegistryTest` |
+  | T25 | ✅ | 同上：`registry-flap` = `TestingServer.restart()` 整服闪断（端口保持） | `CuratorRegistryFlapTest` |
+  | T26 | ✅ | 同上：ZK watch → `sim.registry-session-opened/closed`、`sim.registry-node-changed` | `CuratorRegistryWatchTest` |
+  | T27 | ✅ | `kernel/api/contract/StoreContract`（**落 api/contract**）+ `embedded/store/H2Store` | `H2StoreTest` |
+  | T28 | ✅ | `embedded/resource/Fabric8K8sMock` | `Fabric8K8sMockTest` |
+  | T29 | ✅ | `kernel/assertion/Assertions.masterReelectedWithin`（:249）+ `AssertionParser`（:53）+ `DemoScheduler` 的 `sut.leader-elected {epoch}` | `AssertionsTest`、`SchedulerStateMachineTest` |
+  | T30 | ✅ | `junit/VirtualCluster` + JUnit5 扩展 | `VirtualClusterExtensionTest` |
+  | T31 | ✅ | (a) `ScenarioEngine.startSut` wire 端点注入；(b) `m2-reelection-acceptance.yaml`；(c) `ReelectionAcceptanceTest` | `ReelectionAcceptanceTest`（全绿＝M2 验收口径） |
+
+  **实测完成判据（2026-10-01 复核）**：`ReelectionAcceptanceTest`、`VirtualClusterExtensionTest`
+  在常规回归内常绿；M0/M1 全部回归保持全绿（§1 通过条件）；
+  当前整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**。
 
 - **v1（2026-09-14）**：初稿 8 任务 + D1/D2/D3。
 - **v2（2026-09-14）**：自审修订（批准前）——

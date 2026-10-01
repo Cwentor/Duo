@@ -4,6 +4,8 @@
 - 依据：设计文档 v1.0（冻结）§10/§14 M3 行；M0（29b1a42）/M1（d377829）/M2（cd002e8）均已验收
 - 范围：`duo-sim-control` 的 REST + CLI 热注入（可选极简拓扑视图）
 - 状态：**已实施完成，M3 验收通过**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m3-acceptance-record.md`；演练脚本 `scripts/duo-inject-demo.sh`
+- 进度：**[回填，2026-10-01] T32–T35 全部已落地（4/4）**——逐任务落地位置与证据见文末附录
+  「任务落地状态（2026-10-01 回填）」。回填不改动 §1~§6 的原始承诺文本（同 M2 勘误、M4 v1.1 先例）。
 
 ---
 
@@ -58,3 +60,29 @@
 T32 → T33 → T34 → T35；每任务全量回归（整 reactor）；T35 全绿 + CLI 演练成功即 M3 关闭。工期 3~5 天（§14 估 ~2 周，M3 是薄层故按下限估）。
 
 **批准本计划后即开始 T32 编码。**
+
+---
+
+## 附录：任务落地状态（2026-10-01 回填）
+
+本节为**追溯性补记**，不改动 §1~§6 的原始承诺文本（同 M2 勘误、M4 v1.1 先例）。
+
+| # | 状态 | 落地位置（实测） | 对应测试（实测） |
+| --- | --- | --- | --- |
+| T32 | ✅ | `control/ScenarioHost`（引擎生命周期 start/stop/status、事件增量 `eventsSince`、注入转发、结果读取）**零内核新增 API** | `ScenarioHostTest`、`ScenarioHostFaultControlTest` |
+| T33 | ✅ | `control/rest/RestControlServer`（JDK HttpServer；`POST /scenario`、`GET /scenario/status`、`/events?since=`、`POST /inject`、`GET /assertions`、`/health`） | `RestControlServerTest` |
+| T34 | ✅ | `control/cli/DuoCli`（手写参数解析；`run`/`serve`/`stop`/`inject`/`status`/`events`/`assert`/`topology`，同进程 + `--url` 两模式） | `DuoCliTest` |
+| T35 | ✅ | `GET /topology` + CLI 表格；`ControlPlaneAcceptanceTest`；`scripts/duo-inject-demo.sh`；验收记录 `2026-09-15-duo-m3-acceptance-record.md` | `ControlPlaneAcceptanceTest` + CLI 演练（脚本） |
+
+**口径演进（不修改原判据，如实登记）**：T35 原判据写「全绿（**211 测**）+ CLI 演练成功＝M3 验收通过」，
+该数字是 2026-09-15 验收当时的快照口径；测试数随后续里程碑增长，本表按当前仓库状态不予回写。
+T35 之后的**新增**端点（`/api/**` 族、`/diagnose`、`/metrics`、SPA 托管）属 M8/M10 交付物，已由
+M8/M10 各自的计划与验收记录承载，**不是 M3 的欠账**——M3 原计划 §2「做」表逐条已在上述四行兑现。
+
+**实测完成判据（2026-10-01 复核）**：`ControlPlaneAcceptanceTest` 在常规回归内常绿；
+`scripts/duo-inject-demo.sh` 在位；当前整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**。
+
+### 修订记录
+
+- **v1（2026-09-14）**：初稿（T32~T35 + D1~D3）。
+- **v1.1（2026-10-01）**：补状态行「进度」行 + 本附录「任务落地状态」回填（追溯性，未改动 §1~§6）。

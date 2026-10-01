@@ -3,7 +3,9 @@
 - 日期：2026-09-15
 - 依据：设计文档 v1.0（冻结）§14 M4 行「万级心跳压测（虚拟线程调优）、Testcontainers 桥（embedded 模块容器档）、加速时钟评估、第三方 SUT 协议适配器（按需）」；§16 风险 1、§17 开放问题 1/2
 - 前置：M3 已验收（2026-09-15）；验收报告发现的两处缺陷（SutLauncher 字段遮蔽 + 诊断回归）与 LOW 观察（eventsSince O(n²)）已在 7ac458b 修复——eventsSince 改下标切片正是 M4 万级事件规模的前置条件
-- 状态：**已实施完成，M4 关闭**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md`，压测报告见 `docs/superpowers/acceptance/2026-09-15-duo-m4-scale-report.md`
+- 状态：**已实施完成，M4 关闭**（2026-09-15）。验收记录见 `docs/superpowers/acceptance/2026-09-15-duo-m4-acceptance-record.md`，压测报告见 `docs/superpowers/acceptance/2026-09-15-duo-m4-scale-report.md`；独立复验见 `docs/superpowers/acceptance/2026-09-18-duo-m4-independent-verification-record.md` 与 `2026-09-24-duo-m4-scale-independent-rerun-record.md`
+- 进度：**[回填，2026-10-01] T36–T39 全部已落地（4/4）**——逐任务落地位置与证据见文末
+  §修订记录「回填（2026-10-01，进度可视）」。回填不改动 §1~§4 的原始承诺文本（与既有 v1.1 勘误同一纪律）。
 
 ---
 
@@ -86,6 +88,25 @@ M4 已于 2026-09-15 关闭；2026-09-18 的独立复验与其后的处置对本
 > 记录中的合计值一律按对应提交理解（见 M4 验收记录 §五/§六的「快照语义」写法）。
 
 ### 修订记录
+
+- **回填（2026-10-01，进度可视）**：本节为**追溯性补记**，不改动 §1~§4 的原始承诺文本
+  （与上文 v1.1 勘误同一纪律）。T36–T39 逐任务落地状态如下：
+
+  | # | 状态 | 落地位置（实测） | 对应测试（实测） |
+  | --- | --- | --- | --- |
+  | T36 | ✅ | `VirtualWorker` `heartbeat.interval.ms` + 连接退避重试；`DemoScheduler` `heartbeat.eventSampleRate` + accept backlog；`scale-1k.yaml`/`scale-10k.yaml`（测试资源）+ `ScaleHarness` 指标采集 | `VirtualWorkerTest` + 压测门控用例 |
+  | T37 | ✅ | `ScaleAcceptanceTest`（`-Dduo.scale=true` 门控）+ 压测报告 `2026-09-15-duo-m4-scale-report.md` | `ScaleAcceptanceTest`（常规档 skip，**可见**；门控开启后千/万档） |
+  | T38 | ✅ | `embedded/registry/ZookeeperContainerRegistry`（`(registry, container)`，无 Docker 自动 skip）+ `embedded/store/PostgresContainerStore` | `ZookeeperContainerRegistryTest`、`PostgresContainerStoreTest`（无 Docker skip）、`*GuardTest`（**不过门控**，含 `317e9af` 补的容器档 `restart()` 守卫） |
+  | T39 | ✅ | 开放问题收口：D4 加速时钟**推迟**（不进 M4 交付）、D5 第三方适配器**维持 SPI 就绪不绑定产品**；验收记录落盘 | 验收记录 `2026-09-15-duo-m4-acceptance-record.md` |
+
+  **说明（不修改原判据）**：T39 的交付物按 §4 D4/D5 的**决策结论**兑现（推迟 / 不绑定），
+  非代码实现——这与 D4/D5 原文一致，不属欠账。压测（T37）与容器档（T38）在本机
+  **无 Docker / 未开 `-Dduo.scale`** 时按设计 skip，属承诺路径（§13/D2/D6），不是失败。
+  两项的独立复验分别见 `2026-09-18-duo-m4-independent-verification-record.md` 与
+  `2026-09-24-duo-m4-scale-independent-rerun-record.md`。
+
+  **实测完成判据（2026-10-01 复核）**：当前整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip
+  BUILD SUCCESS**（12 skip 中 4+6＝容器档 10 条 + 压测/DS 各 1 条，逐条可解释）。
 
 - **v1（2026-09-15）**：初稿（T36~T39 + D1~D6），随 M4 实施定稿，M4 关闭。
 - **v1.1（2026-09-18）**：补本文档缺失的**修订记录章节**（M0~M3 各计划均设此章节，M4 计划初稿遗漏）+ 上述
