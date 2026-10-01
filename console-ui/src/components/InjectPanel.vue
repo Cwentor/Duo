@@ -13,13 +13,18 @@ const action = ref('')
 const instance = ref<number | null>(null)
 const result = ref('')
 const providers = ref<CapabilityRow[]>([])
+const capsError = ref('')
 
-// 能力清单全量拉一次，按**当前选中节点的 (contract,tier)** 实时过滤——切节点下拉即时跟随（终审 I-3）
+// 能力清单全量拉一次，按**当前选中节点的 (contract,tier)** 实时过滤——切节点下拉即时跟随（终审 I-3）。
+// 独立评审 Minor：早期实现失败时静默 providers=[]，会让下拉谎报「只有 crash/restart」（§12 不静默）
+// ——现在显式把失败原因摆到面板上，用户不会误以为这是该节点的全部能力。
 async function loadCapabilities() {
   try {
     providers.value = (await api.capabilities()).providers
-  } catch {
+    capsError.value = ''
+  } catch (e: any) {
     providers.value = []
+    capsError.value = `能力元数据加载失败：${String(e?.message ?? e)}`
   }
 }
 loadCapabilities()
@@ -34,13 +39,23 @@ const actions = computed(() => {
   return availableActions({ contract: n.contract, tier: n.tier, sut: n.sut }, providers.value)
 })
 
-// 是否向用户索要实例号：仅当该档位组件实现 InstanceControl 且动作非组件级
-const askInstance = computed(() => {
+// 是否向用户索要实例号：仅当该档位组件实现 InstanceControl 且动作非组件级。
+// 大小写归一与 inject-logic 同口径（/topology 原样回显 YAML，可能是 `Virtual`）。
+const instanceControl = computed(() => {
   const n = node.value
   if (!n) return false
-  const ic = providers.value.some((p) => p.contract === n.contract && p.tier === n.tier
+  const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+  return providers.value.some((p) => eq(p.contract, n.contract) && eq(p.tier, n.tier)
     && p.instanceControl)
-  return needsInstanceIndex(action.value, ic)
+})
+const askInstance = computed(() => needsInstanceIndex(action.value, instanceControl.value))
+
+// 「撤销注入」只在**该档位确实声明了此动作**时出现（I-10：filestore 的 crash 是可清除的，
+// 而 restart 不是——判据是档位声明，不是动作名字）
+const clearable = computed(() => {
+  const n = node.value
+  if (!n || !action.value) return false
+  return isClearable(action.value, { contract: n.contract, tier: n.tier }, providers.value)
 })
 
 // 动作切换时重置实例号，避免带着上一个动作的残留值提交（终审 I-3 同族问题）
@@ -77,6 +92,7 @@ async function clear() {
     <h3>注入 · {{ nodeId }}</h3>
     <p v-if="node" class="meta">{{ node.contract }} / {{ node.tier }}
       <span v-if="node.healthy === false" class="warn">（组件异常）</span></p>
+    <p v-if="capsError" class="warn">{{ capsError }}</p>
     <p v-if="node?.sut" class="warn">SUT 节点不可注入（§7.2）</p>
     <template v-else>
       <label>动作
@@ -91,7 +107,7 @@ async function clear() {
       </label>
       <div>
         <button :disabled="!action" @click="inject">⚡ 立即注入</button>
-        <button v-if="action && isClearable(action)" :disabled="!action" @click="clear">撤销注入</button>
+        <button v-if="clearable" @click="clear">撤销注入</button>
       </div>
     </template>
     <p v-if="result">{{ result }}</p>

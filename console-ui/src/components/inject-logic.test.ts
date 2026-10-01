@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   availableActions, buildFaultAction, COMPONENT_SCOPED, LIFECYCLE_ACTIONS, needsInstanceIndex,
+  isClearable,
 } from './inject-logic'
 
 /** 取证形状＝`GET /api/capabilities` 的 `providers` 子集（计划一实测，2026-10-01）。 */
@@ -86,5 +87,58 @@ describe('needsInstanceIndex', () => {
   it('无 instanceControl 的档位不问实例号（问了必然失败）', () => {
     expect(needsInstanceIndex('registry-flap', false)).toBe(false)
     expect(needsInstanceIndex('crash', false)).toBe(false)
+  })
+})
+
+// ---- 独立评审发现（2026-10-01，I-9/I-10）----
+
+describe('availableActions 大小写归一（I-9）', () => {
+  // /api/capabilities 输出小写（RestControlServer 显式 toLowerCase），而 /topology 原样回显
+  // YAML（ScenarioHost 只做 put("tier", n.tier())），但 DSL 校验用 equalsIgnoreCase 接受任意大小写
+  // ——实测 `tier: Virtual` 的场景：内核接受 freeze/slow/resource-exhaust，而 UI 下拉只剩
+  // [crash,restart]，I-8a 的症状以「静默」形式复发。
+  it('tier 写成 Virtual（YAML 原样回显）也要匹配到 virtual 的能力', () => {
+    expect(availableActions({ contract: 'worker', tier: 'Virtual' }, CAPS))
+      .toEqual(availableActions({ contract: 'worker', tier: 'virtual' }, CAPS))
+  })
+  it('contract 写成 Worker 同样匹配', () => {
+    expect(availableActions({ contract: 'Worker', tier: 'VIRTUAL' }, CAPS))
+      .toEqual(availableActions({ contract: 'worker', tier: 'virtual' }, CAPS))
+  })
+  it('能力行一侧的大小写也归一并匹配', () => {
+    const mixed = [{ contract: 'Worker', tier: 'Virtual', supportedFaults: ['freeze'], instanceControl: false }]
+    expect(availableActions({ contract: 'worker', tier: 'virtual' }, mixed))
+      .toEqual(['crash', 'restart', 'freeze'])
+  })
+  it('两侧大小写都不同也能匹配', () => {
+    const mixed = [{ contract: 'FILESTORE', tier: 'Virtual', supportedFaults: ['crash'], instanceControl: false }]
+    expect(availableActions({ contract: 'filestore', tier: 'virtual' }, mixed))
+      .toEqual(['crash', 'restart'])
+  })
+})
+
+describe('isClearable（I-10）', () => {
+  // 评审取证：ScenarioRuntime.clear 不按动作类型分派，只调 fi.clear(action)；VirtualFilestore
+  // 实现 FaultInjectable 且 supportedFaults()={crash}，其 clear() 显式接受 CRASH——实测
+  // `clear crash` 于 filestore 返回 {"success":true}（sim.filestore-crashed → sim.fault-cleared）。
+  // 故「crash/restart 一律不可清除」是错的：判据应是**该档位是否把此动作声明进 supportedFaults**。
+  it('filestore/virtual 声明了 crash ⇒ 可清除（原实现一律隐藏 = 功能倒退）', () => {
+    expect(isClearable('crash', { contract: 'filestore', tier: 'virtual' }, CAPS)).toBe(true)
+  })
+  it('worker/virtual 未声明 crash（生命周期动作）⇒ 不可清除', () => {
+    expect(isClearable('crash', { contract: 'worker', tier: 'virtual' }, CAPS)).toBe(false)
+  })
+  it('restart 从不被声明 ⇒ 任何档位都不可清除', () => {
+    expect(isClearable('restart', { contract: 'worker', tier: 'virtual' }, CAPS)).toBe(false)
+    expect(isClearable('restart', { contract: 'filestore', tier: 'virtual' }, CAPS)).toBe(false)
+  })
+  it('普通组件级动作只要该档位声明了就等够清除', () => {
+    expect(isClearable('freeze', { contract: 'worker', tier: 'virtual' }, CAPS)).toBe(true)
+  })
+  it('档位没声明的动作不可清除', () => {
+    expect(isClearable('freeze', { contract: 'worker', tier: 'real' }, CAPS)).toBe(false)
+  })
+  it('大小写归一后仍可判定（复用 I-9 的归一口径）', () => {
+    expect(isClearable('crash', { contract: 'Filestore', tier: 'VIRTUAL' }, CAPS)).toBe(true)
   })
 })
