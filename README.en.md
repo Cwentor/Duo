@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/duo-logo.svg" width="96" alt="Duo logo" />
+<img src="docs/assets/duo-logo.svg" width="140" alt="Duo logo" />
 
 <h1><img src="docs/assets/duo-title.svg" alt="Duo" height="72" /></h1>
 
