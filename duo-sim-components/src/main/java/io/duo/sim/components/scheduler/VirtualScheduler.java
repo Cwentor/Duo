@@ -471,6 +471,21 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
                 // 忽略关闭异常
             }
         }
+        // 等待旧 acceptor/pump 线程退出，避免 restart() 中 start() 与残留线程竞态
+        if (a != null) {
+            try {
+                a.join(1_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (p != null) {
+            try {
+                p.join(1_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private void fire(Event e) {
