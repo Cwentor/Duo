@@ -220,9 +220,7 @@ public final class DuoCli {
             printJson(host.stop());
             return 0;
         }
-        var resp = send("DELETE", url + "/scenario", null);
-        System.out.println(resp.statusCode() + " " + resp.body());
-        return resp.statusCode() / 100 == 2 ? 0 : 1;
+        return printRemote(send("DELETE", url + "/scenario", null));
     }
 
     // ---- inject <action> <target> [duration] [--url X] ----
@@ -243,9 +241,7 @@ public final class DuoCli {
 
         if (url != null) {
             try {
-                var resp = send("POST", url + "/inject", MAPPER.writeValueAsString(fa));
-                System.out.println(resp.statusCode() + " " + resp.body());
-                return resp.statusCode() / 100 == 2 ? 0 : 1;
+                return printRemote(send("POST", url + "/inject", MAPPER.writeValueAsString(fa)));
             } catch (Exception e) {
                 System.err.println("error: " + (e.getMessage() == null
                         ? e.toString() : e.getMessage()));
@@ -272,9 +268,7 @@ public final class DuoCli {
         initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
-            var resp = send("GET", url + "/scenario/status", null);
-            System.out.println(resp.statusCode() + " " + resp.body());
-            return resp.statusCode() / 100 == 2 ? 0 : 1;
+            return printRemote(send("GET", url + "/scenario/status", null));
         }
         // 不 close：attached host 的生命周期归 run 命令（close 会停掉运行中的场景）
         printJson(attachedOrDefault(args).status());
@@ -290,12 +284,11 @@ public final class DuoCli {
         }
         String url = opt(args, "--url");
         if (url != null) {
-            var resp = send("GET", url + "/events?since=" + since, null);
-            if (resp.statusCode() / 100 != 2) {
-                System.out.println(resp.statusCode() + " " + resp.body());
+            var root = fetchJson(url, "/events?since=" + since, false);
+            if (root == null) {
                 return 1;
             }
-            for (var e : MAPPER.readTree(resp.body()).get("events")) {
+            for (var e : root.get("events")) {
                 System.out.println(e.get("seq").asInt() + " " + e.get("type").asText()
                         + " [" + e.get("sourceId").asText() + "] " + e.get("payload"));
             }
@@ -328,12 +321,11 @@ public final class DuoCli {
         initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
-            var resp = send("GET", url + "/topology", null);
-            if (resp.statusCode() / 100 != 2) {
-                System.out.println(resp.statusCode() + " " + resp.body());
+            var root = fetchJson(url, "/topology", false);
+            if (root == null) {
                 return 1;
             }
-            for (var n : MAPPER.readTree(resp.body()).get("nodes")) {
+            for (var n : root.get("nodes")) {
                 printTopologyRow(n.path("id").asText(), n.path("contract").asText(),
                         n.path("tier").asText(), n.path("count").asInt(1),
                         n.path("hosted").asBoolean(false), n.path("healthy"));
@@ -362,12 +354,11 @@ public final class DuoCli {
         initClientToken(args);
         String url = opt(args, "--url");
         if (url != null) {
-            var resp = send("GET", url + "/metrics", null);
-            if (resp.statusCode() / 100 != 2) {
-                System.err.println(resp.statusCode() + " " + resp.body());
+            String body = fetchText(url, "/metrics");
+            if (body == null) {
                 return 1;
             }
-            System.out.print(resp.body());
+            System.out.print(body);
             return 0;
         }
         ScenarioHost host = attachedOrDefault(args);
@@ -395,12 +386,11 @@ public final class DuoCli {
         List<Map<String, Object>> assertions = new ArrayList<>();
         String where;
         if (url != null) {
-            var resp = send("GET", url + "/events?since=" + since, null);
-            if (resp.statusCode() / 100 != 2) {
-                System.err.println(resp.statusCode() + " " + resp.body());
+            var root = fetchJson(url, "/events?since=" + since, true);
+            if (root == null) {
                 return 1;
             }
-            var node = MAPPER.readTree(resp.body()).get("events");
+            var node = root.get("events");
             events = new ArrayList<>();
             for (var e : node) {
                 events.add(MAPPER.convertValue(e, new com.fasterxml.jackson.core.type
@@ -431,6 +421,39 @@ public final class DuoCli {
         String name = opt(args, "--name") == null ? "default" : opt(args, "--name");
         ScenarioHost attached = ScenarioHost.attached(name);
         return attached != null ? attached : new ScenarioHost();
+    }
+
+    // ---- 双模命令的远程取数阶梯（卡 9）：状态码判定与失败打印唯一一份 ----
+
+    /** 远程响应的标准呈现：`状态码 响应体`，2xx 退出 0（stop/inject/status 的远程分支）。 */
+    private static int printRemote(HttpResponse<String> resp) {
+        System.out.println(resp.statusCode() + " " + resp.body());
+        return resp.statusCode() / 100 == 2 ? 0 : 1;
+    }
+
+    /**
+     * 远程取 JSON：非 2xx 打印状态与响应体（{@code errToStderr}＝true 时走 stderr——
+     * 「stdout 只出结论」的脚本契约）并返回 null，调用方据此返回退出码 1。
+     */
+    private static com.fasterxml.jackson.databind.JsonNode fetchJson(
+            String url, String path, boolean errToStderr) throws Exception {
+        var resp = send("GET", url + path, null);
+        if (resp.statusCode() / 100 != 2) {
+            (errToStderr ? System.err : System.out)
+                    .println(resp.statusCode() + " " + resp.body());
+            return null;
+        }
+        return MAPPER.readTree(resp.body());
+    }
+
+    /** 远程取文本（metrics 的 exposition format 非 JSON）：失败打印到 stderr 并返回 null。 */
+    private static String fetchText(String url, String path) throws Exception {
+        var resp = send("GET", url + path, null);
+        if (resp.statusCode() / 100 != 2) {
+            System.err.println(resp.statusCode() + " " + resp.body());
+            return null;
+        }
+        return resp.body();
     }
 
     private static HttpResponse<String> send(String method, String url, String body)
