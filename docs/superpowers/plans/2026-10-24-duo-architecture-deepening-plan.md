@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T8 已完成（卡 1–5 ✅，最新 `4f011f5`）；T9–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T9 已完成（卡 1–6 ✅，最新 `c191da5`）；T10–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -159,18 +159,16 @@ public final class DuoPortServer implements AutoCloseable {
 - [x] **Step 4**: VirtualWorkerTest 16 / VirtualEngineTest 12 零改动全绿 + 复现测试连续 10 次稳定绿
 - [x] **Step 5**: Commit（`fix: worker 槽位归还加代次守卫——restartInstance 不再越限；engine/worker 补 join parity`）
 
-### Task 9（卡 6）: 信任档三枚举收敛
+### Task 9（卡 6）: 信任档三枚举收敛 ✅
 
-**Files:**
-- Create: `duo-sim-scenario/src/main/java/io/duo/sim/scenario/InputTrust.java`（`CONFIG, EXTERNAL_INPUT`）
-- Delete: `ScenarioEngine.InputPolicy`、`ScenarioValidator.InputTrust`（嵌套）、`ScenarioHost.Trust`
-- Modify: ScenarioEngine.validated / ScenarioValidator 内部 / `duo-sim-control/.../ScenarioHost.java:76,144-146` / `RestControlServer`（startScenario 传参）/ `cli/DuoCli.java` / `library/ScenarioLibrary.java:170-171` + 各测试引用（grep `Trust\.|InputPolicy|InputTrust` 全库清点）
+**状态：已完成 `c191da5`（2026-10-25，信任档全部消费方测试零改动全绿；整 reactor 447/0/0/12，测试数不变＝纯类型收敛）**。
 
-- [ ] **Step 1**: 全库 grep 清点三个旧枚举的全部引用点（含测试），列入提交描述
-- [ ] **Step 2**: 新枚举落地 + 调用方直传（映射代码与散查删除；`EXTERNAL`→`EXTERNAL_INPUT` 更名）
-- [ ] **Step 3**: SecurityRemediationAcceptanceTest + 信任档相关测试零改动全绿；grep 确认旧枚举名零残留
-- [ ] **Step 4**: ARCHITECTURE §12.1 的 `Trust.CONFIG/EXTERNAL_INPUT` 表述同步
-- [ ] **Step 5**: Commit（`refactor: 输入信任档三枚举收敛为 scenario.InputTrust——加一档只改一处`）
+- [x] **Step 1**: 全库 grep 清点完成——三枚举引用全部在 main 代码（测试零引用，收敛不碰测试）；DuoCli 实际无引用（体检时的推测排除）
+- [x] **Step 2**: 顶层 `io.duo.sim.scenario.InputTrust{CONFIG, EXTERNAL_INPUT}` 落地；三处嵌套枚举删除、调用方直传；两处映射塌缩；`EXTERNAL`→`EXTERNAL_INPUT` 更名；engine 访问器 `inputPolicy()`→`inputTrust()`；ScenarioLibrary 第 4 入口并入同型
+- [x] **Step 3**: ScenarioHostTest 10 / RestConsoleApiTest 15 / RestControlServerTest 14 / SecurityRemediation（examples）零改动全绿；grep 旧枚举名零残留
+- [x] **Step 4**: ARCHITECTURE §12.1 表述同步（`Trust.*`→`InputTrust.*`）；DECISIONS 按「不改史」保留
+- [x] **Step 5**: Commit（`refactor: 输入信任档三枚举收敛为唯一 InputTrust——加一档只改一处`）
+
 
 ### Task 10（卡 7）: 事件投影统一 + 增量读取
 

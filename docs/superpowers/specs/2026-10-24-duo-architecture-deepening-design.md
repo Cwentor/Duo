@@ -26,7 +26,7 @@
 | 3 | 接线判定表 | Strong | §6.1 判定表两处平行实现；运行期三查缺第②③查 | ✅ 已完成 `13be711`+`df1b06a`+`7187228` |
 | 4 | 虚拟调度器服务端循环 | Strong | 两档 scheduler 连接循环近逐字重复，G10 修复已漏同步 | ✅ 已完成 `8e9cdb3` |
 | 5 | 组件停止/重启收尾纪律 | Strong | 同形状竞态只在调度器修过，worker/engine 仍裸露 | ✅ 已完成 `4f011f5` |
-| 6 | 输入信任档 | Worth exploring | 三个镜像枚举 + 一处绕过映射的第四入口 | ⏳ 未开始 |
+| 6 | 输入信任档 | Worth exploring | 三个镜像枚举 + 一处绕过映射的第四入口 | ✅ 已完成 `c191da5` |
 | 7 | 事件流消费投影 | Worth exploring | Event→Map/JSON 投影手抄 5 处；增量读取整表拷贝 | ⏳ 未开始（依赖卡 2） |
 | 8 | 故障动作样板与行为执行块 | Worth exploring | worker/engine 逐字级复制（resolveSlowFactor ×2、BehaviorProfile 拷贝 ×3） | ⏳ 未开始 |
 | 9 | 控制面观测读面 + CLI 双模 | Worth exploring | Map 即接口，host 接口随端点线性变宽；CLI 7 命令同构分支 | ⏳ 未开始（依赖卡 1/7） |
