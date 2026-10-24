@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T3 已完成（卡 1 ✅ `2d1db7b`、卡 2 ✅ `5d924af`）；T4–T6（卡 3）设计冻结待写码；T7–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T4 已完成（卡 1 ✅ `2d1db7b`、卡 2 ✅ `5d924af`、卡 3a ✅ `13be711`）；T5–T6（卡 3 余项）设计冻结待写码；T7–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -64,7 +64,9 @@
 
 ---
 
-### Task 4（卡 3a）: `WiringResolver.decide()` 判定表唯一权威
+### Task 4（卡 3a）: `WiringResolver.decide()` 判定表唯一权威 ✅
+
+**状态：已完成 `13be711`（2026-10-24，kernel 88 测 = 79+9 新增；整 reactor 437/0/0/12）**
 
 **Files:**
 - Modify: `duo-sim-kernel/src/main/java/io/duo/sim/kernel/core/WiringResolver.java`（新增嵌套类型 + 静态方法；`resolveNode` 改为消费 `decide()`）
@@ -87,11 +89,11 @@ public static SlotDecision decide(boolean consumerExternal, String explicitPath,
 // direct 且目标 !interfaceDirect → DIRECT_NOT_SUPPORTED；path ∉ {wire,direct} → UNKNOWN_PATH
 ```
 
-- [ ] **Step 1**: 写失败测试——判定表每行 + 两条缺省推断（有端点→WIRE、无端点→DIRECT）+ ok/fail 构造不变量（fail 时 path==null，ok 时 failure==null）
-- [ ] **Step 2**: `./mvnw -o -B -pl duo-sim-kernel test` 确认新用例 FAIL（类型不存在）
-- [ ] **Step 3**: 实现 `SlotFailure/SlotDecision/decide()`；`resolveNode` 的显式 path switch 与缺省推断段替换为 `decide()` 调用，异常文案**逐字保持现状**（含 UNKNOWN_PATH 的 `"unknown path 'x' on slot 'y' (expect wire|direct)"`）
-- [ ] **Step 4**: WiringResolverAndManagerTest 10 例零改动全绿 + WiringDecisionTest 全绿
-- [ ] **Step 5**: Commit（`refactor: §6.1 接线判定表收敛 kernel 唯一权威——decide() 结构化失败`）
+- [x] **Step 1**: 写失败测试——判定表每行 + 两条缺省推断（有端点→WIRE、无端点→DIRECT）+ ok/fail 构造不变量（fail 时 path==null，ok 时 failure==null）
+- [x] **Step 2**: `./mvnw -o -B -pl duo-sim-kernel test` 确认新用例 FAIL（类型不存在）
+- [x] **Step 3**: 实现 `SlotFailure/SlotDecision/decide()`；`resolveNode` 的显式 path switch 与缺省推断段替换为 `decide()` 调用，异常文案**逐字保持现状**（含 UNKNOWN_PATH 的 `"unknown path 'x' on slot 'y' (expect wire|direct)"`）
+- [x] **Step 4**: WiringResolverAndManagerTest 10 例零改动全绿 + WiringDecisionTest 全绿
+- [x] **Step 5**: Commit（`refactor: §6.1 接线判定表收敛 kernel 唯一权威——decide() 结构化失败`）
 
 ### Task 5（卡 3b）: 校验器规则 2/3 消费 decide() + 补 UNKNOWN_PATH 校验行
 
