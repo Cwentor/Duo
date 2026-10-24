@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T10 已完成（卡 1–7 ✅，最新 `75777b3`）；T11–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T11 已完成（卡 1–8 ✅，最新 `8cc563b`）；T12–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -185,7 +185,9 @@ public final class DuoPortServer implements AutoCloseable {
 - [x] **Step 3**: control 契约测试零改动全绿（/events next=since+size 裁判）
 - [x] **Step 4**: Commit（`refactor: 事件投影统一 EventProjections，/events 增量读取 O(新增)`）
 
-### Task 11（卡 8）: 故障态样板与行为执行块收敛
+### Task 11（卡 8）: 故障态样板与行为执行块收敛 ✅
+
+**状态：已完成 `8cc563b`（2026-10-25，VirtualWorkerTest 16 / VirtualEngineTest 12 零改动全绿；整 reactor 454/0/0/12）**。实测修正：emitLogs ×3 / reject ×3 为伪同形（载荷与联动副作用各异），保持各自实现（提交信息声明）；真收敛面为故障态（逐字同构 ×2）与 BehaviorProfile 8 参拷贝（×3）。
 
 **Files:**
 - Create: `duo-sim-components/src/main/java/io/duo/sim/components/support/FaultState.java`（三态+slow 因子+`apply(action, inject)` switch 与事件发布唯一一份；事件名前缀构造注入）
@@ -193,10 +195,10 @@ public final class DuoPortServer implements AutoCloseable {
 - Modify: VirtualWorker / VirtualEngine 故障段与执行块改委托；DemoRealWorker 执行块改用工厂
 - Test: 既有 VirtualWorkerTest 16 / VirtualEngineTest 12 零改动（事件名即契约的裁判）
 
-- [ ] **Step 1**: FaultState 落地 + worker 委托（`resolveSlowFactor` 逐字重复 ×2 消失）
-- [ ] **Step 2**: engine 委托；TaskBehaviors 工厂（BehaviorProfile 8 参拷贝 ×3、emitLogs ×3、reject ×3 消失）
-- [ ] **Step 3**: 组件测试零改动全绿；新增 1 例「FaultState.apply 发布的前缀事件名与旧实现逐串一致」守卫
-- [ ] **Step 4**: Commit（`refactor: 故障态与行为执行块收敛——新故障动作改一处`）
+- [x] **Step 1**: FaultState 落地 + worker 委托（净 -2250 字符；task-kill 专属拒绝文案经前置检查保留）
+- [x] **Step 2**: engine 委托（净 -2600 字符）；TaskBehaviors 工厂（8 参拷贝 ×3 消失；emitLogs/reject 判定伪同形不收敛）
+- [x] **Step 3**: 组件测试零改动全绿；新增 FaultStateTest 6 例（前缀事件名逐串一致/幂等/倍数/拒绝/reset）
+- [x] **Step 4**: Commit（`refactor: 故障态与行为执行块收敛——worker/engine 共享 FaultState，加故障动作改一处`）
 
 ### Task 12（卡 9）: 观测读面投影 + CLI 双模命令表
 
