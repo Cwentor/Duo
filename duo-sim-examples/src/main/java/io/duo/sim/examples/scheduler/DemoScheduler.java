@@ -1,28 +1,17 @@
 package io.duo.sim.examples.scheduler;
 
-import io.duo.sim.components.scheduler.DispatchSelector;
 import io.duo.sim.components.scheduler.SchedulerStateMachine;
+import io.duo.sim.components.server.WorkerFeedServer;
 import io.duo.sim.kernel.api.SutContext;
 import io.duo.sim.kernel.api.SutMain;
 import io.duo.sim.kernel.contract.RegistryContract;
 import io.duo.sim.protocol.FrameConnection;
-import io.duo.sim.protocol.message.HeartbeatReport;
-import io.duo.sim.protocol.message.RegisterRequest;
-import io.duo.sim.protocol.message.RegisterResponse;
-import io.duo.sim.protocol.message.SlotReport;
-import io.duo.sim.protocol.message.TaskAck;
 import io.duo.sim.protocol.message.TaskDispatch;
-import io.duo.sim.protocol.message.TaskStatus;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -33,26 +22,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 最大的实例）→ 发布 sut.* 事实 → DAG 全部终态后 {@code run()} 返回（场景结束信号，
  * 计划 §2/§7.3）。onStop 注册协作停止。
  *
- * <p>M5 起状态机与选择器已下沉到 {@code duo-sim-components}（{@code io.duo.sim.components.scheduler}）：
- * virtual 档 {@code VirtualScheduler} 与本 real 档参考实现**共用同一份 G9 加固过的调度语义**，
- * 避免两档行为分叉（同构纪律）。
+ * <p>M5 起状态机与选择器已下沉到 {@code duo-sim-components}（{@code io.duo.sim.components.scheduler}），
+ * 连接面（accept/注册握手/读帧分发/槽位记账含 G10 拒绝回滚）自架构深化卡 4 起由两档共用的
+ * {@link WorkerFeedServer} 承载：virtual 档 {@code VirtualScheduler} 与本 real 档参考实现
+ * **共用同一份协议机制与调度语义**，两档行为不可能分叉（同构纪律）。
  *
  * <p>配置项（节点 config）：{@code dag.tasks}（逗号分隔）、
  * {@code dag.deps.<task>}（逗号分隔上游，可省略）。M0 固定 5 任务演示拓扑由默认值给出。
  */
 public final class DemoScheduler implements SutMain {
 
-    /** 注册阶段（首帧）读超时：半开连接不得无限占用资源（M4 压测）。 */
-    private static final int REGISTER_TIMEOUT_MS = 10_000;
-
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private ServerSocket server;
-    private final List<FrameConnection> workerConns = new CopyOnWriteArrayList<>();
-    private final Map<String, WorkerFeed> feeds = new ConcurrentHashMap<>();
+    /** worker 连接面（协议机制 + 槽位记账含 G10 拒绝回滚——两档 scheduler 共用，卡 4）。 */
+    private WorkerFeedServer feedServer;
     private SchedulerStateMachine stateMachine;
     private SutContext ctx;
-    /** 派发选择器（T19(a)）：freeSlots 视图 + 最大者/轮转。 */
-    private final DispatchSelector selector = new DispatchSelector();
     /** registry 接入（D1：direct 门面 或 wire 真实 ZK 客户端）。 */
     private RegistryAccess registryAccess;
     /** 选主代次（每次成功注册递增；载荷进 sut.leader-elected）。 */
@@ -75,30 +59,19 @@ public final class DemoScheduler implements SutMain {
             new java.util.concurrent.atomic.AtomicLong();
     private volatile Thread heartbeatMeter;
 
-    /** worker 连接的下行推送。 */
-    private static final class WorkerFeed {
-        final String name;
-        final FrameConnection conn;
-
-        WorkerFeed(String instanceName, FrameConnection conn) {
-            this.name = instanceName;
-            this.conn = conn;
-        }
-    }
-
     @Override
     public void run(SutContext ctx) throws Exception {
         this.ctx = ctx;
         running.set(true);
 
-        // 1) 绑定自身 Duo 端点并注册到 registry（发现路径，§2）
-        server = new ServerSocket();
-        // M4 T36：accept backlog 调大（万级并发拨号下缺省 50 会拒连；SUT 自身变更，D1）
-        server.bind(new InetSocketAddress("127.0.0.1", 0), 4096);
+        // 1) 绑定自身 Duo 端点并注册到 registry（发现路径，§2）——连接面（accept/注册/读帧/
+        //    槽位记账含 G10 拒绝回滚）由两档共用的 WorkerFeedServer 承载
+        feedServer = new WorkerFeedServer("demo-scheduler", new FeedListener());
+        int duoPort = feedServer.start();
         // M2 D1：两种接入路径——direct（virtual 档门面，M0/M1 路径）或 wire（embedded 档
         // 真实 ZK，SUT 代码切 ZK 客户端）。按 wiring 配置与上下文自动选择。
         registryAccess = resolveRegistryAccess();
-        registryAccess.register(server.getLocalPort());
+        registryAccess.register(duoPort);
         ctx.ready(); // 就绪：端点已可被发现
 
         // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务）
@@ -112,8 +85,7 @@ public final class DemoScheduler implements SutMain {
         ctx.events().publish("sut.scheduler-started",
                 Map.of("tasks", String.join(",", stateMachine.topoTasks())));
 
-        // 3) accept worker 拨号
-        Thread acceptor = Thread.ofVirtual().name("demo-scheduler-accept").start(this::acceptLoop);
+        // 3) pump 派发环（accept 环在 WorkerFeedServer 内）
         startHeartbeatMeter();
         try {
             // 4) 等全部任务终态（状态机驱动；run() 返回即 sut.exited）
@@ -124,7 +96,6 @@ public final class DemoScheduler implements SutMain {
             ctx.events().publish("sut.dag-terminal", Map.of());
         } finally {
             running.set(false);
-            acceptor.interrupt();
             stopHeartbeatMeter();
             closeAll();
         }
@@ -151,7 +122,7 @@ public final class DemoScheduler implements SutMain {
                             "ratePerSec", window / 5.0,
                             "total", total,
                             "accepted", accepted.get(),
-                            "feeds", feeds.size()));
+                            "feeds", feedServer == null ? 0 : feedServer.registeredInstances().size()));
                 }
             }
         });
@@ -164,112 +135,55 @@ public final class DemoScheduler implements SutMain {
         }
     }
 
-    private void acceptLoop() {
-        try {
-            while (running.get()) {
-                Socket s = server.accept();
-                accepted.incrementAndGet();
-                // 每连接独立虚拟线程（M4 压测修复）：注册/读取的任何失败只影响该连接，
-                // 不拖垮 accept 环——旧实现 register 在 accept 线程内串行执行且只捕
-                // IOException，一个坏连接即可让整个 acceptor 静默死亡（万级爬坡下
-                // ~800 条已建立连接永远无人 accept，客户端无超时则永久挂起、无离线事件）
-                Thread.ofVirtual().name("demo-scheduler-conn").start(() -> handleConnection(s));
-            }
-        } catch (IOException e) {
-            // server 关闭
-        }
-    }
+    /** 连接面回调 → 事实发布与状态机驱动（协议机制与槽位记账在 WorkerFeedServer，卡 4）。 */
+    private final class FeedListener implements WorkerFeedServer.Listener {
 
-    /** 单连接处理：注册（限时）→ 稳态读取。注册阶段失败仅丢弃该连接（§12 不静默）。 */
-    private void handleConnection(Socket s) {
-        WorkerFeed feed = null;
-        try {
-            s.setSoTimeout(REGISTER_TIMEOUT_MS); // 首帧/注册限时：半开连接不阻塞资源
-            feed = register(s);
-            s.setSoTimeout(0); // 稳态读可无限期等待下行
-            readFeed(feed);
-        } catch (IOException | RuntimeException e) {
-            // 注册阶段失败（feed==null）：仅丢弃该连接并记一级事件；
-            // 稳态 IOException 已在 readFeed 内处理（onFeedLost）；
-            // 稳态 RuntimeException（状态机异常等）→ 防御性按失联收敛
-            if (feed == null) {
-                ctx.events().publish("sut.register-failed", Map.of(
-                        "error", String.valueOf(e.getMessage())));
-            } else if (running.get()) {
-                onFeedLost(feed);
-            }
-            try {
-                s.close();
-            } catch (IOException ignored) {
-                // 尽力而为
+        @Override
+        public void onAccepted() {
+            accepted.incrementAndGet();
+        }
+
+        @Override
+        public void onRegistered(String instance) {
+            ctx.events().publish("sut.worker-registered", Map.of("instance", instance));
+        }
+
+        @Override
+        public void onRegisterFailed(String error) {
+            ctx.events().publish("sut.register-failed", Map.of("error", error));
+        }
+
+        @Override
+        public void onStatus(String taskId, String state, String detail, String instance) {
+            SchedulerStateMachine sm = stateMachine;
+            if (sm != null) {
+                // T19(c)：线协议 TaskStatus 自带 instanceName——透传给状态事件（断言数据契约）
+                sm.onStatus(taskId, state, detail, instance);
             }
         }
-    }
 
-    private WorkerFeed register(Socket s) throws IOException {
-        var conn = new FrameConnection(s);
-        var first = conn.read();
-        if (!(first instanceof RegisterRequest req)) {
-            conn.write(new RegisterResponse(false, "first frame must be register"));
-            conn.close();
-            throw new IOException("bad first frame");
-        }
-        conn.write(new RegisterResponse(true, null));
-        var feed = new WorkerFeed(req.instanceName(), conn);
-        workerConns.add(conn);
-        feeds.put(req.instanceName(), feed);
-        selector.register(req.instanceName());
-        ctx.events().publish("sut.worker-registered",
-                Map.of("instance", req.instanceName()));
-        return feed;
-    }
-
-    private void readFeed(WorkerFeed feed) {
-        try {
-            while (running.get()) {
-                var msg = feed.conn.read();
-                if (msg instanceof TaskStatus ts) {
-                    // T19(c)：线协议 TaskStatus 自带 instanceName——透传给状态事件（断言数据契约）
-                    stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail(),
-                            ts.instanceName());
-                } else if (msg instanceof HeartbeatReport hb) {
-                    long n = heartbeatTotal.incrementAndGet();
-                    heartbeatWindow.incrementAndGet();
-                    if (n % heartbeatEventSampleRate == 0) {
-                        ctx.events().publish("sut.heartbeat",
-                                Map.of("instance", hb.instanceName()));
-                    }
-                } else if (msg instanceof SlotReport sr) {
-                    // T19(a)：维护调度侧槽位视图（此前被静默丢弃）
-                    if (feed.name.equals(sr.instanceName())) {
-                        selector.onSlotReport(feed.name, sr.freeSlots());
-                    }
-                } else if (msg instanceof TaskAck) {
-                    // 受理即视为在途，无需额外动作
-                }
+        @Override
+        public void onHeartbeat(String instance) {
+            long n = heartbeatTotal.incrementAndGet();
+            heartbeatWindow.incrementAndGet();
+            if (n % heartbeatEventSampleRate == 0) {
+                ctx.events().publish("sut.heartbeat", Map.of("instance", instance));
             }
-        } catch (IOException e) {
-            onFeedLost(feed);
         }
-    }
 
-    /**
-     * 连接丢失 → 崩溃转移（T19(b)）：从 feeds 移除 + 其在途任务重置重派发。
-     * 检测可靠：worker 实例崩溃时 closeQuietly 关 socket，此处阻塞读即刻 IOException。
-     */
-    private void onFeedLost(WorkerFeed feed) {
-        feeds.remove(feed.name);
-        workerConns.remove(feed.conn);
-        selector.onRemoved(feed.name);
-        if (stateMachine == null) {
-            return;
-        }
-        List<String> requeued = stateMachine.onInstanceLost(feed.name, "connection lost");
-        if (!requeued.isEmpty()) {
-            ctx.events().publish("sut.instance-lost",
-                    Map.of("instance", feed.name, "requeued", String.join(",", requeued)));
-        } else {
-            ctx.events().publish("sut.instance-lost", Map.of("instance", feed.name));
+        @Override
+        public void onFeedLost(String instance) {
+            SchedulerStateMachine sm = stateMachine;
+            if (sm == null) {
+                return;
+            }
+            List<String> requeued = sm.onInstanceLost(instance, "connection lost");
+            if (!requeued.isEmpty()) {
+                ctx.events().publish("sut.instance-lost",
+                        Map.of("instance", instance, "requeued", String.join(",", requeued)));
+            } else {
+                ctx.events().publish("sut.instance-lost", Map.of("instance", instance));
+            }
         }
     }
 
@@ -279,22 +193,22 @@ public final class DemoScheduler implements SutMain {
      */
     private void pumpDispatches() {
         for (String task : stateMachine.dispatchable()) {
-            String target = selector.select();
+            String target = feedServer.selector().select();
             if (target == null) {
                 return; // 本轮无可用 worker（slots 耗尽或未上报槽位）
             }
-            WorkerFeed best = feeds.get(target);
-            if (best == null) {
-                selector.onRemoved(target);
+            FrameConnection conn = feedServer.feed(target);
+            if (conn == null) {
+                feedServer.selector().onRemoved(target);
                 continue;
             }
             try {
-                int attempt = stateMachine.dispatch(task, best.name);
-                selector.onDispatched(best.name); // 本地递减；SlotReport 到达时权威刷新
-                best.conn.write(new TaskDispatch(task, task, attempt, 1, 1));
+                int attempt = stateMachine.dispatch(task, target);
+                feedServer.selector().onDispatched(target); // 本地递减；SlotReport 到达时权威刷新
+                conn.write(new TaskDispatch(task, task, attempt, 1, 1));
                 // 注意：sut.task-dispatched 由 StateListener.onDispatch 单一来源发布（T19(c) 去重）
             } catch (IOException e) {
-                onFeedLost(best);
+                feedServer.drop(target);
             }
         }
     }
@@ -536,20 +450,9 @@ public final class DemoScheduler implements SutMain {
         if (registryAccess instanceof ZkRegistryAccess zk) {
             zk.close();
         }
-        for (var c : workerConns) {
-            try {
-                c.close();
-            } catch (IOException ignored) {
-                // 忽略
-            }
-        }
-        workerConns.clear();
-        if (server != null && !server.isClosed()) {
-            try {
-                server.close();
-            } catch (IOException ignored) {
-                // 忽略
-            }
+        if (feedServer != null) {
+            // 连接关闭 + acceptor join barrier 在共享件内（两档同款收尾纪律）
+            feedServer.close();
         }
     }
 }
