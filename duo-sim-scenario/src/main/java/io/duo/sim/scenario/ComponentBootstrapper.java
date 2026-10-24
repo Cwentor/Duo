@@ -79,7 +79,7 @@ final class ComponentBootstrapper {
      * 两形态共用：① SUT 的依赖先起（纳入 manager 拆除序列）；② 按 wiring 槽把目标节点
      * **实际**端点解析为 SUT 端点清单（external 形态写入端点配置文件，§7.3 主途径）。
      */
-    ScenarioEngine.SutLauncherHandle startSut(ScenarioEngine.InputPolicy inputPolicy) {
+    ScenarioEngine.SutLauncherHandle startSut(InputTrust inputTrust) {
         var spec = scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
         Map<String, Scenario.NodeSpec> specById = indexSpecs();
@@ -87,13 +87,13 @@ final class ComponentBootstrapper {
         Map<String, String> sutEndpoints = sutEndpoints(spec, specById);
 
         if (NodeSpecs.isExternal(spec)) {
-            return startExternalSut(spec, sutEndpoints, inputPolicy);
+            return startExternalSut(spec, sutEndpoints, inputTrust);
         }
         if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
             throw new IllegalStateException("SUT launch.mode must be in-process (with main) "
                     + "or external (with configOut): " + spec.id());
         }
-        assertMainAllowed(spec.launch().main(), inputPolicy);
+        assertMainAllowed(spec.launch().main(), inputTrust);
         try {
             var cls = Class.forName(spec.launch().main());
             var main = (io.duo.sim.kernel.api.SutMain)
@@ -150,10 +150,10 @@ final class ComponentBootstrapper {
      */
     private ScenarioEngine.SutLauncherHandle startExternalSut(Scenario.NodeSpec spec,
                                                               Map<String, String> sutEndpoints,
-                                                              ScenarioEngine.InputPolicy inputPolicy) {
+                                                              InputTrust inputTrust) {
         // 纵深防御（安全审计 C-1）：外部输入档下连「解析命令行」都不做——校验器已拒绝该形态，
         // 这里再挡一道，避免将来有人绕过 validated(...) 直接 new ScenarioEngine(...) 时失守。
-        if (inputPolicy == ScenarioEngine.InputPolicy.EXTERNAL_INPUT) {
+        if (inputTrust == InputTrust.EXTERNAL_INPUT) {
             throw new IllegalArgumentException("external SUT process launch is not allowed for "
                     + "external input (launch.command / launch.allowExternalProcess): " + spec.id());
         }
@@ -171,8 +171,8 @@ final class ComponentBootstrapper {
      * 任意类加载守卫（安全审计 H-3）：外部输入档只允许加载框架自身命名空间下的 SUT 主类。
      * 本机配置档不受限（与 {@code java -cp ... Main} 同级信任）。
      */
-    private static void assertMainAllowed(String main, ScenarioEngine.InputPolicy inputPolicy) {
-        if (main == null || inputPolicy != ScenarioEngine.InputPolicy.EXTERNAL_INPUT) {
+    private static void assertMainAllowed(String main, InputTrust inputTrust) {
+        if (main == null || inputTrust != InputTrust.EXTERNAL_INPUT) {
             return;
         }
         if (ScenarioValidator.isTrustedMainClass(main)) {

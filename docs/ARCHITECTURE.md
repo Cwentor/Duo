@@ -505,8 +505,8 @@ REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 与
 
 | 输入来源 | 信任档 | 能力 |
 | --- | --- | --- |
-| 本机 YAML 文件 / CLI / 测试 / classpath 资源 | 配置档（`Trust.CONFIG`，边界＝本机权限） | 与整改前一致：可起外部进程、可加载 SUT 主类 |
-| 控制面 `POST /scenario` body、任何远程/浏览器来源 | 外部输入档（`Trust.EXTERNAL_INPUT`） | 禁派生进程、禁框架外主类、`config` 键白名单、值禁绝对路径/URL scheme、规模上限 |
+| 本机 YAML 文件 / CLI / 测试 / classpath 资源 | 配置档（`InputTrust.CONFIG`，边界＝本机权限） | 与整改前一致：可起外部进程、可加载 SUT 主类 |
+| 控制面 `POST /scenario` body、任何远程/浏览器来源 | 外部输入档（`InputTrust.EXTERNAL_INPUT`） | 禁派生进程、禁框架外主类、`config` 键白名单、值禁绝对路径/URL scheme、规模上限 |
 
 三层防线，缺一层都不成立：
 

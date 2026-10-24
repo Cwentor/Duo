@@ -20,7 +20,7 @@ import java.util.Set;
  * 规则 2 做简写补全与静态一致性检查；6 校验时间线动作；7 校验剧本绑定；
  * 8 固定端口可用性；4 external 节点端点声明与 ready 探针。
  *
- * <p><b>规则 9–11 只在 {@link InputTrust#EXTERNAL} 档生效</b>（控制面 {@code POST /scenario}
+ * <p><b>规则 9–11 只在 {@link InputTrust#EXTERNAL_INPUT} 档生效</b>（控制面 {@code POST /scenario}
  * 等外部输入）。它们不改变「本机 YAML 文件」的能力——本地文件与命令行同级信任，
  * 能力保持原样（这张网只兜外部输入）。
  */
@@ -32,9 +32,6 @@ public final class ScenarioValidator {
             return errors.isEmpty();
         }
     }
-
-    /** 输入信任档：本机配置（不限）／外部输入（规则 9–11 生效）。 */
-    public enum InputTrust { CONFIG, EXTERNAL }
 
     // ---- 外部输入档的规模上限（审计 H-2：无认证 DoS 的次级防线）----
 
@@ -349,7 +346,7 @@ public final class ScenarioValidator {
         }
 
         // 规则 9–11：外部输入的信任边界（安全审计 2026-09-20）
-        if (trust == InputTrust.EXTERNAL) {
+        if (trust == InputTrust.EXTERNAL_INPUT) {
             checkExternalInput(scenario, byId, metadataByNode, errors);
         }
 

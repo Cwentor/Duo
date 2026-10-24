@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * 写/删一律 {@link IllegalStateException}（REST 层映射 405）。
  *
  * <p>{@link #validateYaml} 是**外部输入档**全量校验（规则 1–8 + 9–11）：
- * {@link ScenarioValidator} 以 {@code InputTrust.EXTERNAL} 构造，与 {@code POST /scenario}
+ * {@link ScenarioValidator} 以 {@code InputTrust.EXTERNAL_INPUT} 构造，与 {@code POST /scenario}
  * 同档——经 Web 上传的 YAML 不因「存成了文件」而升档（设计 §7.4）。
  */
 public final class ScenarioLibrary {
@@ -168,7 +168,7 @@ public final class ScenarioLibrary {
             var scenario = ScenarioLoader.load(
                     new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
             var report = new ScenarioValidator(ContractRegistry.loadFromServiceLoader(),
-                    ScenarioValidator.InputTrust.EXTERNAL).validate(scenario);
+                    io.duo.sim.scenario.InputTrust.EXTERNAL_INPUT).validate(scenario);
             return report.ok() ? List.of() : List.copyOf(report.errors());
         } catch (RuntimeException e) {
             return List.of(String.valueOf(e.getMessage()));

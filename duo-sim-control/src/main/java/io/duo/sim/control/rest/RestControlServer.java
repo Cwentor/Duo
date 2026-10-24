@@ -222,7 +222,7 @@ public final class RestControlServer implements AutoCloseable {
             Files.writeString(tmp, yaml, StandardCharsets.UTF_8);
             // 传文件名而非绝对路径：宿主按名打包，内部只保留"删除它"所需的句柄，
             // 避免把本机临时目录写进错误消息/事件（审计 M-5 的同类口径）。
-            call.ok(host.start(tmp, ScenarioHost.Trust.EXTERNAL_INPUT,
+            call.ok(host.start(tmp, io.duo.sim.scenario.InputTrust.EXTERNAL_INPUT,
                     tmp.getFileName().toString()));
             started = true;
         } catch (IllegalStateException e) {

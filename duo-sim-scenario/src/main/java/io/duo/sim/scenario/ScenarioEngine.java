@@ -60,8 +60,8 @@ public final class ScenarioEngine implements AutoCloseable {
     private volatile TimelineScheduler timeline;
     /** custom-hook 注册表（M5/G5）：可用 {@link #withHooks} 注入，默认空表。 */
     private HookRegistry hookRegistry = new HookRegistry();
-    /** 输入信任档（默认＝本机文件/classpath 配置）。 */
-    private InputPolicy inputPolicy = InputPolicy.CONFIG;
+    /** 输入信任档（默认＝本机文件/classpath 配置）。全链路唯一类型：{@link InputTrust}（卡 6）。 */
+    private InputTrust inputTrust = InputTrust.CONFIG;
 
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
@@ -101,38 +101,25 @@ public final class ScenarioEngine implements AutoCloseable {
     }
 
     /** 当前输入信任档。 */
-    public InputPolicy inputPolicy() {
-        return inputPolicy;
+    public InputTrust inputTrust() {
+        return inputTrust;
     }
 
     /** 加载即校验（§8 快速失败：errors 非空抛 IllegalArgumentException）。 */
     public static ScenarioEngine validated(Scenario scenario, ContractRegistry registry) {
-        return validated(scenario, registry, InputPolicy.CONFIG);
+        return validated(scenario, registry, InputTrust.CONFIG);
     }
 
-    /**
-     * 输入来源的信任档（安全审计 2026-09-20）。
-     *
-     * <p>{@link #CONFIG}＝场景 YAML 来自本机文件/classpath：与「启动一个进程」同级，
-     * 校验按**配置**对待，能力不缩水；{@link #EXTERNAL_INPUT} 由控制面把外部输入显式降级：
-     * 禁止派生外部进程、config 键必须白名单、拓扑有界。
-     */
-    public enum InputPolicy { CONFIG, EXTERNAL_INPUT }
-
-    /** 校验 + 绑定输入信任档（EXTERNAL_INPUT 时按不可信输入收窄能力）。 */
+    /** 校验 + 绑定输入信任档（EXTERNAL_INPUT 时按不可信输入收窄能力，D10/D11）。 */
     public static ScenarioEngine validated(Scenario scenario, ContractRegistry registry,
-                                           InputPolicy policy) {
-        var report = new ScenarioValidator(registry,
-                policy == InputPolicy.EXTERNAL_INPUT
-                        ? ScenarioValidator.InputTrust.EXTERNAL
-                        : ScenarioValidator.InputTrust.CONFIG)
-                .validate(scenario);
+                                           InputTrust trust) {
+        var report = new ScenarioValidator(registry, trust).validate(scenario);
         if (!report.ok()) {
             throw new IllegalArgumentException("scenario validation failed: "
                     + String.join("; ", report.errors()));
         }
         ScenarioEngine e = new ScenarioEngine(scenario, registry);
-        e.inputPolicy = policy;
+        e.inputTrust = trust;
         e.warnings.addAll(report.warnings());
         return e;
     }
@@ -146,7 +133,7 @@ public final class ScenarioEngine implements AutoCloseable {
      * {@code sut.exited/sut.crashed} 事件自动触发场景结束信号。
      */
     public SutLauncherHandle startSut() {
-        var handle = boot.startSut(inputPolicy);
+        var handle = boot.startSut(inputTrust);
         if (handle.isExternal()) {
             this.externalSut = handle.external();
         }
