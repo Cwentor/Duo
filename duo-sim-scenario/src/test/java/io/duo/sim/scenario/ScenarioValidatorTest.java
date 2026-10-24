@@ -98,11 +98,23 @@ class ScenarioValidatorTest {
                 List.of(), List.of());
     }
 
+    /** 卡 3b：未知 path 值此前漏检（垃圾 path 过静态校验、启动期 WiringResolver 才炸）——判定表收敛后静态校验补上这一行。 */
+    @Test
+    void rule3UnknownPathValueIsRejectedAtValidation() {
+        var v = new ScenarioValidator(registry());
+        var r = v.validate(scenario(List.of(
+                node("zk", "registry", "virtual", true, null),
+                node("w", "worker", "virtual", false,
+                        Map.of("registry", new Scenario.WiringSpec("zk", "registry", "bogus"))))));
+        assertFalse(r.ok());
+        assertTrue(String.join(";", r.errors()).contains("unknown path"),
+                () -> "garbage wiring path must fail validation, got: " + r.errors());
+    }
+
     // ---- 规则 5 ----
 
     @Test
-    void rule5ExactlyOneSut() {
-        var v = new ScenarioValidator(registry());
+    void rule5ExactlyOneSut() {        var v = new ScenarioValidator(registry());
         var r1 = v.validate(scenario(List.of(
                 node("zk", "registry", "virtual", false, null))));
         assertFalse(r1.ok());

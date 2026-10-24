@@ -184,23 +184,25 @@ public final class ScenarioValidator {
                     continue; // 规则 1 已报
                 }
                 boolean hasEndpoint = m.endpointShape() != io.duo.sim.kernel.api.EndpointShape.NONE;
-                String path = slot.path() == null ? (hasEndpoint ? "wire" : "direct")
-                        : slot.path();
-                boolean consumerExternal = isExternal(n);
-                if ("wire".equals(path) && !hasEndpoint) {
-                    errors.add("node " + n.id() + ": slot '" + w.getKey()
-                            + "' targets endpoint-less '" + target.id()
-                            + "'; upgrade target tier or use direct path");
+                // §6.1 判定表（kernel 唯一权威，卡 3b）：本侧只做消息格式化，判定逻辑不再平行实现
+                var decision = io.duo.sim.kernel.core.WiringResolver.decide(
+                        isExternal(n), slot.path(), hasEndpoint, m.interfaceDirect());
+                if (decision.failure() == null) {
+                    continue;
                 }
-                if ("direct".equals(path)) {
-                    if (consumerExternal) {
-                        errors.add("node " + n.id() + " is external: slot '" + w.getKey()
-                                + "' cannot use interface-direct (§6)");
-                    }
-                    if (!m.interfaceDirect()) {
-                        errors.add("node " + n.id() + ": slot '" + w.getKey() + "' targets '"
-                                + target.id() + "' which does not support interface-direct");
-                    }
+                switch (decision.failure()) {
+                    case WIRE_WITHOUT_ENDPOINT -> errors.add("node " + n.id() + ": slot '"
+                            + w.getKey() + "' targets endpoint-less '" + target.id()
+                            + "'; upgrade target tier or use direct path");
+                    case DIRECT_EXTERNAL_CONSUMER -> errors.add("node " + n.id()
+                            + " is external: slot '" + w.getKey()
+                            + "' cannot use interface-direct (§6)");
+                    case DIRECT_NOT_SUPPORTED -> errors.add("node " + n.id() + ": slot '"
+                            + w.getKey() + "' targets '" + target.id()
+                            + "' which does not support interface-direct");
+                    case UNKNOWN_PATH -> errors.add("node " + n.id() + ": unknown path '"
+                            + slot.path() + "' on slot '" + w.getKey()
+                            + "' (expect wire|direct)");
                 }
             }
         }
