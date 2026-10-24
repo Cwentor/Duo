@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T9 已完成（卡 1–6 ✅，最新 `c191da5`）；T10–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T10 已完成（卡 1–7 ✅，最新 `75777b3`）；T11–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -170,7 +170,9 @@ public final class DuoPortServer implements AutoCloseable {
 - [x] **Step 5**: Commit（`refactor: 输入信任档三枚举收敛为唯一 InputTrust——加一档只改一处`）
 
 
-### Task 10（卡 7）: 事件投影统一 + 增量读取
+### Task 10（卡 7）: 事件投影统一 + 增量读取 ✅
+
+**状态：已完成 `75777b3`（2026-10-25，/events 游标契约经 RestControlServerTest 14 例零改动钉住；整 reactor 448/0/0/12）**。实测修正：体检所说「4 处投影」为 2 处同形（host.eventsSince + server.reportToJson，已收敛）+ 2 处异构（events.jsonl 书写端契约不同——METRICS.md §4 钉住；MetricsCollector 是计数器非投影），异构两处保持独立并已在 EventProjections javadoc 与提交信息声明。
 
 **Files:**
 - Create: `duo-sim-kernel/src/main/java/io/duo/sim/kernel/api/EventProjections.java`（`static Map<String,Object> toMap(Event)`——纯 Map，无 Jackson）
@@ -178,10 +180,10 @@ public final class DuoPortServer implements AutoCloseable {
 - Modify: `ScenarioHost.eventsSince`、`RestControlServer.reportToJson`、`EventRecorder.toJsonLine`、`MetricsCollector`（四处投影改走 EventProjections；host 改走 journal 增量）
 - Test: EventJournalTest 增量用例 + RestControlServerTest 既有游标契约零改动
 
-- [ ] **Step 1**: 失败测试——journal.eventsSince 增量语义（since 后只含新增，锁内切片）
-- [ ] **Step 2**: EventProjections + journal.eventsSince 落地；四处消费方切换（Map 形状逐键保持——`timestamp` 仍 `toString()`）
-- [ ] **Step 3**: control 契约测试零改动全绿（`/events` next=since+size 裁判）
-- [ ] **Step 4**: Commit（`refactor: 事件投影统一 EventProjections，/events 增量读取 O(new)`）
+- [x] **Step 1**: 失败测试——journal.eventsSince 增量语义（尾部切片/越界空表/不动本体）
+- [x] **Step 2**: EventProjections（kernel api，纯 Map）+ journal/engine.eventsSince 落地；两处同形消费方切换（Map 形状逐键保持）
+- [x] **Step 3**: control 契约测试零改动全绿（/events next=since+size 裁判）
+- [x] **Step 4**: Commit（`refactor: 事件投影统一 EventProjections，/events 增量读取 O(新增)`）
 
 ### Task 11（卡 8）: 故障态样板与行为执行块收敛
 
