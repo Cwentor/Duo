@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T6 已完成（卡 1 ✅ `2d1db7b`、卡 2 ✅ `5d924af`、卡 3 ✅ `13be711`+`df1b06a`+`7187228`）；T7–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T7 已完成（卡 1 ✅、卡 2 ✅、卡 3 ✅、卡 4 ✅ `8e9cdb3`）；T8–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -115,7 +115,9 @@ public static SlotDecision decide(boolean consumerExternal, String explicitPath,
 - [x] **Step 4**: kernel + scenario + components + control 全绿（`-pl duo-sim-control -am test`：91/61/120/46）
 - [x] **Step 5**: Commit（`fix: 运行期三查补齐——Target 携带 supportedFaults，precheck 实现第②③查`）
 
-### Task 7（卡 4）: DUO_PORT 服务端连接循环共享（两档 scheduler 同源）
+### Task 7（卡 4）: DUO_PORT 服务端连接循环共享（两档 scheduler 同源）✅
+
+**状态：已完成 `8e9cdb3`（2026-10-24，WorkerFeedServerTest 5 新例；VirtualSchedulerTest 10 零改动；整 reactor 446/0/0/12）**。共享件定名 `WorkerFeedServer`（比计划的 DuoPortServer 更准域：它承载的是 worker 连接面，且直接持有 DispatchSelector——槽位记账全进循环，G10 类漏接结构性不可能）；VirtualEngine 是另一协议形状（首帧 task-dispatch、无注册握手），不入共享件（真实差异，类注释明示边界）。
 
 **Files:**
 - Create: `duo-sim-components/src/main/java/io/duo/sim/components/server/DuoPortServer.java`
@@ -140,12 +142,12 @@ public final class DuoPortServer implements AutoCloseable {
 }
 ```
 
-- [ ] **Step 1**: **差异清单先行**——逐行对照 VirtualScheduler 与 DemoScheduler 两段循环，产出「真实差异（保留各自实现）/伪差异（收敛）」清单贴进 PR 描述；首帧差异（engine 的 task-dispatch 首帧）决定 VirtualEngine 接入深度（参数化接入或维持独立，以清单为准）
-- [ ] **Step 2**: 失败测试——DemoScheduler 派发失败必须回滚槽位（当前漏接，红）
-- [ ] **Step 3**: 实现 `DuoPortServer`（从 VirtualScheduler 循环体上收，逐行语义保持）；VirtualScheduler 改消费
-- [ ] **Step 4**: DemoScheduler 接入 + 回滚钩子接线；Step 2 用例转绿
-- [ ] **Step 5**: VirtualSchedulerTest 11 例零改动全绿 + examples 验收全绿
-- [ ] **Step 6**: Commit（`fix: 两档 scheduler 服务端连接循环同源——DemoScheduler 补 G10 槽位回滚漏接`）
+- [x] **Step 1**: **差异清单先行**——实测：真差异保留（VS freeze 停摆、VS 20ms pump 线程 vs Demo 50ms 内联环、Demo 心跳 meter 窗口/ZK 接入/accept 计数）；伪差异收敛（线程命名、事件汇点、backlog/超时常量）。engine 首帧差异判定为**另一协议形状**，不入共享件
+- [x] **Step 2**: 失败测试——G10 回滚改在共享件上钉住（WorkerFeedServerTest.rejectedStatusRollsBackLocalSlotReservation：单格容量拒绝后必须可再选中、回滚不超过上报容量）；两档经同一份代码自动获得（DemoScheduler 的 e2e 守卫＝examples 既有验收）
+- [x] **Step 3**: 实现 `WorkerFeedServer`（从 VirtualScheduler 循环体上收，逐行语义保持；槽位记账含回滚沉入）；VirtualScheduler 改消费（552→415 行）
+- [x] **Step 4**: DemoScheduler 接入——G10 回滚经共享件自动补齐；心跳 meter/采样保留消费方
+- [x] **Step 5**: VirtualSchedulerTest 10 例零改动全绿 + examples 验收全绿
+- [x] **Step 6**: Commit（`fix: 两档 scheduler 连接面同源共享——DemoScheduler 补 G10 槽位回滚漏接`）
 
 ### Task 8（卡 5）: worker 槽位代次守卫 + engine/worker join parity
 
