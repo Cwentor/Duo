@@ -133,8 +133,15 @@ final class ComponentBootstrapper {
             byId.put(targetId, dep);
             manager.adopt(targetId, dep);
             runtime.registerTarget(targetId, new ScenarioRuntime.Target(
-                    dep, targetId, depSpec.count() == null ? 1 : depSpec.count()));
+                    dep, targetId, depSpec.count() == null ? 1 : depSpec.count(),
+                    metaOf(depSpec).supportedFaults()));
         }
+    }
+
+    /** 节点的能力元数据（registry 查表；注册 Target 供运行期三查第②查消费）。 */
+    private CapabilityMetadata metaOf(Scenario.NodeSpec n) {
+        return registry.resolve(Contract.fromYaml(n.contract()),
+                Tier.fromYaml(n.tier()), n.impl()).metadata();
     }
 
     /**
@@ -286,7 +293,8 @@ final class ComponentBootstrapper {
             VirtualComponent c = instantiate(id, n, true, views, specById, metadataIndex);
             byId.put(id, c);
             runtime.registerTarget(id, new ScenarioRuntime.Target(
-                    c, id, n.count() == null ? 1 : n.count()));
+                    c, id, n.count() == null ? 1 : n.count(),
+                    metadataIndex.get(metadataKey(n.contract(), n.tier())).supportedFaults()));
         }
         specById.values().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().ifPresent(s -> runtime.markSut(s.id()));

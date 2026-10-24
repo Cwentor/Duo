@@ -63,7 +63,8 @@ class TimelineSchedulerTest {
 
     private RecordingComponent registerStub() {
         RecordingComponent stub = new RecordingComponent();
-        runtime.registerTarget("w", new ScenarioRuntime.Target(stub, "w", 1));
+        runtime.registerTarget("w", new ScenarioRuntime.Target(stub, "w", 1,
+                java.util.Set.of("f1", "f2", "f3", "freeze")));
         return stub;
     }
 

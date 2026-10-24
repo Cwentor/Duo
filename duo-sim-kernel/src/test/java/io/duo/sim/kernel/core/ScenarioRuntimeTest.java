@@ -28,7 +28,7 @@ class ScenarioRuntimeTest {
     private final ScenarioRuntime runtime = new ScenarioRuntime(events::add);
 
     private void register(String id, FaultFixture f, int count) {
-        runtime.registerTarget(id, new ScenarioRuntime.Target(f, id, count));
+        runtime.registerTarget(id, new ScenarioRuntime.Target(f, id, count, f.supportedFaults()));
     }
 
     @Test
@@ -92,7 +92,8 @@ class ScenarioRuntimeTest {
     void noDegradationComponentWithoutInstanceControlFailsNotSilent() {
         // 组件未实现 InstanceControl → 实例级请求必须失败，不得整组生效（§7.2 无降级）
         var bare = new BareFixture("workers", 3);
-        runtime.registerTarget("workers", new ScenarioRuntime.Target(bare, "workers", 3));
+        runtime.registerTarget("workers",
+                new ScenarioRuntime.Target(bare, "workers", 3, Set.of()));
         var r = runtime.inject(new FaultAction(FaultAction.CRASH,
                 FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
                 Map.of(), null));
@@ -105,11 +106,55 @@ class ScenarioRuntimeTest {
     void faultInjectableDispatchWhenDeclared() {
         var f = new FaultFixture("workers", 3, Set.of("registry-flap"));
         register("workers", f, 3);
-        // supportedFaults 校验在 T11 校验器中按元数据；运行期直接分发
+        // 运行期三查第②查（卡 3c）：动作在注册期 supportedFaults 中 → 放行分发
         assertTrue(runtime.inject(new FaultAction("registry-flap",
                 FaultAction.ComponentAddress.of(new ComponentId("workers")),
                 Map.of(), null)).success());
         assertEquals(List.of("inject:registry-flap"), f.actions);
+    }
+
+    /** 卡 3c：热注入不支持的动作——precheck 早失败（此前仅静态校验查、运行期直接分发，体检实证的语义分叉）。 */
+    @Test
+    void hotInjectUnsupportedActionFailsAtPrecheck() {
+        var f = new FaultFixture("workers", 3, Set.of("freeze"));
+        register("workers", f, 3);
+        var r = runtime.inject(new FaultAction("registry-flap",
+                FaultAction.ComponentAddress.of(new ComponentId("workers")),
+                Map.of(), null));
+        assertFalse(r.success());
+        assertTrue(r.reason().contains("unsupported"), r.reason());
+        assertTrue(f.actions.isEmpty(), "未派发——失败必须发生在分发之前");
+        assertTrue(events.stream().anyMatch(e -> e.type().equals("sim.fault-inject-failed")));
+    }
+
+    /** 卡 3c：清除不支持的动作同样按第②查早失败（不能清除本就不可注入的动作）。 */
+    @Test
+    void clearUnsupportedActionFailsAtPrecheck() {
+        var f = new FaultFixture("workers", 3, Set.of("freeze"));
+        register("workers", f, 3);
+        var r = runtime.clear(new FaultAction("registry-flap",
+                FaultAction.ComponentAddress.of(new ComponentId("workers")),
+                Map.of(), null));
+        assertFalse(r.success());
+        assertTrue(r.reason().contains("unsupported"), r.reason());
+        assertTrue(f.actions.isEmpty());
+    }
+
+    /**
+     * 卡 3c：带下标但实现无 InstanceControl——第③查 precheck 早失败（此前靠 dispatch 抛
+     * UnsupportedOperationException 兜底为 "dispatch threw"）。用 CRASH 避开第②查，
+     * 单独钉住第③查的消息。
+     */
+    @Test
+    void instanceIndexWithoutInstanceControlFailsAtPrecheck() {
+        var bare = new BareFixture("workers", 3);
+        runtime.registerTarget("workers", new ScenarioRuntime.Target(bare, "workers", 3, Set.of()));
+        var r = runtime.inject(new FaultAction(FaultAction.CRASH,
+                FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
+                Map.of(), null));
+        assertFalse(r.success());
+        assertTrue(r.reason().contains("instanceControl"), r.reason());
+        assertFalse(bare.stoppedWhole);
     }
 
     /**
@@ -120,7 +165,8 @@ class ScenarioRuntimeTest {
     @Test
     void faultInjectedEventPrecedesComponentReactionEvents() {
         var reacting = new ReactingFixture("zk", events::add);
-        runtime.registerTarget("zk", new ScenarioRuntime.Target(reacting, "zk", 1));
+        runtime.registerTarget("zk",
+                new ScenarioRuntime.Target(reacting, "zk", 1, reacting.supportedFaults()));
 
         assertTrue(runtime.inject(new FaultAction("registry-flap",
                 FaultAction.ComponentAddress.of(new ComponentId("zk")),
