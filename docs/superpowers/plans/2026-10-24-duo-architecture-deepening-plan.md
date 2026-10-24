@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T4 已完成（卡 1 ✅ `2d1db7b`、卡 2 ✅ `5d924af`、卡 3a ✅ `13be711`）；T5–T6（卡 3 余项）设计冻结待写码；T7–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T6 已完成（卡 1 ✅ `2d1db7b`、卡 2 ✅ `5d924af`、卡 3 ✅ `13be711`+`df1b06a`+`7187228`）；T7–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -95,41 +95,25 @@ public static SlotDecision decide(boolean consumerExternal, String explicitPath,
 - [x] **Step 4**: WiringResolverAndManagerTest 10 例零改动全绿 + WiringDecisionTest 全绿
 - [x] **Step 5**: Commit（`refactor: §6.1 接线判定表收敛 kernel 唯一权威——decide() 结构化失败`）
 
-### Task 5（卡 3b）: 校验器规则 2/3 消费 decide() + 补 UNKNOWN_PATH 校验行
+### Task 5（卡 3b）: 校验器规则 2/3 消费 decide() + 补 UNKNOWN_PATH 校验行 ✅
 
-**Files:**
-- Modify: `duo-sim-scenario/src/main/java/io/duo/sim/scenario/ScenarioValidator.java:159-206`（规则 2/3 路径判定段）
-- Test: Modify `duo-sim-scenario/src/test/java/io/duo/sim/scenario/ScenarioValidatorTest.java`（新增 1 用例）
+**状态：已完成 `df1b06a`（2026-10-24，ScenarioValidatorTest 21 = 20 零改动 + 1 新增；整 reactor 438/0/0/12）**
 
-- [ ] **Step 1**: 新增失败测试——`wiring: { registry: { node: zk, path: bogus } }` 场景校验必须报错（含 `unknown path`），不再静默放过到启动期
-- [ ] **Step 2**: 确认 FAIL（当前实现无此校验行）
-- [ ] **Step 3**: 规则 2/3 的手写判定（`"wire".equals(path)…`/`"direct".equals(path)…` 两段）替换为 `WiringResolver.decide(isExternal(n), slot.path(), hasEndpoint, m.interfaceDirect())`，按 `SlotFailure` 映射**既有文案**（WIRE_WITHOUT_ENDPOINT→"upgrade target tier or use direct path" 等），UNKNOWN_PATH 用 resolver 同款文案
-- [ ] **Step 4**: ScenarioValidatorTest 21 例全绿（20 既有零改动 + 1 新增）
-- [ ] **Step 5**: Commit（`refactor: 校验器规则 2/3 消费 kernel 判定表，补未知 path 校验行`）
+- [x] **Step 1**: 新增失败测试——`wiring: { registry: { node: zk, path: bogus } }` 场景校验必须报错（含 `unknown path`），不再静默放过到启动期
+- [x] **Step 2**: 确认 FAIL（当前实现无此校验行）
+- [x] **Step 3**: 规则 2/3 的手写判定（`"wire".equals(path)…`/`"direct".equals(path)…` 两段）替换为 `WiringResolver.decide(isExternal(n), slot.path(), hasEndpoint, m.interfaceDirect())`，按 `SlotFailure` 映射**既有文案**（WIRE_WITHOUT_ENDPOINT→"upgrade target tier or use direct path" 等），UNKNOWN_PATH 用 resolver 同款文案
+- [x] **Step 4**: ScenarioValidatorTest 21 例全绿（20 既有零改动 + 1 新增）
+- [x] **Step 5**: Commit（`refactor: 校验器规则 2/3 消费 kernel 判定表，补未知 path 校验行`）
 
-### Task 6（卡 3c）: 运行期三查补齐（Target 携带元数据）
+### Task 6（卡 3c）: 运行期三查补齐（Target 携带元数据）✅
 
-**Files:**
-- Modify: `duo-sim-kernel/src/main/java/io/duo/sim/kernel/core/ScenarioRuntime.java`（Target 扩展 + precheck/clear 增查）
-- Modify: `duo-sim-scenario/src/main/java/io/duo/sim/scenario/ComponentBootstrapper.java:135,288`（两处 registerTarget 传 `provider.metadata()` 的 supportedFaults/instanceControl）
-- Test: Modify `duo-sim-kernel/src/test/java/io/duo/sim/kernel/core/ScenarioRuntimeTest.java`（3 处 Target 构造同步）；Modify `duo-sim-scenario/src/test/java/io/duo/sim/scenario/TimelineSchedulerTest.java:66`
+**状态：已完成 `7187228`（2026-10-24，kernel 91 = 88+3 新增；整 reactor 441/0/0/12）**。实现比计划更简：Target 只增 `supportedFaults` 一个字段，第③查以 `InstanceControl` 接口形态判定（注册期一致性校验保证与元数据等价，少一个可漂移的传递字段）。
 
-**Interfaces:**
-```java
-public record Target(VirtualComponent component, String componentId, int instanceCount,
-                     java.util.Set<String> supportedFaults, boolean instanceControl) { }
-// precheck 增：非 crash/restart 生命周期动作 ∉ supportedFaults → fail
-//             （"action 'x' unsupported by 'y' (§7.2 无降级, supported: […])"）
-//             idx != null 且 !instanceControl → fail（"instance index requires
-//              instanceControl capability"）
-// clear() 增第②查（同款文案）
-```
-
-- [ ] **Step 1**: 失败测试 ×3——热注入不支持动作（如对 scheduler 注 `task-kill` 组件级）→ precheck 早失败且消息含 `unsupported`；带下标对无 instanceControl 组件 → 早失败含 `instanceControl`；`/inject` unknown-target 仍 404（control 契约回归，RestControlServerTest 既有用例即裁判）
-- [ ] **Step 2**: 确认 FAIL（当前走 dispatch 抛异常兜底）
-- [ ] **Step 3**: 扩展 Target + precheck/clear；ComponentBootstrapper 两处传元数据；4 处测试构造点同步
-- [ ] **Step 4**: kernel + scenario + control 模块全绿（`-pl duo-sim-control -am test`）
-- [ ] **Step 5**: Commit（`fix: 运行期三查补齐——Target 携带元数据，precheck 实现注释声称的第②③查`）
+- [x] **Step 1**: 失败测试 ×3——热注入不支持动作 → precheck 早失败且消息含 `unsupported`；带下标对无 instanceControl 组件 → 早失败含 `instanceControl`；`/inject` unknown-target 仍 404（RestControlServerTest 14 例零改动即裁判）
+- [x] **Step 2**: 确认 FAIL（Target 4 参构造不存在 → 编译红；语义红由旧实现「运行期直接分发」承担）
+- [x] **Step 3**: 扩展 Target + precheck ②③ + clear ②；ComponentBootstrapper 两处传元数据（metaOf 辅助）；5 处测试构造点同步（ScenarioRuntimeTest 3、TimelineSchedulerTest 1、helper 1）
+- [x] **Step 4**: kernel + scenario + components + control 全绿（`-pl duo-sim-control -am test`：91/61/120/46）
+- [x] **Step 5**: Commit（`fix: 运行期三查补齐——Target 携带 supportedFaults，precheck 实现第②③查`）
 
 ### Task 7（卡 4）: DUO_PORT 服务端连接循环共享（两档 scheduler 同源）
 
