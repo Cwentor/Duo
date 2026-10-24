@@ -484,16 +484,12 @@ public final class ScenarioValidator {
     }
 
     private static boolean isExternal(Scenario.NodeSpec n) {
-        return n.launch() != null && "external".equals(n.launch().mode());
+        return NodeSpecs.isExternal(n);
     }
 
     /** external 节点的兜底探针端口（首个非 0 expose 端口；无则 0＝由 ReadyProbe 报错）。 */
     private static int firstExposedPort(Scenario.NodeSpec n) {
-        return n.exposes().stream()
-                .filter(e -> e.port() != null && e.port() > 0)
-                .mapToInt(Scenario.ExposeSpec::port)
-                .findFirst()
-                .orElse(0);
+        return NodeSpecs.firstExposedPort(n);
     }
 
     private static boolean isPortBusy(int port) {
