@@ -28,7 +28,7 @@
 | 5 | 组件停止/重启收尾纪律 | Strong | 同形状竞态只在调度器修过，worker/engine 仍裸露 | ✅ 已完成 `4f011f5` |
 | 6 | 输入信任档 | Worth exploring | 三个镜像枚举 + 一处绕过映射的第四入口 | ✅ 已完成 `c191da5` |
 | 7 | 事件流消费投影 | Worth exploring | Event→Map/JSON 投影手抄多处；增量读取整表拷贝 | ✅ 已完成 `75777b3` |
-| 8 | 故障动作样板与行为执行块 | Worth exploring | worker/engine 逐字级复制（resolveSlowFactor ×2、BehaviorProfile 拷贝 ×3） | ⏳ 未开始 |
+| 8 | 故障动作样板与行为执行块 | Worth exploring | worker/engine 逐字级复制（resolveSlowFactor ×2、BehaviorProfile 拷贝 ×3） | ✅ 已完成 `8cc563b` |
 | 9 | 控制面观测读面 + CLI 双模 | Worth exploring | Map 即接口，host 接口随端点线性变宽；CLI 7 命令同构分支 | ⏳ 未开始（依赖卡 1/7） |
 | 10 | 注册中心门面（ZkBackedRegistry） | Speculative | 删除测试**未通过**：剩余为真实双面复杂度 | ⏳ 落档不拆（D17） |
 
