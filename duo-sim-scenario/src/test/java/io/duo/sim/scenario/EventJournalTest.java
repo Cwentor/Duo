@@ -32,6 +32,24 @@ class EventJournalTest {
                 "recording path must point at the scenario recording file");
     }
 
+    /** 卡 7：增量切片语义（/events 高频轮询走它，不再整表拷贝）——只含下标 >= since 的事件。 */
+    @Test
+    void eventsSinceReturnsOnlyTheTailWithoutFullCopy() {
+        SimpleEventBus bus = new SimpleEventBus();
+        EventJournal journal = new EventJournal(bus, "journal-unit-tail");
+        bus.publish(Event.sim("sim.component-started", "zk", Map.of()));
+        bus.publish(Event.sim("sim.component-started", "master", Map.of()));
+        bus.publish(Event.sim("sim.component-stopped", "zk", Map.of()));
+
+        assertEquals(3, journal.eventsSince(0).size());
+        var tail = journal.eventsSince(2);
+        assertEquals(1, tail.size());
+        assertEquals("sim.component-stopped", tail.get(0).type());
+        assertTrue(journal.eventsSince(3).isEmpty(), "since beyond the end yields empty");
+        assertTrue(journal.eventsSince(99).isEmpty(), "far beyond the end yields empty");
+        assertEquals(3, journal.eventCount(), "增量读取不得影响事件流本体");
+    }
+
     @Test
     void supersededEpochGivesUpRecordingAndWarns() {
         // 同名场景重跑：旧日志的活动世代已被顶替 → 放弃写盘并告警；现任日志正常收尾

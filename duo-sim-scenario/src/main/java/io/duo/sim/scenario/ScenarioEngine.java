@@ -211,6 +211,14 @@ public final class ScenarioEngine implements AutoCloseable {
         return journal.events();
     }
 
+    /**
+     * 增量切片（卡 7）：只含下标 &gt;= {@code since} 的事件（O(新增)，锁内尾部拷贝）——
+     * 控制面 /events 轮询的高频路径，不再整表快照。下标语义与 {@link #events()} 一致（M3 D3）。
+     */
+    public List<Event> eventsSince(int since) {
+        return journal.eventsSince(since);
+    }
+
     /** 事件数（免整表拷贝的自省入口；{@code /status} 的 {@code events} 用它）。 */
     public int eventCount() {
         return journal.eventCount();

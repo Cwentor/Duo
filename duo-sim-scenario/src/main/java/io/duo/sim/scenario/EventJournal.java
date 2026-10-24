@@ -83,6 +83,21 @@ final class EventJournal {
         }
     }
 
+    /**
+     * 增量切片（卡 7）：锁内只拷贝下标 &gt;= {@code since} 的部分——O(新增)，
+     * 供 /events 高频轮询；全量 {@link #events()} 留给断言评估/诊断等低频路径。
+     * 只追加流（达上限即停）保证下标稳定，切片语义与全量快照一致（M3 D3）。
+     */
+    List<Event> eventsSince(int since) {
+        synchronized (lock) {
+            int from = Math.max(since, 0);
+            if (from >= recorded.size()) {
+                return List.of();
+            }
+            return List.copyOf(recorded.subList(from, recorded.size()));
+        }
+    }
+
     /** 事件数（免整表拷贝的自省入口；{@code /status} 的 {@code events} 用它）。 */
     int eventCount() {
         synchronized (lock) {

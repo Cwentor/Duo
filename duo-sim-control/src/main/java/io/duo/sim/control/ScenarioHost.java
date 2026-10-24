@@ -418,20 +418,15 @@ public final class ScenarioHost implements AutoCloseable {
         if (engine == null) {
             return List.of();
         }
-        List<Event> snapshot = engine.events();
-        int from = Math.max(since, 0);
-        if (from >= snapshot.size()) {
-            return List.of();
-        }
-        List<Map<String, Object>> out = new ArrayList<>(snapshot.size() - from);
-        for (int i = from; i < snapshot.size(); i++) {
-            Event e = snapshot.get(i);
+        // 卡 7：增量读取（O(新增)）+ 统一投影——不再整表快照后手工拼字段。
+        // seq 是 1-based 下标（M3 D3），先落 seq 再并投影，键序与既有 REST 响应逐键一致。
+        List<Event> tail = engine.eventsSince(since);
+        List<Map<String, Object>> out = new ArrayList<>(tail.size());
+        int firstSeq = Math.max(since, 0) + 1;
+        for (int i = 0; i < tail.size(); i++) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("seq", i + 1);
-            m.put("type", e.type());
-            m.put("sourceId", e.sourceId());
-            m.put("timestamp", e.timestamp().toString());
-            m.put("payload", e.payload() == null ? Map.of() : e.payload());
+            m.put("seq", firstSeq + i);
+            m.putAll(io.duo.sim.kernel.api.EventProjections.toMap(tail.get(i)));
             out.add(m);
         }
         return out;

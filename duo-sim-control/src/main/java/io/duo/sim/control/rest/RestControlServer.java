@@ -553,12 +553,7 @@ public final class RestControlServer implements AutoCloseable {
             chain.put("cleared", c.cleared());
             var reactions = new java.util.ArrayList<Map<String, Object>>(c.componentReactions().size());
             for (io.duo.sim.kernel.api.Event e : c.componentReactions()) {
-                var m = new java.util.LinkedHashMap<String, Object>();
-                m.put("type", e.type());
-                m.put("sourceId", e.sourceId());
-                m.put("timestamp", e.timestamp().toString());
-                m.put("payload", e.payload() == null ? Map.of() : e.payload());
-                reactions.add(m);
+                reactions.add(io.duo.sim.kernel.api.EventProjections.toMap(e));
             }
             chain.put("componentReactions", reactions);
             chain.put("sutFacts", c.sutFacts());
