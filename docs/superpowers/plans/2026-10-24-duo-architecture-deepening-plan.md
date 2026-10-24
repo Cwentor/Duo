@@ -1,7 +1,7 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T7 已完成（卡 1 ✅、卡 2 ✅、卡 3 ✅、卡 4 ✅ `8e9cdb3`）；T8–T13 未开始；T14 收尾未开始
+- 状态：**实施中**——T1–T8 已完成（卡 1–5 ✅，最新 `4f011f5`）；T9–T13 未开始；T14 收尾未开始
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -149,18 +149,15 @@ public final class DuoPortServer implements AutoCloseable {
 - [x] **Step 5**: VirtualSchedulerTest 10 例零改动全绿 + examples 验收全绿
 - [x] **Step 6**: Commit（`fix: 两档 scheduler 连接面同源共享——DemoScheduler 补 G10 槽位回滚漏接`）
 
-### Task 8（卡 5）: worker 槽位代次守卫 + engine/worker join parity
+### Task 8（卡 5）: worker 槽位代次守卫 + engine/worker join parity ✅
 
-**Files:**
-- Modify: `duo-sim-components/.../worker/VirtualWorker.java`（InstanceState 增 `AtomicLong generation`；`restartInstance` 先增代次再重置；任务线程 finally 归还前比对代次；stop/closeAll join barrier）
-- Modify: `duo-sim-components/.../engine/VirtualEngine.java`（stop 收尾 join parity，generation 语义已有、不动）
-- Test: Create `duo-sim-components/src/test/.../worker/VirtualWorkerRestartRaceTest.java`
+**状态：已完成 `4f011f5`（2026-10-25，复现测试红→绿且连续 10 次稳定；VirtualWorkerTest 16 / VirtualEngineTest 12 零改动；整 reactor 447/0/0/12）**。发现：`InstanceState.generation` 本已存在（连接生命周期用），缺的是任务线程归还比对与 restartInstance 的「先增代次再重置」硬顺序；join 预算取全局 2s（万级实例不逐线程各等 1s）。
 
-- [ ] **Step 1**: 冻结门确定性复现（红）——冻结实例 → 派发任务（线程阻塞在冻结门）→ `restartInstance`（槽位重置）→ 解冻 → 断言 `freeSlots ≤ totalSlots`（当前实现会超上限）
-- [ ] **Step 2**: per-instance generation 守卫（engine L454-498 同款模式回流）；复现转绿
-- [ ] **Step 3**: worker/engine stop 收尾 join barrier（scheduler closeAll 同款，每线程有界等待）
-- [ ] **Step 4**: VirtualWorkerTest 16 / VirtualEngineTest 12 零改动全绿 + 新用例稳定绿（连续 5 次）
-- [ ] **Step 5**: Commit（`fix: worker 槽位归还加代次守卫——restartInstance 不再越限，engine 教训回流`）
+- [x] **Step 1**: 冻结门确定性复现（红）——实测 freeSlots=3（totalSlots=2）越限
+- [x] **Step 2**: 派发时捕获代次传入任务线程，finally 过期即放弃归还；restartInstance 先增代次再重置（discoverMaster 等待窗硬顺序）
+- [x] **Step 3**: worker/engine stop 收尾 join barrier（全局 2s 预算；join 自身跳过防死锁）
+- [x] **Step 4**: VirtualWorkerTest 16 / VirtualEngineTest 12 零改动全绿 + 复现测试连续 10 次稳定绿
+- [x] **Step 5**: Commit（`fix: worker 槽位归还加代次守卫——restartInstance 不再越限；engine/worker 补 join parity`）
 
 ### Task 9（卡 6）: 信任档三枚举收敛
 
