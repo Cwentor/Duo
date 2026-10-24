@@ -73,16 +73,11 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
     private volatile int cpu = 4;
     private volatile int memGb = 8;
     private volatile int slots = 4;
-    private volatile double slowFactor = 3.0;
-    /** 当前生效的 slow 倍数（注入时按 params.factor / config slow.factor 解析）。 */
-    private volatile double activeSlowFactor = 3.0;
     private volatile BehaviorResolver behaviors;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final AtomicBoolean frozen = new AtomicBoolean(false);
-    private final AtomicBoolean resourceExhausted = new AtomicBoolean(false);
-    /** slow（M5-3）：置位后执行时长乘以 {@link #slowFactor}（倍数来自 config，不叠加）。 */
-    private final AtomicBoolean slowActive = new AtomicBoolean(false);
+    /** 组件级故障态（卡 8：与 VirtualWorker 共享同一实现，事件前缀区分）。 */
+    private volatile io.duo.sim.components.support.FaultState faults;
     /** 生命周期代际：stop/restart 递增，用于让上一代任务线程彻底沉默（不污染新一代计数与事实）。 */
     private final AtomicLong generation = new AtomicLong();
     private final AtomicInteger freeSlots = new AtomicInteger();
@@ -122,8 +117,11 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         this.memGb = Integer.parseInt(ctx.config().getOrDefault("capacity.memGB", "8"));
         this.slots = Integer.parseInt(ctx.config().getOrDefault("capacity.slots",
                 String.valueOf(cpu)));
-        this.slowFactor = Double.parseDouble(ctx.config().getOrDefault("slow.factor", "3.0"));
         this.behaviors = BehaviorResolver.fromConfig(ctx.config());
+        double slowFactor = Double.parseDouble(ctx.config().getOrDefault("slow.factor", "3.0"));
+        this.faults = new io.duo.sim.components.support.FaultState("sim.engine",
+                slots, slowFactor,
+                (event, payload) -> fire(Event.sim(event, id.value(), payload)));
         this.freeSlots.set(slots);
     }
 
@@ -218,11 +216,8 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
     public void restart() {
         // §7.1：身份保留、内部状态清空；端点端口重绑（随机端口）后重新对外服务
         stop(StopMode.GRACEFUL);
-        frozen.set(false);
-        resourceExhausted.set(false);
-        slowActive.set(false);
         taskSeq.set(0);
-        init(ctx);
+        init(ctx); // faults 随 init 重建（三态清零，§7.1 内部状态视为全新）
         start();
         fire(Event.sim("sim.engine-restarted", id.value(), Map.of()));
     }
@@ -282,71 +277,35 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
 
     @Override
     public void inject(FaultAction action) {
-        switch (action.type()) {
-            case FaultAction.FREEZE -> {
-                if (frozen.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.engine-frozen", id.value(), Map.of()));
-                }
-            }
-            case FaultAction.SLOW -> {
-                // 倍数优先级：动作 params.factor > 节点 config slow.factor（缺省 3.0）；
-                // 幂等：已在慢速中只更新倍数，不叠加
-                double factor = resolveSlowFactor(action);
-                activeSlowFactor = factor;
-                if (slowActive.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.engine-slowed", id.value(),
-                            Map.of("factor", factor)));
-                }
-            }
-            case FaultAction.RESOURCE_EXHAUST -> {
-                if (resourceExhausted.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.engine-resource-exhausted", id.value(),
-                            Map.of("slots", slots)));
-                    reportSlots();
-                }
-            }
-            default -> throw new UnsupportedOperationException(
-                    "unsupported fault: " + action.type());
+        boolean wasExhausted = faults.exhausted();
+        faults.inject(action);
+        if (!wasExhausted && faults.exhausted()) {
+            reportSlots();
         }
     }
 
     @Override
     public void clear(FaultAction action) {
-        switch (action.type()) {
-            case FaultAction.FREEZE -> {
-                if (frozen.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.engine-resumed", id.value(), Map.of()));
-                }
-            }
-            case FaultAction.SLOW -> {
-                if (slowActive.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.engine-speed-restored", id.value(), Map.of()));
-                }
-            }
-            case FaultAction.RESOURCE_EXHAUST -> {
-                if (resourceExhausted.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.engine-resource-restored", id.value(), Map.of()));
-                    reportSlots();
-                }
-            }
-            default -> throw new UnsupportedOperationException(
-                    "unsupported fault: " + action.type());
+        boolean wasExhausted = faults.exhausted();
+        faults.clear(action);
+        if (wasExhausted && !faults.exhausted()) {
+            reportSlots();
         }
     }
 
     /** 是否冻结（测试/诊断用）。 */
     public boolean isFrozen() {
-        return frozen.get();
+        return faults != null && faults.frozen();
     }
 
     /** 是否资源耗尽（测试/诊断用）。 */
     public boolean isResourceExhausted() {
-        return resourceExhausted.get();
+        return faults != null && faults.exhausted();
     }
 
     /** 空闲槽位（可观测点）。 */
     public int freeSlots() {
-        return resourceExhausted.get() ? 0 : freeSlots.get();
+        return faults != null && faults.exhausted() ? 0 : freeSlots.get();
     }
 
     /** 在途任务数（可观测点）。 */
@@ -439,10 +398,10 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
      * 「先看有没有、再减一」在多连接并发下会让槽位计数变负（G9 在 worker 侧踩过同一坑）。
      */
     private String rejectionReason() {
-        if (resourceExhausted.get()) {
+        if (faults.exhausted()) {
             return "resource exhausted";
         }
-        if (frozen.get()) {
+        if (faults.frozen()) {
             return "engine frozen";
         }
         return freeSlots.get() <= 0 ? "no free slot" : null;
@@ -480,12 +439,11 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         Thread t = Thread.ofVirtual().name(id.value() + "-task-" + taskId).unstarted(() -> {
             try {
                 var entry = behaviors.resolve(taskName);
-                // slow（M5-3）：仅在**注入期间**乘以倍数；倍数来自 config（幂等，不叠加）
-                long duration = slowActive.get()
-                        ? (long) (entry.durationMillis() * activeSlowFactor) : entry.durationMillis();
-                var profile = new BehaviorProfile(duration, entry.jitterRatio(),
-                        entry.successRate(), entry.exceptionType(), entry.logLines(),
-                        entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+                // slow（M5-3）：仅在**注入期间**乘以生效倍数（幂等，不叠加）
+                long duration = faults.slow()
+                        ? (long) (entry.durationMillis() * faults.activeSlowFactor())
+                        : entry.durationMillis();
+                var profile = io.duo.sim.components.taskstub.TaskBehaviors.profile(entry, duration);
                 var result = profile.execute(taskName, new Random(), pct -> {
                     if (gen != generation.get()) {
                         return; // 旧代际：不再对外报进展
@@ -543,24 +501,10 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         t.start();
     }
 
-    /**
-     * slow 的生效倍数：动作 {@code params.factor} 优先，其次节点 {@code config slow.factor}。
-     * 非法倍数（≤1.0）显式拒绝——否则「注入了但没变慢」会被当成静默无效。
-     */
-    private double resolveSlowFactor(FaultAction action) {
-        Object raw = action.params() == null ? null : action.params().get("factor");
-        double factor = raw == null ? slowFactor : Double.parseDouble(String.valueOf(raw));
-        if (factor <= 1.0) {
-            throw new IllegalArgumentException(
-                    "slow factor must be > 1.0 (params.factor or config slow.factor), got "
-                            + factor);
-        }
-        return factor;
-    }
 
     /** 冻结期间挂起（协作式等待；stop/restart 也能收敛——不依赖 notify，避免漏唤醒死锁）。 */
     private void awaitUnfrozen() {
-        while (frozen.get() && running.get()) {
+        while (faults.frozen() && running.get()) {
             try {
                 Thread.sleep(20);
             } catch (InterruptedException e) {
