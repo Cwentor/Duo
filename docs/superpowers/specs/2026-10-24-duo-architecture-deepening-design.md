@@ -1,7 +1,7 @@
 # Duo 架构深化（Architecture Deepening）设计方案
 
 - 日期：2026-10-24（立项同日开工）
-- 状态：**实施中**——10 张卡按序推进，卡 1 已完成（`2d1db7b`）、卡 2 代码完成待全量验证、卡 3 设计冻结；实施进度以配套计划的状态行与勾选为准
+- 状态：**已实施完成（2026-10-25）**——卡 1–9 代码落地、卡 10 经 D17 落档结案；末次验证整 reactor 454/0/0/12 + `-Dquality` 8 模块零告警。进度明细以配套计划的状态行与勾选为准
 - 来源：2026-10-24 架构体检（dev-improve-architecture 流程：近 4 个月提交热点圈定 → 控制面/场景编排链/组件与协议三路走查 → 关键证据人工核对）。体检报告为会话外草稿（不入库），其 10 张候选卡的结论全部内嵌于本文 §2，本文即唯一权威来源
 - 实施计划：[`docs/superpowers/plans/2026-10-24-duo-architecture-deepening-plan.md`](../plans/2026-10-24-duo-architecture-deepening-plan.md)
 
@@ -29,8 +29,8 @@
 | 6 | 输入信任档 | Worth exploring | 三个镜像枚举 + 一处绕过映射的第四入口 | ✅ 已完成 `c191da5` |
 | 7 | 事件流消费投影 | Worth exploring | Event→Map/JSON 投影手抄多处；增量读取整表拷贝 | ✅ 已完成 `75777b3` |
 | 8 | 故障动作样板与行为执行块 | Worth exploring | worker/engine 逐字级复制（resolveSlowFactor ×2、BehaviorProfile 拷贝 ×3） | ✅ 已完成 `8cc563b` |
-| 9 | 控制面观测读面 + CLI 双模 | Worth exploring | Map 即接口，host 接口随端点线性变宽；CLI 7 命令同构分支 | ⏳ 未开始（依赖卡 1/7） |
-| 10 | 注册中心门面（ZkBackedRegistry） | Speculative | 删除测试**未通过**：剩余为真实双面复杂度 | ⏳ 落档不拆（D17） |
+| 9 | 控制面观测读面 + CLI 双模 | Worth exploring | Map 即接口，host 接口随端点线性变宽；CLI 7 命令同构分支 | ✅ 已完成 `3076b92`（观测投影随 T10） |
+| 10 | 注册中心门面（ZkBackedRegistry） | Speculative | 删除测试**未通过**：剩余为真实双面复杂度 | ✅ 已落档 `4cce081`（D17，不拆） |
 
 **已核对实证**（2026-10-24 人工验证，行号以当日工作区为准）：`"method not allowed"` ×10、409 守卫 ×7（RestControlServer 977 行）；`onDispatchRolledBack` 全库仅 VirtualScheduler:340 调用（DemoScheduler 漏接）；三枚举 `Trust{CONFIG,EXTERNAL_INPUT}`/`InputPolicy{CONFIG,EXTERNAL_INPUT}`/`InputTrust{CONFIG,EXTERNAL}`（值名都不一致）；`/inject` 400 分支 `String.valueOf(e.getMessage())` 未过 `sanitizeReason`（L336）；`supportedFaults` 仅 ScenarioValidator:300 静态检查、ScenarioRuntime 只有注释声称三查；worker `restartInstance` 直接 `freeSlots.set(totalSlots)` 无代次守卫而 engine 已用 generation（L87/454-498）。
 

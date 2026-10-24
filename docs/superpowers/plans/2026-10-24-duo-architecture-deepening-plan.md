@@ -1,7 +1,8 @@
 # Duo 架构深化（10 卡）实施计划
 
 - 日期：2026-10-24（同日开工）
-- 状态：**实施中**——T1–T11 已完成（卡 1–8 ✅，最新 `8cc563b`）；T12–T13 未开始；T14 收尾未开始
+- 状态：**已实施完成（2026-10-25）**——T1–T14 全部落地。10 卡全部收口：卡 1–9 代码落地（最后提交 `4cce081` D17 落档；CLI 收敛 `3076b92`），卡 10 经 D17 决策落档结案。
+- 末次验证：整 reactor **454 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**（数字链 428→454 全程吻合）+ `-Dquality -DskipTests verify` **8 × "No dependency problems found"** + BUILD SUCCESS；模块 README 测试数按 2026-10-25 实测回填（kernel 91 / scenario 62 / components 132 / control 46）。
 - 完成判据（每卡硬门槛 + 总验收）：
   - 每卡：受影响模块契约测试**零改动全绿**；行为变化逐条有新测试钉住并在提交信息说明；整 reactor `test` BUILD SUCCESS
   - 总验收：整 reactor 全绿（当前口径 433 测/0 失败/0 错误/12 skip）+ `-Dquality -DskipTests verify` 8 模块零告警 + ARCHITECTURE/模块 README/DECISIONS 同步 + 卡 10 决策落档
@@ -200,34 +201,40 @@ public final class DuoPortServer implements AutoCloseable {
 - [x] **Step 3**: 组件测试零改动全绿；新增 FaultStateTest 6 例（前缀事件名逐串一致/幂等/倍数/拒绝/reset）
 - [x] **Step 4**: Commit（`refactor: 故障态与行为执行块收敛——worker/engine 共享 FaultState，加故障动作改一处`）
 
-### Task 12（卡 9）: 观测读面投影 + CLI 双模命令表
+### Task 12（卡 9）: 观测读面投影 + CLI 双模命令表 ✅
+
+**状态：已完成 `3076b92`（2026-10-25，DuoCliTest 15 + ControlPlaneAcceptance 零改动全绿；整 reactor 454/0/0/12，测试数不变＝纯收敛）**。观测投影的 host 侧已随 T10 落地；本卡收 CLI 取数阶梯。实测修正：主分派已是表达式 switch（即注册表，不再表化）；cmdAssert「2xx 也打印响应体」是其真实输出契约（自纠：首版收了、复核后还原）。
 
 **Files:**
 - Modify: `ScenarioHost`（eventsSince/诊断链投影走 EventProjections；Map 形状=REST 契约不变）
 - Modify: `cli/DuoCli.java:215-422`（`dualMode(remote, local)` 助手收敛 7 命令 ×8 分支；命令注册表化）
 - Test: DuoCliTest（examples）+ control 契约测试零改动
 
-- [ ] **Step 1**: CLI 双模助手抽取，7 命令分支删除
-- [ ] **Step 2**: host 观测投影切换（与 Task 10 连作时可直接复用）
-- [ ] **Step 3**: 契约测试零改动全绿；核对完工判据「加一个控制台功能从 4 处缩到 2 处」（在提交描述中给出对照清单）
-- [ ] **Step 4**: Commit（`refactor: 观测读面收敛投影，CLI 双模命令表化`）
+- [x] **Step 1**: CLI 远程取数阶梯收敛——printRemote（3 处）/fetchJson（3 处）/fetchText（1 处）；各命令输出契约零变化
+- [x] **Step 2**: host 观测投影切换（已在 T10 随 EventProjections 落地）
+- [x] **Step 3**: 契约测试零改动全绿；完工判据达成＝管道声明 + client.ts 函数两处（对照清单见提交信息）
+- [x] **Step 4**: Commit（`refactor: CLI 双模命令的远程取数阶梯收敛——printRemote/fetchJson/fetchText 唯一一份`）
 
-### Task 13（卡 10）: ZkBackedRegistry 不拆决策落档
+### Task 13（卡 10）: ZkBackedRegistry 不拆决策落档 ✅
+
+**状态：已完成 `4cce081`（2026-10-25，DECISIONS.md D17 四段俱全 + §3 对照表行 + 修订记录）**。
 
 **Files:**
 - Modify: `docs/DECISIONS.md`（新增 D17 + §3 对照表行 + 修订记录）
 
 **D17 要点**: 删除测试未通过——剩余为 embedded 档双面实现（wire 面/门面面/watch）的真实复杂度，硬拆在两个子类重新冒头；M4 T38 已抽取过一轮。触发条件：出现第二个 embedded 契约实现（届时门面/wire 分离才有第二个 adapter 证明接缝真实）。
 
-- [ ] **Step 1**: D17 落档（决定/理由/触发条件/落地点四段俱全）
-- [ ] **Step 2**: Commit（`docs: D17 注册中心门面维持单类——架构体检删除测试未通过，防止重复提出`）
+- [x] **Step 1**: D17 落档（决定/背景含删除测试/触发条件＝第二个 embedded 契约实现/落地点）
+- [x] **Step 2**: Commit（`docs: D17 注册中心门面维持单类——架构体检删除测试未通过，防止重复提出`）
 
-### Task 14: 收尾——总验收与文档同步
+### Task 14: 收尾——总验收与文档同步 ✅
 
-- [ ] 整 reactor `test` 全绿 + `./mvnw -o -B -Dquality -DskipTests verify` 8 模块零告警
-- [ ] ARCHITECTURE.md 同步：§6.1「两处执行语义一致」段简化（判定表唯一权威）；§8 三查表述补实；§12.1 Trust 枚举名；§12.2 错误映射指向 RestRoutes 管道；模块 README 测试数按实跑回填
-- [ ] 本计划状态行回填完成态与实测数字；设计方案 §2 状态列同步
-- [ ] Commit（`docs: 架构深化收尾——总验收数字与文档同步`）
+**状态：已完成（2026-10-25）**——`-Dquality -DskipTests verify` 8 模块零告警 + BUILD SUCCESS；ARCHITECTURE 三处同步（§6.1 判定表唯一权威/§8 三查运行期落地/§12.2 管道表述）；模块 README 测试数回填；计划与设计方案状态列终态。
+
+- [x] 整 reactor `test` 全绿（454/0/0/12）+ `-Dquality -DskipTests verify` 8 模块零告警
+- [x] ARCHITECTURE.md 同步：§6.1 判定表唯一权威；§8 三查运行期落地；§12.1 InputTrust 枚举名（T9 内完成）；§12.2 错误映射指向 RestRoutes 管道；模块 README 测试数按实跑回填
+- [x] 本计划状态行回填完成态与实测数字；设计方案 §2 状态列同步
+- [x] Commit（`docs: 架构深化收尾——总验收数字与文档同步`）
 
 ---
 

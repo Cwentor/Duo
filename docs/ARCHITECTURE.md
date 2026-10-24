@@ -251,8 +251,11 @@ real 档 `DemoScheduler` 与 virtual 档 `VirtualScheduler` 共用它，换档�
 | 缺省（无 `path`） | ≠ NONE | 任意 | 推断为 wire |
 | 缺省（无 `path`） | NONE | in-process | 推断为 direct（NONE ⇒ interfaceDirect 由注册期保证，恒自洽） |
 
-校验在**两处**执行，语义一致：`ScenarioValidator`（启动前批量报错，规则 3）与 `WiringResolver`（解析期兜底，
-抛 `WiringException`）。缺省推断保证「NONE 实现必然可 direct」，故推断结果永远通过 `interfaceDirect` 检查。
+判定表的**唯一权威**是 `WiringResolver.decide(...)`（结构化失败 `SlotFailure`）；
+`ScenarioValidator`（启动前批量报错，规则 2/3）与 `WiringResolver`（解析期兜底，抛
+`WiringException`）都消费同一结论、各自格式化消息——「同一判定两处实现」在结构上不可能，
+且静态校验同样拒绝未知 path 值（`bogus` 在校验期即报错，不拖到启动期）。
+缺省推断保证「NONE 实现必然可 direct」，故推断结果永远通过 `interfaceDirect` 检查。
 
 ### 6.2 拓扑排序
 
@@ -298,7 +301,8 @@ ScenarioHost.start(yaml)
 
 ## 8. 故障注入通路（`ScenarioRuntime`）
 
-注入分三层校验（§7.2，**无降级**）：
+注入分三层校验（§7.2，**无降级**；三层全部在 `ScenarioRuntime.precheck` 运行期落地——
+热注入与静态校验（规则 6）同口径，`Target` 携带注册期 `supportedFaults`）：
 
 1. **target 可解析**：组件存在；携带实例下标时 `index ∈ [1, count]`。
 2. **动作受支持**：动作在实现 `supportedFaults` 中，或属 `crash`/`restart` 生命周期动作。
@@ -525,8 +529,9 @@ REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 与
 ### 12.2 控制台端点族（M10，`/api/` 前缀）
 
 **为什么单起一个前缀**：`/scenario`、`/inject` 等核心端点被 CLI 依赖，签名冻结；控制台专属面
-收进 `/api/`，与既有端点互不干扰。**全部过同一条 `guard(ex, false)` 管道**（Bearer + 回环
-Host/Origin），错误映射沿用既有口径：`IllegalArgumentException`→400、`IllegalStateException`→405、
+收进 `/api/`，与既有端点互不干扰。**全部过同一条认证管道**（`RestRoutes`：Bearer + 回环 Host/Origin，guard/方法检查/
+错误映射/消息掩码 `sanitizeReason` 全在管道内唯一一份——新增端点只写「注册 + 业务分支」），
+错误映射沿用既有口径：`IllegalArgumentException`→400、`IllegalStateException`→405、
 `NoSuchFileException`→404。
 
 | 端点 | 方法 | 说明 | 错误 |
