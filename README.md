@@ -55,17 +55,26 @@
 测试大数据系统的调度与协同逻辑（DAG 依赖、重试、失败转移、选主、资源调度），传统做法要搭整套集群：
 启动以十分钟计、硬件开销大、故障演练不可重复、反馈回路以小时计。
 
-业界已有四类成熟先例，但各自孤立：
+业界已有成熟先例，但各自孤立。Duo **并非全流程独创**：它的核心思路来自两条已被这些
+大项目分别验证的路线——「用替身/假节点欺骗真实系统」（KWOK 路线）与「在 JVM 内/容器内跑
+真实协议的内存化替身」（Curator / Fabric8 / H2 / Testcontainers 路线）。Duo 的贡献是把它们
+**合成一个统一框架**，并补上四个缺口：可组合、可注入故障、可换档、秒级反馈回路。
 
-| 先例 | 验证了什么 |
-| --- | --- |
-| KWOK（Kubernetes Without Kubelet） | 伪造节点即可欺骗真实调度器 |
-| Curator TestingServer | JVM 内可运行**真实协议**的轻量 ZooKeeper |
-| Fabric8 Mock / H2 | 各类中间件均可内存替身化 |
-| Testcontainers | 真协议校验可按需拉起真容器 |
+| 参考项目 | 一句话 | Duo 借鉴了哪一点 | 落地位置 |
+| --- | --- | --- | --- |
+| [KWOK](https://github.com/kubernetes-sigs/kwok)（Kubernetes Without Kubelet） | 无 kubelet 的 K8s 模拟集群 | 「替身骗真系统」：被测系统之外全换轻量伪造件，只留真 SUT | `virtual` 档（`VirtualWorker`/`VirtualScheduler` 等） |
+| [Apache Curator](https://github.com/apache/curator) | ZooKeeper 客户端与测试设施 | 「真协议、轻量内存化」：同进程给 SUT 暴露真实 ZK 端口 | `duo-sim-embedded` 的 `CuratorRegistry` |
+| [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client) | K8s Java 客户端 + Mock Server | 中间件「内存替身化」且保留真实 K8s REST 协议 | `duo-sim-embedded` 的 `Fabric8K8sMock` |
+| [H2 Database](https://github.com/h2database/h2database) | 内嵌/内存 SQL 数据库 | 存储契约的内存档替身（真 JDBC URL） | `duo-sim-embedded` 的 `H2Store` |
+| [Testcontainers](https://github.com/testcontainers/testcontainers-java) | 按需拉起真容器 | 「假的不够时按需上真的」：container 档真 ZooKeeper / 真 PostgreSQL | `ZookeeperContainerRegistry` / `PostgresContainerStore` |
+| [Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) | 真实分布式调度系统 | **首个真实第三方 SUT**（M9 Phase A：3.4.3 registry-flap 演练全绿） | `duo-sim-examples` 的 `DsFailoverAcceptanceTest` |
 
 Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可组装成任意链路拓扑的统一仿真框架**——
 内核只认识「契约」，不认识任何具体产品。
+
+> **关于「背书」的如实说明**：上面是 **「借鉴与依赖」**，不是这些项目对 Duo 的 **「官方背书」**——
+> 没有任何项目为本仓库站台或代言。Duo 的可信度来自「复用它们已被广泛验证的思路与成熟实现，
+> 并把缺口（可组合、可注入故障、可换档、秒级回路）补上」。
 
 ## 2. 四个核心概念
 

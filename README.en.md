@@ -60,18 +60,31 @@ failover, leader election, resource scheduling) traditionally means standing up 
 startup is measured in tens of minutes, hardware costs are significant, fault drills are not
 repeatable, and the feedback loop is measured in hours.
 
-The industry already has four mature precedents, but each stands alone:
+The industry already has mature precedents, but each stands alone. Duo is **not built from a blank
+slate**: its core idea combines two approaches already validated by these major projects —
+"fool the real system with doubles / fake nodes" (the KWOK route) and "run the real protocol as a
+lightweight in-memory double, inside the JVM or a container" (the Curator / Fabric8 / H2 /
+Testcontainers route). Duo's contribution is to **fuse them into one unified framework** and close
+four gaps: composability, fault injection, tier swapping, and a second-scale feedback loop.
 
-| Precedent | What it proved |
-| --- | --- |
-| KWOK (Kubernetes Without Kubelet) | Fake nodes alone can fool a real scheduler |
-| Curator TestingServer | A lightweight ZooKeeper speaking the **real protocol** can run inside the JVM |
-| Fabric8 Mock / H2 | Various middleware can be replaced by in-memory doubles |
-| Testcontainers | Real-protocol validation can spin up real containers on demand |
+| Reference project | One-liner | What Duo borrowed | Where it lands |
+| --- | --- | --- | --- |
+| [KWOK](https://github.com/kubernetes-sigs/kwok) (Kubernetes Without Kubelet) | A kubelet-less simulated K8s cluster | "Double fools the real system": everything but the SUT becomes a lightweight fake | `virtual` tier (`VirtualWorker` / `VirtualScheduler`, etc.) |
+| [Apache Curator](https://github.com/apache/curator) | ZooKeeper client and test facilities | "Real protocol, lightweight in-memory": expose a real ZK port to the SUT in-process | `CuratorRegistry` in `duo-sim-embedded` |
+| [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client) | K8s Java client + Mock Server | "In-memory double" for middleware while keeping the real K8s REST protocol | `Fabric8K8sMock` in `duo-sim-embedded` |
+| [H2 Database](https://github.com/h2database/h2database) | Embedded / in-memory SQL database | An in-memory double for the store contract (real JDBC URL) | `H2Store` in `duo-sim-embedded` |
+| [Testcontainers](https://github.com/testcontainers/testcontainers-java) | Spin up real containers on demand | "When fakes are not enough, go real on demand": container tier with real ZooKeeper / PostgreSQL | `ZookeeperContainerRegistry` / `PostgresContainerStore` |
+| [Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) | A real distributed scheduler | **First real third-party SUT** (M9 Phase A: the 3.4.3 registry-flap drill went all green) | `DsFailoverAcceptanceTest` in `duo-sim-examples` |
 
 Duo supplies the missing layer: **a unified simulation framework with configurable behavior,
 injectable faults, and assembly into arbitrary pipeline topologies** — the kernel understands only
 "contracts"; it knows nothing about any concrete product.
+
+> **An honest note on "endorsement"**: the above is **"inspiration & dependency"**, not **"official
+> endorsement"** by those projects — none of them stands behind or sponsors this repository. Duo's
+> credibility comes from reusing their widely-proven ideas and mature implementations and then
+> closing the gaps (composability, fault injection, tier swapping, second-scale feedback) —
+> not from any endorsement or sponsorship.
 
 ## 2. Four Core Concepts
 
