@@ -166,7 +166,8 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         // 也会看到 gen != generation ⇒ 不再重复发事实（§12：一条取消只记一条事实）
         generation.incrementAndGet();
         // **同步**为每个在途任务发一次 CANCELLED 终态事实：见 reportCancelledNow 的注释——
-        // 若留给被中断的任务线程发，事实会偶发漂移到重启之后（CI run 35419372086 实测）
+        // 若留给被中断的任务线程发，事实会偶发漂移到重启之后（CI run 35419352086 实测）
+        java.util.List<Thread> taskThreads = new java.util.ArrayList<>();
         for (TaskExecution exec : runningTasks) {
             reportCancelledNow(exec.conn, exec.taskId, "cancelled");
         }
@@ -174,6 +175,7 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
             Thread t = exec.thread;
             if (t != null) {
                 t.interrupt();
+                taskThreads.add(t);
             }
         }
         runningTasks.clear();
@@ -185,8 +187,31 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
                 // 忽略关闭异常
             }
         }
+        // 有界 join barrier（卡 5，scheduler/worker 同款纪律）：restart() 里 stop→start 与
+        // 残留 acceptor/任务线程的竞态在此消除（全局预算 2s，超时放弃等待）。
+        long joinDeadline = System.currentTimeMillis() + 2_000;
+        joinOne(acceptor, joinDeadline);
+        for (Thread t : taskThreads) {
+            joinOne(t, joinDeadline);
+        }
         fire(Event.sim(mode == StopMode.CRASH ? "sim.engine-crashed" : "sim.engine-stopped",
                 id.value(), Map.of("mode", mode.name())));
+    }
+
+    /** 有界 join（卡 5）：join 自身线程会死锁，须跳过；超预算放弃等待。 */
+    private static void joinOne(Thread t, long deadline) {
+        if (t == null || t == Thread.currentThread()) {
+            return;
+        }
+        long remaining = deadline - System.currentTimeMillis();
+        if (remaining <= 0) {
+            return;
+        }
+        try {
+            t.join(remaining);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Override

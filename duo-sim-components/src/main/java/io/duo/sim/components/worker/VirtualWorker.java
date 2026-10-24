@@ -296,7 +296,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             while (inst.alive.get() && running.get() && inst.generation.get() == gen) {
                 DuoMessage msg = conn.read();
                 if (msg instanceof TaskDispatch d) {
-                    onDispatch(inst, conn, d);
+                    onDispatch(inst, conn, d, gen);
                 } else if (msg instanceof TaskCancel c) {
                     inst.running.stream().filter(t -> t.taskId.equals(c.taskId()))
                             .forEach(t -> t.cancelled = true);
@@ -307,7 +307,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         }
     }
 
-    private void onDispatch(InstanceState inst, FrameConnection conn, TaskDispatch d) {
+    private void onDispatch(InstanceState inst, FrameConnection conn, TaskDispatch d, long gen) {
         // 显式拒绝优先级（M5-3）：注入类故障优先于容量判定——故障语义必须可见，
         // 不能被「恰好还有空槽」掩盖（§12 不静默）。
         if (resourceExhausted.get()) {
@@ -385,8 +385,13 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             } catch (IOException e) {
                 // 连接断开：状态回报丢失（master 失联检测兜底）
             } finally {
-                inst.freeSlots.incrementAndGet();
-                inst.running.remove(exec);
+                // 卡 5（代次守卫）：只把槽位归还给**派发时的代次**——stop/restartInstance 之后
+                // 旧任务线程的 finally 不得污染新代次的计数器（否则槽位可越 totalSlots 上限，
+                // engine 侧同款教训回流）。过期代次连 running 也无需移除（restart 已整表清空）。
+                if (inst.generation.get() == gen) {
+                    inst.freeSlots.incrementAndGet();
+                    inst.running.remove(exec);
+                }
             }
         });
         exec.worker = taskThread;
@@ -466,9 +471,33 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 inst.thread.interrupt();
             }
         }
+        // 有界 join barrier（卡 5，scheduler closeAll 同款纪律）：restart() 里 stop→start 与
+        // 残留实例线程的竞态在此消除。全局预算 2s（万级实例下不得逐线程各等 1s）。
+        joinBounded(2_000);
         closeReadiness();
         fire(Event.sim(mode == StopMode.CRASH ? "sim.worker-crashed" : "sim.worker-stopped",
                 id.value(), Map.of("mode", mode.name(), "instances", count)));
+    }
+
+    /** 在总预算内逐线程 join（中断后的实例线程按心跳/轮询周期很快退出；超预算即放弃等待）。 */
+    private void joinBounded(long totalBudgetMs) {
+        long deadline = System.currentTimeMillis() + totalBudgetMs;
+        for (InstanceState inst : instances.values()) {
+            Thread t = inst.thread;
+            if (t == null) {
+                continue;
+            }
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                return;
+            }
+            try {
+                t.join(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     @Override
@@ -541,6 +570,9 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     @Override
     public void restartInstance(int index) {
         InstanceState s = requireInstance(index);
+        // 先递增代次**再**重置槽位（卡 5）：旧任务线程按派发时捕获的代次比对，过期即放弃
+        // 归还——若重置后才递增，discoverMaster 的等待窗内旧线程归还仍会越限（确定性复现钉住）。
+        s.generation.incrementAndGet();
         s.freeSlots.set(totalSlots);
         s.running.clear();
         String masterAddr = discoverMaster();
