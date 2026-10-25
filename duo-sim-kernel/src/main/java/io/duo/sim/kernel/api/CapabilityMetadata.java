@@ -32,6 +32,7 @@ public record CapabilityMetadata(EndpointShape endpointShape,
                                  boolean defaultImpl,
                                  Set<String> trustedConfigKeys) {
 
+    /** 便捷构造：不声明外部可传 config 键（trustedConfigKeys＝空集，兼容既有调用点）。 */
     public CapabilityMetadata(EndpointShape endpointShape, boolean interfaceDirect,
                               boolean instanceControl, Set<String> supportedFaults,
                               boolean defaultImpl) {
@@ -39,14 +40,17 @@ public record CapabilityMetadata(EndpointShape endpointShape,
                 Set.of());
     }
 
+    /** 规范化：trustedConfigKeys 判空并拷贝为不可变集。 */
     public CapabilityMetadata {
         trustedConfigKeys = trustedConfigKeys == null ? Set.of() : Set.copyOf(trustedConfigKeys);
     }
 
+    /** 组合便捷值：端点 NONE + 同进程门面（§7.5：NONE ⇒ interfaceDirect，本方法直接给出合法组合）。 */
     public static CapabilityMetadata inProcessDirect(Set<String> supportedFaults) {
         return new CapabilityMetadata(EndpointShape.NONE, true, false, supportedFaults, false);
     }
 
+    /** 组合便捷值：DUO_PORT 端点、无同进程门面（消费方只能走线协议拨号）。 */
     public static CapabilityMetadata duoPort(boolean instanceControl, Set<String> supportedFaults) {
         return new CapabilityMetadata(EndpointShape.DUO_PORT, false, instanceControl,
                 supportedFaults, false);
@@ -67,6 +71,7 @@ public record CapabilityMetadata(EndpointShape endpointShape,
                 supportedFaults, false);
     }
 
+    /** 标注/取消缺省实现标记（返回新实例；缺省唯一性由 ContractRegistry.validateDefaults 校验）。 */
     public CapabilityMetadata withDefault(boolean isDefault) {
         return new CapabilityMetadata(endpointShape, interfaceDirect, instanceControl,
                 supportedFaults, isDefault, trustedConfigKeys);

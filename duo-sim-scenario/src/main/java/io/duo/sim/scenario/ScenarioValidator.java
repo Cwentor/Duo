@@ -28,6 +28,7 @@ public final class ScenarioValidator {
 
     /** 校验报告：失败列表（启动前快速失败）+ 警告（如 M0 不支持的 assertions 节）。 */
     public record Report(List<String> errors, List<String> warnings) {
+        /** 无失败即通过（警告不影响启动）。 */
         public boolean ok() {
             return errors.isEmpty();
         }
@@ -88,15 +89,18 @@ public final class ScenarioValidator {
     private final ContractRegistry registry;
     private final InputTrust trust;
 
+    /** 等价于 {@code this(registry, InputTrust.CONFIG)}——本机文件/CLI/测试的同级信任。 */
     public ScenarioValidator(ContractRegistry registry) {
         this(registry, InputTrust.CONFIG);
     }
 
+    /** @param trust 输入信任档：EXTERNAL_INPUT 时启用规则 9–11（能力收窄，见类注释）。 */
     public ScenarioValidator(ContractRegistry registry, InputTrust trust) {
         this.registry = registry;
         this.trust = trust;
     }
 
+    /** 全量校验（规则 1–8 恒查，9–11 仅外部输入档）；errors 非空即启动前快速失败，warnings 不阻断。 */
     public Report validate(Scenario scenario) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();

@@ -50,6 +50,7 @@ public final class ScenarioRuntime {
     private final Set<String> sutIds = ConcurrentHashMap.newKeySet();
     private final Consumer<Event> recorder;
 
+    /** @param recorder 注入相关事件的统一汇（ScenarioEngine 里接事件总线——与内存流/录制共用单一订阅路径，T21）。 */
     public ScenarioRuntime(Consumer<Event> recorder) {
         this.recorder = recorder;
     }
@@ -59,10 +60,12 @@ public final class ScenarioRuntime {
         recorder.accept(event);
     }
 
+    /** 注册已解析的注入目标（装配期由 bootstrapper 调；supportedFaults 取注册期能力元数据，运行期第②查的依据）。 */
     public void registerTarget(String id, Target t) {
         targets.put(id, t);
     }
 
+    /** 标记节点为 SUT（§7.2：SUT 不得为注入目标——precheck 第①查的依据）。 */
     public void markSut(String id) {
         sutIds.add(id);
     }

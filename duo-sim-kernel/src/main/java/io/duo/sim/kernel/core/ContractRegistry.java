@@ -22,6 +22,7 @@ public final class ContractRegistry {
 
     /** 一致性/缺省唯一性违规。 */
     public static class RegistrationException extends RuntimeException {
+        /** 违规说明（消息里带定位信息：contract/tier/implName）。 */
         public RegistrationException(String message) {
             super(message);
         }

@@ -63,6 +63,7 @@ public final class ScenarioEngine implements AutoCloseable {
     /** 输入信任档（默认＝本机文件/classpath 配置）。全链路唯一类型：{@link InputTrust}（卡 6）。 */
     private InputTrust inputTrust = InputTrust.CONFIG;
 
+    /** 构造引擎本体（不做校验——加载即校验走 {@link #validated}；总线/结果/装配器在此接线）。 */
     public ScenarioEngine(Scenario scenario, ContractRegistry registry) {
         this.scenario = scenario;
         this.registry = registry;
@@ -192,6 +193,7 @@ public final class ScenarioEngine implements AutoCloseable {
             return external;
         }
 
+        /** 是否 external 形态（{@link #external()} 非空即 true）。 */
         public boolean isExternal() {
             return external != null;
         }
@@ -203,10 +205,12 @@ public final class ScenarioEngine implements AutoCloseable {
         sutExit.countDown();
     }
 
+    /** 等待 SUT 退出信号（{@link #notifySutExit} 或 sut.exited/crashed 事实触发；超时返回 false）。 */
     public boolean awaitSutExit(long timeoutMs) throws InterruptedException {
         return sutExit.await(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
+    /** 场景至今的全部事件（机器事实源，§11；下标语义与 {@link #eventsSince} 一致）。 */
     public List<Event> events() {
         return journal.events();
     }
@@ -229,10 +233,12 @@ public final class ScenarioEngine implements AutoCloseable {
         return journal.droppedEvents();
     }
 
+    /** 警告列表拷贝（校验期 + 运行期双来源；不判场景成败）。 */
     public List<String> warnings() {
         return List.copyOf(warnings);
     }
 
+    /** 内核注入通路（热注入经 {@link #inject} 即它的转发；控制面 diagnose 也从这里取数）。 */
     public ScenarioRuntime runtime() {
         return runtime;
     }
@@ -242,10 +248,12 @@ public final class ScenarioEngine implements AutoCloseable {
         return result;
     }
 
+    /** 内核托管组件表快照（id → 活组件；SUT 与 external 节点不在此列）。 */
     public Map<String, VirtualComponent> components() {
         return Map.copyOf(byId);
     }
 
+    /** 本引擎的事件总线（订阅侧经它接收全部事实；订阅在发布线程同步执行）。 */
     public SimpleEventBus bus() {
         return bus;
     }
@@ -255,6 +263,7 @@ public final class ScenarioEngine implements AutoCloseable {
         return runtime.inject(action);
     }
 
+    /** 注册 SUT 协作停止回调（不直接调用——收摊时经 {@link #stop()} 并入管理器拆除序列，T12）。 */
     public void registerSutStopper(SutStopper s) {
         this.sutStopper = s;
     }
@@ -273,6 +282,10 @@ public final class ScenarioEngine implements AutoCloseable {
         result.recordWarning(hint);
     }
 
+    /**
+     * 统一收摊（幂等，未启动为 no-op）：关时间线（取消未触发动作）→ 管理器逆序拆除
+     * （SUT 停止并入）→ external 进程留活提示（生命周期归用户）→ 结束录制 + YAML 断言评估（T20）。
+     */
     public void stop() {
         if (!started) {
             return;

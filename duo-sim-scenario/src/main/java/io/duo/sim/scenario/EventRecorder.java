@@ -174,6 +174,7 @@ public final class EventRecorder implements AutoCloseable {
         }
     }
 
+    /** 录制目标文件路径（{@code events.jsonl}）。 */
     public Path outputFile() {
         return outputFile;
     }
