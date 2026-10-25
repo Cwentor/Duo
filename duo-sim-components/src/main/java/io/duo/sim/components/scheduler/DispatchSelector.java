@@ -67,6 +67,7 @@ public final class DispatchSelector {
         lastKnown.remove(instanceName);
     }
 
+    /** 查询实例空闲槽位（未知实例返回 -1——未收首份 SlotReport 的连接不参与选择）。 */
     public int freeSlotsOf(String instanceName) {
         AtomicInteger v = freeSlots.get(instanceName);
         return v == null ? -1 : v.get();

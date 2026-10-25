@@ -38,6 +38,7 @@ public final class DuoCli {
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
+    /** JVM 入口（System.exit 转发 run 的退出码——脚本与 CI 据此判定）。 */
     public static void main(String[] args) {
         System.exit(run(args));
     }

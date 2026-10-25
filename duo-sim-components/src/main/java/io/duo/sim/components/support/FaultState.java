@@ -42,6 +42,12 @@ public final class FaultState {
     private final AtomicBoolean resourceExhausted = new AtomicBoolean(false);
     private volatile double activeSlowFactor = 3.0;
 
+    /**
+     * @param eventPrefix 事件名前缀（{@code sim.worker-*} / {@code sim.engine-*}——消费方语义由此注入）
+     * @param totalSlots 总槽位数（进 resource-exhaust 事件载荷）
+     * @param defaultSlowFactor slow 缺省倍数（config {@code slow.factor}；动作 {@code params.factor} 可覆盖）
+     * @param emitter 事件发布门面
+     */
     public FaultState(String eventPrefix, int totalSlots, double defaultSlowFactor,
                       Emitter emitter) {
         this.eventPrefix = eventPrefix;
@@ -50,14 +56,17 @@ public final class FaultState {
         this.emitter = emitter;
     }
 
+    /** 是否处于冻结态（freeze 生效中）。 */
     public boolean frozen() {
         return frozen.get();
     }
 
+    /** 是否处于慢速态（slow 生效中；倍数另见 {@link #activeSlowFactor()}）。 */
     public boolean slow() {
         return slowActive.get();
     }
 
+    /** 是否处于资源耗尽态（resource-exhaust 生效中；新分配被拒、已有分配不受影响）。 */
     public boolean exhausted() {
         return resourceExhausted.get();
     }

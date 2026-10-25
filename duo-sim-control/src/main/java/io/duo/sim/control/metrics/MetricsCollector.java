@@ -58,6 +58,7 @@ public final class MetricsCollector {
     private long sutFactTotal;
     private long simFactTotal;
 
+    /** @param host 取数宿主（状态与事件增量的来源；只读既有公开 API，§10）。 */
     public MetricsCollector(ScenarioHost host) {
         this.host = host;
     }

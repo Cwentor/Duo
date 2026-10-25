@@ -26,6 +26,7 @@ public final class DuoAssertions {
         this.events = List.copyOf(events);
     }
 
+    /** 断言入口：对事件快照做判定（与 YAML 内置评估共用 kernel Assertions 语义，§11 双轨分工）。 */
     public static DuoAssertions assertThat(List<Event> events) {
         return new DuoAssertions(events);
     }

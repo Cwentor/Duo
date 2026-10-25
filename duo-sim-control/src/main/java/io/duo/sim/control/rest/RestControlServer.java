@@ -153,6 +153,7 @@ public final class RestControlServer implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
+    /** 实际监听端口（未启动＝-1；start 传 port 0 时由此拿内核分配值）。 */
     public int port() {
         return server == null ? -1 : server.getAddress().getPort();
     }

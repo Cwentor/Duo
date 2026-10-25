@@ -33,15 +33,18 @@ public final class ScenarioLibrary {
 
     private final Path userDir;
 
+    /** @param userDir 用户库目录（不存在则创建；所有写入严格限定其内——id 白名单保证无路径逃逸）。 */
     public ScenarioLibrary(Path userDir) throws IOException {
         this.userDir = userDir.toAbsolutePath().normalize();
         Files.createDirectories(this.userDir);
     }
 
+    /** 用户库目录（绝对规范化路径）。 */
     public Path userDir() {
         return userDir;
     }
 
+    /** id 白名单判定（{@code [A-Za-z0-9._-]+} 且不以点开头、不含 {@code ..}）——读/写/删的前置条件。 */
     public static boolean validId(String id) {
         return id != null && !id.isBlank() && ID.matcher(id).matches()
                 && !id.startsWith(".") && !id.contains("..");
@@ -52,6 +55,7 @@ public final class ScenarioLibrary {
                         int nodeCount, long lastModifiedMillis) {
     }
 
+    /** 场景正文（id + 是否模板 + YAML 文本）。 */
     public record Content(String id, boolean template, String yaml) {
     }
 
@@ -83,6 +87,7 @@ public final class ScenarioLibrary {
         }
     }
 
+    /** 全量清单（模板在前、用户库按文件名序）；解析/校验不过的条目 valid=false——列表不得因此 500。 */
     public List<Entry> list() throws IOException {
         List<Entry> out = new ArrayList<>();
         try (var in = ScenarioLibrary.class.getResourceAsStream(TEMPLATES_ROOT + "/index.txt")) {
@@ -117,6 +122,7 @@ public final class ScenarioLibrary {
         }
     }
 
+    /** 读取正文（模板与用户库同名时模板优先；不存在抛 NoSuchFileException）。 */
     public Content get(String id) throws IOException {
         requireValidId(id);
         if (isTemplate(id)) {
@@ -129,6 +135,7 @@ public final class ScenarioLibrary {
         return new Content(id, false, Files.readString(p, StandardCharsets.UTF_8));
     }
 
+    /** 写入用户库（模板 id 拒绝；同名覆盖）。 */
     public void put(String id, String yaml) throws IOException {
         requireValidId(id);
         if (isTemplate(id)) {
@@ -137,6 +144,7 @@ public final class ScenarioLibrary {
         Files.writeString(userDir.resolve(id + ".yaml"), yaml, StandardCharsets.UTF_8);
     }
 
+    /** 删除用户库条目（模板拒绝；不存在抛 NoSuchFileException）。 */
     public void delete(String id) throws IOException {
         requireValidId(id);
         if (isTemplate(id)) {
@@ -149,6 +157,7 @@ public final class ScenarioLibrary {
         Files.delete(p);
     }
 
+    /** 模板/用户场景复制为用户场景（newId 已存在即拒绝；源与目标的校验复用 get/put）。 */
     public String fork(String sourceId, String newId) throws IOException {
         requireValidId(newId);
         if (isTemplate(newId) || Files.exists(userDir.resolve(newId + ".yaml"))) {

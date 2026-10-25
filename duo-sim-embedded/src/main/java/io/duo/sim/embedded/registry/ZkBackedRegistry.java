@@ -105,6 +105,7 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
         return Map.of("kind", backendKind(), "connectString", connectString());
     }
 
+    /** 建门面 Curator 客户端（指数退避重试；两档后端共用同一连接参数）。 */
     protected static CuratorFramework newFacadeClient(String connectString) {
         return CuratorFrameworkFactory.builder()
                 .connectString(connectString)
@@ -326,6 +327,7 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
 
     // ---- internal ----
 
+    /** 幂等建 PERSISTENT 父路径（临时节点由调用处按语义创建）。 */
     protected void ensurePath(String path) throws Exception {
         if (facadeClient.checkExists().forPath(path) == null) {
             facadeClient.create().creatingParentsIfNeeded()
@@ -333,6 +335,7 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
         }
     }
 
+    /** 节点变更双通道通知：框架事件（T26，不依赖订阅者）+ 局部 watch 回调（异常只记事件不中断其余订阅者）。 */
     protected void notifyWatchers(String path, String value, RegistryChange.ChangeKind kind) {
         // T26：节点变更统一发框架事件（§7.3 观测途径①embedded 版）——不依赖是否有
         // 局部 watch 订阅者，供断言与事件录制观测
@@ -351,12 +354,14 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
         }
     }
 
+    /** 未启动即操作的前置守卫（显式失败，§12）。 */
     protected void requireRunning() {
         if (!running) {
             throw new ComponentException(backendKind() + " registry is not running: " + id);
         }
     }
 
+    /** 尽力关闭（收摊路径专用——关不掉不掩盖根因）。 */
     protected static void closeQuietly(CuratorFramework client) {
         if (client != null) {
             try {
@@ -367,6 +372,7 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
         }
     }
 
+    /** 发事件（init 前的安全空操作——注册期实例化校验不会触发 NPE）。 */
     protected void fire(Event e) {
         if (ctx != null) {
             ctx.eventBus().publish(e);

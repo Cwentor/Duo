@@ -168,6 +168,7 @@ public final class VirtualResourceManager implements VirtualComponent, FaultInje
         return exhausted.get() ? 0 : totalCpu - usedCpu.get();
     }
 
+    /** 剩余内存配额 GB（口径同 {@link #remainingCpu()}：耗尽态＝0）。 */
     public int remainingMemGB() {
         return exhausted.get() ? 0 : totalMemGb - usedMemGb.get();
     }

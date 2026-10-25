@@ -382,6 +382,7 @@ public final class ScenarioHost implements AutoCloseable {
 
     // ---- 状态与观测 ----
 
+    /** 状态快照（state/场景名/断言结果/事件数/录制路径/告警；{@code /scenario/status} 的数据源）。 */
     public synchronized Map<String, Object> status() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("state", state.name());

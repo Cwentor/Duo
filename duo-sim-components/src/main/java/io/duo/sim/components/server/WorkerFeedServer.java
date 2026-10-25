@@ -85,6 +85,7 @@ public final class WorkerFeedServer implements AutoCloseable {
     private volatile Thread acceptor;
     private volatile boolean open;
 
+    /** @param name 服务名（acceptor 线程命名与日志归属）；listener＝消费方业务回调（状态机/事件/心跳采样）。 */
     public WorkerFeedServer(String name, Listener listener) {
         this.name = name;
         this.listener = listener;

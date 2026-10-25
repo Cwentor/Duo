@@ -59,6 +59,7 @@ public final class FaultDiagnostics {
     public record Report(List<Chain> chains, List<Map<String, Object>> assertions, int eventsTotal,
                          List<String> gaps) {
 
+        /** 整体完整：至少一条注入链且无断链缺口（gaps 为空）。 */
         public boolean complete() {
             return !chains.isEmpty() && gaps.isEmpty();
         }
