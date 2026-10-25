@@ -75,6 +75,28 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 `$env:duo.config` 语法**无效**（PS 解析为属性访问），须用
 `[Environment]::GetEnvironmentVariable('duo.config')`。
 
+### 1.4 console-ui 前端（M10 计划二）
+
+- 位置 `console-ui/`；Node 22+ 仅构建期。命令：`npm install`（首次）/ `npm test`（Vitest，jsdom 环境）/
+  `npm run build`（产物 → `duo-sim-control/target/classes/console`，`emptyOutDir`）。
+- **构建顺序**：`npm run build` 必须在 `mvnw` 之前（maven-resources 缺省不覆盖更新的目标文件；
+  `mvnw clean` 后需重新 npm build，否则 serve 出占位页）。
+- dev 模式：`npm run dev`（5173，proxy 到 127.0.0.1:7788 的 serve）。
+- 依赖纪律：新增 npm 依赖与 Java `-Dquality` 门禁天然隔离；但须说明用途，禁止顺手引。
+- 本机 npm 启用了 allow-scripts 安全策略：首次 `npm install` 后需 `npm approve-scripts esbuild`
+  （vite 构建依赖其二进制）。
+
+**端到端冒烟清单**（验收判据 G-W2 的机器可执行版；`duo serve --port 0 --token <T>` 后浏览器执行，
+或对同一端口 curl 等价 API 序列）：
+
+1. 令牌页输入 `<T>` 进入库页（TOKEN 模式输错令牌显示错误；INSECURE 模式免令牌）；
+2. fork「worker-crash-failover」→ 工作区画布 3 节点 + 接线；
+3. 属性面板改 workers `count: 4→3` → 保存 → `GET /api/scenarios/<id>` 已更新；
+4. ▶ 启动场景 → RUNNING（工具栏状态灯 + 连接指示）；
+5. 点 workers → 注入 `crash` 实例 3 → 事件流见 `sim.fault-injected` / `sim.worker-instance-crashed`；
+6. 诊断链 tab：注入链 ≥1、SUT 事实 >0、gaps=0；断言 tab 场景收口后 PASS/FAIL 可见；
+7. 停止 → 回编辑态；删除 fork 场景收尾。全程零终端命令（除启动 serve 本身）。
+
 ---
 
 ## 2. 常用命令
@@ -140,7 +162,7 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 > 否则会形成 `junit ↔ examples` 循环依赖。`duo-sim-control` 第 14 轮起**自带契约测试**
 > （test 作用域依赖 `duo-sim-components`，依赖方向仍单向），不再受此约束。
 
-### 3.2 当前分布（2026-09-25 实测，第 34 轮后）
+### 3.2 当前分布（2026-10-01 实测，M10 计划一 + 计划二后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
@@ -150,27 +172,30 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 | `duo-sim-components` | 120 | 0 |
 | `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
-| `duo-sim-control` | 22 | 0 |
-| `duo-sim-examples` | 52 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻） |
-| **合计（reactor 内 8 模块）** | **397** | **12** |
+| `duo-sim-control` | 46 | 0（第 34 轮基线 22＝`ScenarioHostTest` 10 + `RestControlServerTest` 12；**M10 计划一 +24**：`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、`RestConsoleApiTest` 15、`RestControlServerTest` +2） |
+| `duo-sim-examples` | 54 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻。M10 计划一 +2：CLI serve 可选场景/help 文案） |
+| **合计（reactor 内 8 模块）** | **423** | **12** |
+
+> **前端测试另计**：`console-ui` 的 Vitest **46 测 / 0 失败**（8 文件；不在上表——上表只统计 Maven reactor
+> 内的 8 个 Java 模块）。命令见 §1.4；CI `regression` job 在 `mvnw` 之前先跑 `npm ci && npm test && npm run build`。
 
 > **口径说明（第 33 轮修正）**：上表是 `.\mvnw.cmd -o -B test` 的实测输出，逐模块与 Maven 的
 > `Tests run:` 行一一对应，不需要再做任何换算。此前版本在这里写过一段"`duo-sim-control` 的测试
 > 不在自己模块里，所以 366 + 25 = 391"的换算——那段**已经过时且是错的**：`ScenarioHostTest`
-> 与 `RestControlServerTest` 第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（10）
+> 与 `RestControlServerTest` 第 14 轮就搬进了 `duo-sim-control/src/test`，`DuoCliTest`（15）
 > 留在 examples（它编排 `DemoScheduler` 场景，与示例强耦合）。三段合计仍然对得上，
 > 但**归属已经清楚**，无需再叠加口径；上表直接就是全量数字。
 >
-> ⚠️ **注意 `duo-sim-examples` 的 1 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
+> ⚠️ **注意 `duo-sim-examples` 的 2 条 skip**：`ScaleAcceptanceTest` 是 `@ParameterizedTest`
 > 带两个档（`scale-1k.yaml` / `scale-10k.yaml`），`@EnabledIfSystemProperty(duo.scale=true)`
 > 关闭时 JUnit 计 **1** 条 skip 而不是 2 条（参数化整体被禁用）。所以"skip=1"说的是
 > "压测门控关着"，不是"只跳了一个档"。M9 的 `DsFailoverAcceptanceTest` 同为
 > `@EnabledIfSystemProperty(duo.ds=true)` 门控（D-M9-4），缺省 skip 可见。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：397 测 / 0 失败 / 0 错误 / 12 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：423 测 / 0 失败 / 0 错误 / 12 skip（本机无 Docker）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
-.\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：9 模块零未声明/零未使用（CI regression job 已接入）
+.\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：8 个 jar 模块零未声明/零未使用（parent 为 pom packaging，按设计跳过；CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）
 ```
 
@@ -289,7 +314,7 @@ bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-o
 
 | 门控 | 机制 | 设计依据 |
 | --- | --- | --- |
-| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 15 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 10）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
+| 容器档 | `@EnabledIf(dockerAvailable)` 自动 skip；**同时**有 16 条不标门控的守卫用例（`ZookeeperContainerRegistryGuardTest` 5 + `PostgresContainerStoreGuardTest` 11）离线验证「不支持＝显式拒绝」 | 设计 §13「容器档在无 Docker 环境自动 skip」；M4 独立验收 MEDIUM 整改 |
 | 容器档（确定性关闭） | `-Dduo.docker.enabled=false` 强制 `dockerAvailable()==false`——CI 回归 job 用它让「零 Docker 依赖」成为**确定事实**，而非「恰好这台机器没 Docker」 | M7 / T8「skip 必须可见、可解释」 |
 | 压测 | `-Dduo.scale=true` 显式触发（缺省 skip） | M4 计划 D2「压测不进常规回归」 |
 | **依赖门禁** | `-Dquality` 激活 `dependency:analyze-only`（绑 `verify`），`failOnWarning=true`——**新增一条"未声明/未使用"告警即构建失败**；缺省不激活 ⇒ 常规回归零开销 | M7 交付物 4（第 11 轮）；基线取证见 [`superpowers/plans/m7-quality-gate-baseline.md`](superpowers/plans/m7-quality-gate-baseline.md) |

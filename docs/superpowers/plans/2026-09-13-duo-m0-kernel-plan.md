@@ -3,7 +3,11 @@
 - 日期：2026-09-13（v3 修订）
 - 依据：设计文档 v1.0（定稿）：`docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md`
 - 范围：设计文档 §14 的 M0 行；验收标准＝§13 档位切换场景跑通
-- 状态：待用户批准（批准前不动代码）
+- 状态：**已实施完成并验收通过**（M0 验收 2026-09-13，提交 `29b1a42`，全仓 81 测全绿）。
+  原状态行「待用户批准（批准前不动代码）」为 M0 开工前文本；本条为 **2026-10-01 回填**，
+  保留原文以便追溯——自本条起，本计划状态行以**实际收尾状态**为准（同 M2 勘误先例）。
+- 进度：**[回填] T1–T15 全部已落地（15/15）**，逐任务落地位置与证据见文末附录
+  「任务落地状态（2026-10-01 回填）」。
 - 修订记录见文末附录
 
 ---
@@ -96,6 +100,31 @@
 ---
 
 ## 附录：修订记录
+
+- **回填（2026-10-01，进度可视）**：本节为**追溯性补记**，不改动 §1~§7 的原始承诺文本
+  （同 M2 勘误、M4 v1.1 先例）。T1–T15 逐任务落地状态如下，判据列＝原计划完成判据的兑现位置；
+  「落地位置」以当前 `dev` 分支实际文件为准（含实施期改名/移动，见括注）。
+
+  | # | 状态 | 落地位置（实测） | 对应测试（实测） |
+  | --- | --- | --- | --- |
+  | T1 | ✅ | 父 pom + 8 模块（protocol/kernel/scenario/components/embedded/junit/control/examples） | `mvn install` 全绿 |
+  | T2 | ✅ | `protocol` `FrameCodec` + message 包（含 `TaskCancel`） | `DuoCodecTest`、`FrameConnection{Interleave,ConcurrentWrite}Test` |
+  | T3 | ✅ | `kernel/api`：VirtualComponent/ComponentContext/StopMode/HealthReport/ExposedEndpoint/FaultInjectable/InstanceControl/FaultAction/CapabilityMetadata/SimClock/SutMain/SutContext/SutEventPublisher | 编译期契约（T3 原判据即编译通过 + javadoc 引节号） |
+  | T4 | ✅ | `kernel/api/contract`：`RegistryContract`/`WorkerContract`/`SchedulerContract`/`EngineContract`（`Contract` 为公共父接口；实施期另增 `StoreContract` 属 M2） | 被 VirtualRegistry / DemoRealWorker 等消费（T3/T4 消费方清单兑现） |
+  | T5 | ✅ | `kernel/core/ContractRegistry`；`EventBus` 落 `kernel/api/EventBus`（**改名/移动**） | `ContractRegistryTest`（一致性/缺省唯一性） |
+  | T6 | ✅ | `components/registry/VirtualRegistry` | `VirtualRegistryTest` |
+  | T7 | ✅ | `components/taskstub/BehaviorProfile`（**M0 子集落为 record，`failAt/neverReport/progress` 由 M1 补齐**） | `BehaviorProfileTest` + `BehaviorResolverM1Test` |
+  | T8 | ✅ | `components/worker/VirtualWorker` | `VirtualWorkerTest` |
+  | T9 | ✅ | `kernel/core/WiringResolver`（+ 组件管理器） | `WiringResolverAndManagerTest`（规则 2/3） |
+  | T10 | ✅ | `kernel/core/ScenarioRuntime` | `ScenarioRuntimeTest` |
+  | T11 | ✅ | `scenario/ScenarioLoader`、`ScenarioValidator`、`ScenarioEngine` | `ScenarioLoaderTest`、`ScenarioValidatorTest`、`ScenarioEngineCommandTest` |
+  | T12 | ✅ | `kernel/sut/SutLauncher`（+ `ReadyProbe`、`ExternalSutLauncher` 属 M6） | `SutLauncherTest`、`ReadyProbeTest` |
+  | T13 | ✅ | `examples/scheduler/DemoScheduler` | `SchedulerStateMachineTest`（+ `DispatchSelectorTest` 属 M1） |
+  | T14 | ✅ | `examples`：`DemoRealWorker` + `RealWorkerSut` | `WorkerSutAcceptanceTest`（第 32 轮补，`306c817`） |
+  | T15 | ✅ | `m0-acceptance-{virtual,real}-workers.yaml`、`m0-acceptance-real-worker-sut.yaml` | `TierSwapAcceptanceTest`（两档位全绿＝M0 验收口径） |
+
+  **实测完成判据（2026-10-01 复核）**：`TierSwapAcceptanceTest` 在常规回归内常绿；
+  当前整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**（含 M0 起的全部历史用例）。
 
 - **v1（2026-09-13）**：初稿，13 任务。
 - **v2（2026-09-13）**：依计划评审修订——

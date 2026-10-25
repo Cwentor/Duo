@@ -69,14 +69,8 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     private volatile BehaviorResolver behaviors;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final AtomicBoolean frozen = new AtomicBoolean(false);
-    /** slow（M5-3）：置位后执行时长乘以 {@link #slowFactor}。 */
-    private final AtomicBoolean slowActive = new AtomicBoolean(false);
-    /** resource-exhaust（M5-3）：置位后对外报 0 空闲槽位并**显式拒绝**全部新派发。 */
-    private final AtomicBoolean resourceExhausted = new AtomicBoolean(false);
-    private volatile double slowFactor = 3.0;
-    /** 当前生效的 slow 倍数（注入时按 params.factor / config slow.factor 解析）。 */
-    private volatile double activeSlowFactor = 3.0;
+    /** 组件级故障态（卡 8：与 VirtualEngine 共享同一实现，事件前缀区分）。 */
+    private volatile io.duo.sim.components.support.FaultState faults;
     private final Map<Integer, InstanceState> instances = new ConcurrentHashMap<>();
     private final AtomicLong heartbeatSeq = new AtomicLong();
     private volatile ServerSocket readinessSocket;
@@ -137,8 +131,11 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 ctx.config().getOrDefault("capacity.slots", String.valueOf(cpuPerInstance)));
         this.heartbeatIntervalMs = Long.parseLong(ctx.config().getOrDefault(
                 "heartbeat.interval.ms", String.valueOf(DEFAULT_HEARTBEAT_INTERVAL_MS)));
-        this.slowFactor = Double.parseDouble(ctx.config().getOrDefault("slow.factor", "3.0"));
         this.behaviors = BehaviorResolver.fromConfig(ctx.config());
+        double slowFactor = Double.parseDouble(ctx.config().getOrDefault("slow.factor", "3.0"));
+        this.faults = new io.duo.sim.components.support.FaultState("sim.worker",
+                totalSlots, slowFactor,
+                (event, payload) -> fire(Event.sim(event, id.value(), payload)));
         for (int i = 1; i <= count; i++) {
             instances.put(i, new InstanceState(i, id.instanceSourceId(i), totalSlots));
         }
@@ -230,7 +227,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                             .start(() -> readDownstream(inst, conn, gen));
                     // 心跳 + 槽位上报（周期可配，M4 T36）
                     while (inst.alive.get() && running.get() && inst.generation.get() == gen) {
-                        if (frozen.get()) {
+                        if (faults.frozen()) {
                             Thread.sleep(heartbeatIntervalMs); // freeze：不发心跳（M5-3 起可注入）
                             continue;
                         }
@@ -296,7 +293,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             while (inst.alive.get() && running.get() && inst.generation.get() == gen) {
                 DuoMessage msg = conn.read();
                 if (msg instanceof TaskDispatch d) {
-                    onDispatch(inst, conn, d);
+                    onDispatch(inst, conn, d, gen);
                 } else if (msg instanceof TaskCancel c) {
                     inst.running.stream().filter(t -> t.taskId.equals(c.taskId()))
                             .forEach(t -> t.cancelled = true);
@@ -307,14 +304,14 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         }
     }
 
-    private void onDispatch(InstanceState inst, FrameConnection conn, TaskDispatch d) {
+    private void onDispatch(InstanceState inst, FrameConnection conn, TaskDispatch d, long gen) {
         // 显式拒绝优先级（M5-3）：注入类故障优先于容量判定——故障语义必须可见，
         // 不能被「恰好还有空槽」掩盖（§12 不静默）。
-        if (resourceExhausted.get()) {
+        if (faults.exhausted()) {
             reject(conn, inst, d, "resource exhausted");
             return;
         }
-        if (frozen.get()) {
+        if (faults.frozen()) {
             reject(conn, inst, d, "frozen");
             return;
         }
@@ -344,13 +341,11 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 .unstarted(() -> {
             try {
                 var entry = behaviors.resolve(d.taskName());
-                // slow（M5-3）：时长乘以 slow.factor（只在注入期间生效；倍数来自 config）
-                long duration = slowActive.get()
-                        ? (long) (entry.durationMillis() * activeSlowFactor) : entry.durationMillis();
-                var profile = new BehaviorProfile(duration,
-                        entry.jitterRatio(), entry.successRate(),
-                        entry.exceptionType(), entry.logLines(),
-                        entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+                // slow（M5-3）：时长乘以生效倍数（只在注入期间；倍数来自 params/config）
+                long duration = faults.slow()
+                        ? (long) (entry.durationMillis() * faults.activeSlowFactor())
+                        : entry.durationMillis();
+                var profile = io.duo.sim.components.taskstub.TaskBehaviors.profile(entry, duration);
                 // M1 T17：progress 上报（periodic 模式按进度回调 → 事件）
                 var result = profile.execute(d.taskName(), new Random(), pct -> {
                     awaitUnfrozen(inst); // freeze：进展对外停摆（挂起回调）
@@ -385,8 +380,13 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
             } catch (IOException e) {
                 // 连接断开：状态回报丢失（master 失联检测兜底）
             } finally {
-                inst.freeSlots.incrementAndGet();
-                inst.running.remove(exec);
+                // 卡 5（代次守卫）：只把槽位归还给**派发时的代次**——stop/restartInstance 之后
+                // 旧任务线程的 finally 不得污染新代次的计数器（否则槽位可越 totalSlots 上限，
+                // engine 侧同款教训回流）。过期代次连 running 也无需移除（restart 已整表清空）。
+                if (inst.generation.get() == gen) {
+                    inst.freeSlots.incrementAndGet();
+                    inst.running.remove(exec);
+                }
             }
         });
         exec.worker = taskThread;
@@ -422,7 +422,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
 
     /** 对外可见的空闲槽位：resource-exhaust 期间恒为 0（可观测面与准入判定同源）。 */
     private int effectiveSlots(InstanceState inst) {
-        return resourceExhausted.get() ? 0 : inst.freeSlots.get();
+        return faults != null && faults.exhausted() ? 0 : inst.freeSlots.get();
     }
 
     /**
@@ -430,7 +430,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
      * 用轮询而非 wait/notify——stop/restart/实例下线都必须能收敛，漏唤醒会导致线程永久挂起。
      */
     private void awaitUnfrozen(InstanceState inst) {
-        while (frozen.get() && running.get() && inst.alive.get()) {
+        while (faults.frozen() && running.get() && inst.alive.get()) {
             try {
                 Thread.sleep(20);
             } catch (InterruptedException e) {
@@ -466,9 +466,33 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
                 inst.thread.interrupt();
             }
         }
+        // 有界 join barrier（卡 5，scheduler closeAll 同款纪律）：restart() 里 stop→start 与
+        // 残留实例线程的竞态在此消除。全局预算 2s（万级实例下不得逐线程各等 1s）。
+        joinBounded(2_000);
         closeReadiness();
         fire(Event.sim(mode == StopMode.CRASH ? "sim.worker-crashed" : "sim.worker-stopped",
                 id.value(), Map.of("mode", mode.name(), "instances", count)));
+    }
+
+    /** 在总预算内逐线程 join（中断后的实例线程按心跳/轮询周期很快退出；超预算即放弃等待）。 */
+    private void joinBounded(long totalBudgetMs) {
+        long deadline = System.currentTimeMillis() + totalBudgetMs;
+        for (InstanceState inst : instances.values()) {
+            Thread t = inst.thread;
+            if (t == null) {
+                continue;
+            }
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                return;
+            }
+            try {
+                t.join(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     @Override
@@ -476,9 +500,9 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
         // 端点与身份保留（readiness socket 重开随机端口不破坏"身份"），内部状态清空
         instances.clear();
         heartbeatSeq.set(0);
-        frozen.set(false);
-        slowActive.set(false);
-        resourceExhausted.set(false);
+        if (faults != null) {
+            faults.reset();
+        }
         try {
             init(ctx);
         } catch (RuntimeException e) {
@@ -541,6 +565,9 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     @Override
     public void restartInstance(int index) {
         InstanceState s = requireInstance(index);
+        // 先递增代次**再**重置槽位（卡 5）：旧任务线程按派发时捕获的代次比对，过期即放弃
+        // 归还——若重置后才递增，discoverMaster 的等待窗内旧线程归还仍会越限（确定性复现钉住）。
+        s.generation.incrementAndGet();
         s.freeSlots.set(totalSlots);
         s.running.clear();
         String masterAddr = discoverMaster();
@@ -576,95 +603,53 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
 
     @Override
     public void inject(FaultAction action) {
-        switch (action.type()) {
-            case FaultAction.FREEZE -> {
-                if (frozen.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.worker-frozen", id.value(), Map.of()));
-                }
-            }
-            case FaultAction.SLOW -> {
-                // 倍数优先级：动作 params.factor > 节点 config slow.factor（缺省 3.0）。
-                // 幂等：已在慢速中只更新倍数，不叠加（叠加会让恢复语义不可逆）
-                double factor = resolveSlowFactor(action);
-                activeSlowFactor = factor;
-                if (slowActive.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.worker-slowed", id.value(),
-                            Map.of("factor", factor)));
-                }
-            }
-            case FaultAction.RESOURCE_EXHAUST -> {
-                if (resourceExhausted.compareAndSet(false, true)) {
-                    fire(Event.sim("sim.worker-resource-exhausted", id.value(),
-                            Map.of("slots", totalSlots)));
-                    // 立即刷新全部实例的对外槽位视图（不等心跳），否则调度侧仍会把任务派过来
-                    for (InstanceState inst : instances.values()) {
-                        if (inst.connection != null) {
-                            reportSlots(inst, inst.connection);
-                        }
-                    }
-                }
-            }
-            default -> throw new UnsupportedOperationException("unsupported fault: "
+        if (FaultAction.TASK_KILL.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: "
                     + action.type() + " (task-kill is instance-scoped; use injectOnInstance)");
+        }
+        boolean wasExhausted = faults.exhausted();
+        faults.inject(action);
+        if (!wasExhausted && faults.exhausted()) {
+            // 立即刷新全部实例的对外槽位视图（不等心跳），否则调度侧仍会把任务派过来
+            for (InstanceState inst : instances.values()) {
+                if (inst.connection != null) {
+                    reportSlots(inst, inst.connection);
+                }
+            }
         }
     }
 
     @Override
     public void clear(FaultAction action) {
-        switch (action.type()) {
-            case FaultAction.FREEZE -> {
-                if (frozen.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.worker-resumed", id.value(), Map.of()));
+        if (FaultAction.TASK_KILL.equals(action.type())) {
+            throw new UnsupportedOperationException("unsupported fault: "
+                    + action.type() + " (task-kill is instance-scoped; use injectOnInstance)");
+        }
+        boolean wasExhausted = faults.exhausted();
+        faults.clear(action);
+        if (wasExhausted && !faults.exhausted()) {
+            // 恢复可见性：立即把真实槽位刷回去
+            for (InstanceState inst : instances.values()) {
+                if (inst.connection != null) {
+                    reportSlots(inst, inst.connection);
                 }
             }
-            case FaultAction.SLOW -> {
-                if (slowActive.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.worker-speed-restored", id.value(), Map.of()));
-                }
-            }
-            case FaultAction.RESOURCE_EXHAUST -> {
-                if (resourceExhausted.compareAndSet(true, false)) {
-                    fire(Event.sim("sim.worker-resource-restored", id.value(), Map.of()));
-                    for (InstanceState inst : instances.values()) {
-                        if (inst.connection != null) {
-                            reportSlots(inst, inst.connection);
-                        }
-                    }
-                }
-            }
-            default -> throw new UnsupportedOperationException(
-                    "unsupported fault: " + action.type());
         }
     }
 
     /** 是否冻结（测试/诊断用）。 */
     public boolean isFrozen() {
-        return frozen.get();
+        return faults != null && faults.frozen();
     }
 
     /** 是否处于慢速（测试/诊断用）。 */
     public boolean isSlow() {
-        return slowActive.get();
+        return faults != null && faults.slow();
     }
 
     /** 是否资源耗尽（测试/诊断用）。 */
     public boolean isResourceExhausted() {
-        return resourceExhausted.get();
-    }
-
-    /**
-     * slow 的生效倍数：动作 {@code params.factor} 优先，其次节点 {@code config slow.factor}。
-     * 非法倍数（≤1.0）显式拒绝——否则「注入了但没变慢」会被当成静默无效。
-     */
-    private double resolveSlowFactor(FaultAction action) {
-        Object raw = action.params() == null ? null : action.params().get("factor");
-        double factor = raw == null ? slowFactor : Double.parseDouble(String.valueOf(raw));
-        if (factor <= 1.0) {
-            throw new IllegalArgumentException(
-                    "slow factor must be > 1.0 (params.factor or config slow.factor), got "
-                            + factor);
-        }
-        return factor;
+        return faults != null && faults.exhausted();
     }
 
     // ---- misc ----

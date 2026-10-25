@@ -281,6 +281,43 @@
   本决策同时是 `DEVELOPMENT` §3.2「结构上不可达」记录的定性背书。
 - **修订记录**：2026-09-26 首版（收口 worker-SUT 轮遗留的语义悬案）。
 
+### D16：Web 控制台立项——推翻「精美 Web 控制台」非目标；能力边界不推翻
+
+- **决定**：M10 立项 Web 控制台（console-ui 前端工程 + 控制面 API 扩展）。**推翻** ROADMAP §7
+  「精美 Web 控制台——仅薄层 CLI/REST；拓扑视图保持极简」这条**非目标**。
+- **理由**：CLI/配置文件操作体验是采用门槛；外部输入档已把 Web 上传的 YAML 定性为不可信输入，
+  Web 控制台是这条能力面的自然 UI。推翻的只是「不建控制台」，**不是**能力边界——非目标清单
+  其余各项（比特级网络模拟、分布式内核、性能数字承诺等）继续有效；控制台零内核改动。
+- **技术路线（方案二）**：前端独立工程（Vue3+Vite，Node 仅构建期），构建产物内嵌
+  `duo-sim-control` classpath，运行期仍是一条 `java` 命令、零新 Java 运行期依赖、
+  `-Dquality` 门禁口径不破坏。事件流用轮询不用 SSE（`EventSource` 无法携带 Bearer 头，
+  不破坏既有认证模型）。新端点收进 `/api/` 前缀——核心端点（`/scenario`、`/inject`…）
+  被 CLI 依赖，签名冻结。
+- **触发条件**：无（主动立项，2026-09-30 头脑风暴拍板）。
+- **落地点**：设计文档 `docs/superpowers/specs/2026-09-30-duo-web-console-design.md`；
+  实施计划 `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（计划一，
+  Java 控制面）与 `docs/superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`（计划二，
+  console-ui 前端）。
+- **修订记录**：2026-10-01 首版（M10 计划一实施落地：场景库/能力元数据/手动清除/诊断链
+  一等端点/SPA 托管/serve 可选场景参数）。2026-10-01 补记：M10 计划二（console-ui 前端）同日
+  实施完成——终审 FIX_REQUIRED（7 Important）经修复轮 `64f1162` 复审 **CLEAN**（I-1~I-7 全部
+  ADDRESSED，新增破坏 0）；末次验证 Java 423 测 + 前端 Vitest 46 测全绿。
+
+### D17：注册中心门面（ZkBackedRegistry）维持单类——不拆
+
+- **背景**：2026-10-24 架构体检（dev-improve-architecture 流程）把「ZkBackedRegistry
+  （375 行）wire 面 / 门面面 / watch 三种关切摊在一个基类」列为 Speculative 候选。
+  走查做了**删除测试**：想象拆掉它，剩余复杂度（embedded 档双面实现——wire 面真实 ZK 端口
+  + 门面面同进程 RegistryContract，§5.3）会在两个子类重新冒头，不是被集中——**未通过**。
+  M4 T38 已抽取过一轮（门面/后端分离），本轮剩余是真实双面复杂度。
+- **决定**：**不拆**。把「查过、判定不动、何时重开」落档，防止未来架构体检重复提出。
+- **触发条件**（何时重开）：出现**第二个** embedded 契约实现（如 message/store 的 embedded
+  档）——届时「门面/wire 分离」才有第二个 adapter 证明接缝真实（dev-codebase-design：
+  一个 adapter 只是假想接缝，两个 adapter 才是真接缝），按新实现的真实形态重评。
+- **落地点**：本条决策记录；体检结论见
+  [`superpowers/specs/2026-10-24-duo-architecture-deepening-design.md`](superpowers/specs/2026-10-24-duo-architecture-deepening-design.md) §4 卡 10。
+- **修订记录**：2026-10-25 首版（架构深化卡 10 / T13 落档）。
+
 ---
 
 ## 3. 与 ROADMAP 的对照
@@ -302,6 +339,8 @@
 | D13 | 真实 SUT 演练断言以观测到的容错语义为准 | M9 Phase A | **已兑现**（2026-09-25 演练全绿） |
 | D14 | CI 不归档事件录制；本地录制物＝调试产物非证据 | 工程口径（M-8/G8 收口） | **已兑现**（2026-09-26 文档对账同步） |
 | D15 | SUT 拆卸时在途任务滞留 PENDING＝设计语义 | 验收断言口径（worker-SUT 轮） | **已兑现**（用例注释即按此口径） |
+| D16 | Web 控制台立项（推翻「精美 Web 控制台」非目标）；方案二：前端构建期独立、运行期内嵌 | M10 计划一 + 计划二 | **已兑现**（2026-10-01：计划一 Java 控制面 + 计划二 console-ui 前端均落地；Java 423 测 + 前端 Vitest 46 测全绿，终审修复轮后复审 CLEAN） |
+| D17 | 注册中心门面（ZkBackedRegistry）维持单类不拆——删除测试未通过，剩余为真实双面复杂度 | 架构深化卡 10 | **已兑现**（2026-10-25 落档；重开条件＝第二个 embedded 契约实现出现） |
 
 **节奏（照 ROADMAP §5）**：M7 最小子集（Wrapper + CI）✅ → M6 external SUT 主线 ✅ →
 M5 契约与档位补全（含 G7 DSL 断链与 G4 金标准场景集）⏭ → M7 余项（LICENSE/发布配置）⏭ → M8 观测面 ⏭。
@@ -324,3 +363,5 @@ M5 契约与档位补全（含 G7 DSL 断链与 G4 金标准场景集）⏭ → 
 | 2026-09-20 | 新增 D12（句柄归属与收摊），由 M-7 复核的实测死锁证据逼出；L-3/L-4 的"不照字面实现"取舍并入 D12 |
 | 2026-09-25 | 新增 D13（真实 SUT 演练断言以观测语义为准），由 M9 drill 第 8 轮实测「DS 整服闪断 ⇒ 受控自停」逼出；验收记录见 `superpowers/acceptance/2026-09-25-m9-ds-registry-flap-drill.md` |
 | 2026-09-26 | 新增 D14（CI 不归档事件录制，收口 M-8 与 worker-SUT 轮保留理由的矛盾）/ D15（SUT 拆卸时在途任务滞留 PENDING 定性）；§3 对照表补 D13–D15 行 |
+| 2026-10-01 | 新增 D16（Web 控制台立项，推翻「精美 Web 控制台」非目标）；§3 对照表补 D16 行。M10 计划一（Java 控制面）同日落地。**同轮补记**：M10 计划二（console-ui 前端）同日实施完成并终审复审 CLEAN；D16 由「计划一已兑现」更新为**已兑现** |
+| 2026-10-25 | 新增 D17（ZkBackedRegistry 维持单类不拆，架构体检删除测试未通过）；§3 对照表补 D17 行 |

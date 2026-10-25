@@ -51,10 +51,12 @@ public final class BehaviorResolver {
         }
     }
 
+    /** 便捷构造（无标签表/通配表；M0 YAML 形态只有 default + 精确任务名）。 */
     public BehaviorResolver(BehaviorEntry defaultProfile, Map<String, BehaviorEntry> byTaskName) {
         this(defaultProfile, byTaskName, Map.of(), Map.of());
     }
 
+    /** 全参构造：精确名表 / 标签表 / 通配表（匹配优先级见类注释，四级）。 */
     public BehaviorResolver(BehaviorEntry defaultProfile, Map<String, BehaviorEntry> byTaskName,
                             Map<String, BehaviorEntry> byLabel,
                             Map<String, BehaviorEntry> byPattern) {

@@ -1,5 +1,11 @@
 # 第 11 轮基线：`mvnw -Dquality -DskipTests verify` 的 7 类告警（**逐条实测原文**）
 
+- 状态：**已实施完成**（2026-09-19 第 11 轮，M7 质量门禁落地、G8 闭合）。本条为 **2026-10-01 回填**。
+- 进度：**[回填]** 门禁已进 CI `regression` job 且远端全绿；本文 §「预期终态（已实测通过）」在
+  **2026-10-01** 复核**原样复现**——`-Dquality` → **8 × `No dependency problems found`
+  + parent(pom packaging，按设计跳过) + BUILD SUCCESS**，与基线逐字一致（零漂移，无需修订）。
+  唯一演进的是配套回归测数：**366 测 / 11 skip → 423 测 / 12 skip**（不代表基线口径变化）。
+
 > 取证命令（离线、跳过测试，只跑 9 个模块的 `dependency:analyze-only`）：
 > `.\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify`
 
@@ -48,6 +54,17 @@
 再跑 `.\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify` 应当**构建失败**并指名该依赖
 （本轮开发过程中反复见过同形态的失败输出：`Unused declared dependencies found:` +
 `Dependency problems found` + `[ERROR] Failed to execute goal ... analyze-only`）。
+
+## 复核（2026-10-01 回填，不改动上文原始基线）
+
+上文基线**未修订**，2026-10-01 独立复核结论如下：
+
+- `-Dquality` → **8 × `No dependency problems found` + BUILD SUCCESS**，与 §「预期终态」**逐字一致**；
+  门禁口径未变（`failOnWarning=true`，新增告警即构建失败）。
+- 唯一数字演进：配套全量回归 **366 测 / 11 skip → 423 测 / 12 skip**（M5–M10 累计新增，
+  M10 计划一 +24、M9 守卫 +1）；**这不是基线口径变化**，不触发再基线。
+- 本文 §「门禁的『真会失败』验证」的临时注入法**仍然有效**，本期未复跑（属破坏性验证，
+  需要时按原文步骤执行）。
 
 ## 再基线
 

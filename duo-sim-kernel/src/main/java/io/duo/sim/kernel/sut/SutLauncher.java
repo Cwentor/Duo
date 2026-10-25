@@ -26,7 +26,7 @@ import java.util.function.Consumer;
  */
 public final class SutLauncher implements AutoCloseable {
 
-    /** 启动结果。 */
+    /** SUT 退出状态（run() 返回/抛异常后才有值；start() 以「ready 前退出」判启动失败）。 */
     public record ExitState(boolean exited, boolean normal, String error) {
     }
 
@@ -52,6 +52,7 @@ public final class SutLauncher implements AutoCloseable {
     private volatile boolean readyConfirmed;
     private volatile ExitState exitState;
 
+    /** 等价于全参构造 + ready 超时取缺省 {@link #DEFAULT_READY_TIMEOUT_MS}。 */
     public SutLauncher(String sutId, SutMain main, Map<String, Object> directBindings,
                        Map<String, String> config, Map<String, String> endpoints,
                        Consumer<Event> eventSink, Path configOut) {
@@ -59,6 +60,10 @@ public final class SutLauncher implements AutoCloseable {
                 DEFAULT_READY_TIMEOUT_MS);
     }
 
+    /**
+     * 全参构造。directBindings/config/endpoints 进入 {@link SutContext} 交给 {@code run()}；
+     * configOut 为端点配置文件路径（§7.3 主途径，null＝不写文件）。
+     */
     public SutLauncher(String sutId, SutMain main, Map<String, Object> directBindings,
                        Map<String, String> config, Map<String, String> endpoints,
                        Consumer<Event> eventSink, Path configOut, long readyTimeoutMs) {
@@ -142,10 +147,12 @@ public final class SutLauncher implements AutoCloseable {
         }
     }
 
+    /** 退出状态（SUT 尚未退出时为 null）。 */
     public ExitState exitState() {
         return exitState;
     }
 
+    /** 是否已请求过停止（onStop 的「注册前已退出」补触发判断用，见审计 L-3）。 */
     public boolean isStopRequested() {
         return stopRequested.get();
     }

@@ -40,6 +40,7 @@ public final class HookRegistry {
         hooks.put(name, hook);
     }
 
+    /** 是否已注册该名的 hook（execute 对未注册名按失败处理，调用方可先探测）。 */
     public boolean has(String name) {
         return hooks.containsKey(name);
     }

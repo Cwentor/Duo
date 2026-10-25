@@ -70,6 +70,7 @@ public final class SchedulerStateMachine {
         }
     }
 
+    /** @param dag 任务名 → 依赖列表；构造期拓扑排序，成环即 IllegalArgumentException（启动前失败）。 */
     public SchedulerStateMachine(Map<String, List<String>> dag, Listener listener) {
         this.dag = Map.copyOf(dag);
         this.listener = listener;
@@ -252,16 +253,18 @@ public final class SchedulerStateMachine {
         }
     }
 
+    /** 是否全部任务到达终态；空任务表**不算**（空流 allMatch 恒真会让 SUT 启动即退出）。 */
     public boolean allTerminal() {
-        // 空任务表不算终态（空流 allMatch 恒真会让 SUT 启动即退出）
         return !tasks.isEmpty() && tasks.values().stream().allMatch(t ->
                 t.phase == Phase.SUCCESS || t.phase == Phase.FAILED || t.phase == Phase.SKIPPED);
     }
 
+    /** 任务当前阶段（PENDING/RUNNING/SUCCESS/FAILED/SKIPPED；未见过的任务名按 PENDING 记）。 */
     public String phaseOf(String taskName) {
         return tasks.computeIfAbsent(taskName, TaskState::new).phase.name();
     }
 
+    /** 任务已尝试次数（attempt 从 1 起）。 */
     public int attemptsOf(String taskName) {
         return tasks.computeIfAbsent(taskName, TaskState::new).attempts;
     }

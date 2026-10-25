@@ -66,19 +66,18 @@ public final class ScenarioHost implements AutoCloseable {
     // ---- 生命周期 ----
 
     /**
-     * 场景来源的信任级（安全审计 2026-09-20：把信任边界从「能连到控制面端口」
-     * 重新画到「输入是谁给的」上）。
-     *
-     * <p>{@link #CONFIG}＝本机文件（CLI/测试/嵌入式）：与「启动一个进程」同级，
-     * 能力**不缩水**；{@link #EXTERNAL_INPUT}＝控制面 POST body／任何远程来源：
-     * 按不可信输入处理（禁外部进程启动、config 键白名单、规模上限）。
+     * 场景来源的信任级（安全审计 2026-09-20：把信任边界从「能连到控制面端口」重新画到
+     * 「输入是谁给的」上）。**全链路唯一类型 {@link io.duo.sim.scenario.InputTrust}**
+     * （架构体检卡 6 收敛：此前宿主/引擎/校验器三枚镜像枚举 + 手工映射）：
+     * {@code InputTrust.CONFIG}＝本机文件（CLI/测试/嵌入式），能力**不缩水**；
+     * {@code InputTrust.EXTERNAL_INPUT}＝控制面 POST body／任何远程来源：按不可信输入处理
+     * （禁外部进程启动、config 键白名单、规模上限）。
      */
-    public enum Trust { CONFIG, EXTERNAL_INPUT }
 
     /** REST 落盘 YAML 的隔离后缀：外部输入档下，DSL 指向本进程临时文件的路径被校验器直接拒绝。 */
     public static final String QUARANTINE_SUFFIX = "untrusted";
 
-    private Trust trust = Trust.CONFIG;
+    private io.duo.sim.scenario.InputTrust trust = io.duo.sim.scenario.InputTrust.CONFIG;
 
     /** 本轮场景由控制面落地的临时 YAML（外部输入隔离副本）；无则为 null（审计 M-6/L-1）。 */
     private String currentTempName;
@@ -107,14 +106,16 @@ public final class ScenarioHost implements AutoCloseable {
 
     /** 启动场景（同进程）。YAML 先经 {@code ScenarioEngine.validated} 校验（§8 快速失败）。 */
     public synchronized Map<String, Object> start(Path yaml) throws Exception {
-        return start(yaml, Trust.CONFIG);
+        return start(yaml, io.duo.sim.scenario.InputTrust.CONFIG);
     }
 
     /**
-     * 按信任级启动场景。默认入口 {@link #start(Path)} 为 {@link Trust#CONFIG}
-     * （本机文件/测试/嵌入式），控制面 REST 显式传 {@link Trust#EXTERNAL_INPUT}。
+     * 按信任级启动场景。默认入口 {@link #start(Path)} 为 {@code InputTrust.CONFIG}
+     * （本机文件/测试/嵌入式），控制面 REST 显式传 {@code InputTrust.EXTERNAL_INPUT}。
      */
-    public synchronized Map<String, Object> start(Path yaml, Trust trust) throws Exception {
+    public synchronized Map<String, Object> start(Path yaml,
+                                                  io.duo.sim.scenario.InputTrust trust)
+            throws Exception {
         return start(yaml, trust, null);
     }
 
@@ -128,7 +129,9 @@ public final class ScenarioHost implements AutoCloseable {
      *
      * @param tempName 临时文件名（非路径）；null ＝本机文件，不清理
      */
-    public synchronized Map<String, Object> start(Path yaml, Trust trust, String tempName)
+    public synchronized Map<String, Object> start(Path yaml,
+                                                  io.duo.sim.scenario.InputTrust trust,
+                                                  String tempName)
             throws Exception {
         if (state == State.RUNNING) {
             throw new IllegalStateException("scenario already running");
@@ -140,10 +143,7 @@ public final class ScenarioHost implements AutoCloseable {
             Scenario loaded = ScenarioLoader.load(yaml);
             var registry = ContractRegistry.loadFromServiceLoader();
             // 世代闸门：宿主顶替场景时递增，旧引擎因此失去覆盖录制文件（同名场景重跑）的权限
-            ScenarioEngine next = ScenarioEngine.validated(loaded, registry,
-                    trust == Trust.EXTERNAL_INPUT
-                            ? ScenarioEngine.InputPolicy.EXTERNAL_INPUT
-                            : ScenarioEngine.InputPolicy.CONFIG)
+            ScenarioEngine next = ScenarioEngine.validated(loaded, registry, trust)
                     .withHooks(hooks);
             activeEpoch = next.epoch();
             next.withEpochGuard(this::activeEpoch);
@@ -244,7 +244,7 @@ public final class ScenarioHost implements AutoCloseable {
     }
 
     /** 当前场景的来源信任级（控制面提示用）。 */
-    public synchronized Trust trust() {
+    public synchronized io.duo.sim.scenario.InputTrust trust() {
         return trust;
     }
 
@@ -267,7 +267,7 @@ public final class ScenarioHost implements AutoCloseable {
             Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
         // 登记文件名：启动失败与场景收尾两条路径都会删除它（审计 L-1）
-        return start(tmp, Trust.CONFIG, tmp.getFileName().toString());
+        return start(tmp, io.duo.sim.scenario.InputTrust.CONFIG, tmp.getFileName().toString());
     }
 
     /**
@@ -382,6 +382,7 @@ public final class ScenarioHost implements AutoCloseable {
 
     // ---- 状态与观测 ----
 
+    /** 状态快照（state/场景名/断言结果/事件数/录制路径/告警；{@code /scenario/status} 的数据源）。 */
     public synchronized Map<String, Object> status() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("state", state.name());
@@ -401,6 +402,8 @@ public final class ScenarioHost implements AutoCloseable {
         if (lastError != null) {
             out.put("error", lastError);
         }
+        // M10：外部进程遗留等警告对控制台可见（§12 不静默；warnings() 同步可重入，安全）
+        out.put("warnings", warnings());
         return out;
     }
 
@@ -416,20 +419,15 @@ public final class ScenarioHost implements AutoCloseable {
         if (engine == null) {
             return List.of();
         }
-        List<Event> snapshot = engine.events();
-        int from = Math.max(since, 0);
-        if (from >= snapshot.size()) {
-            return List.of();
-        }
-        List<Map<String, Object>> out = new ArrayList<>(snapshot.size() - from);
-        for (int i = from; i < snapshot.size(); i++) {
-            Event e = snapshot.get(i);
+        // 卡 7：增量读取（O(新增)）+ 统一投影——不再整表快照后手工拼字段。
+        // seq 是 1-based 下标（M3 D3），先落 seq 再并投影，键序与既有 REST 响应逐键一致。
+        List<Event> tail = engine.eventsSince(since);
+        List<Map<String, Object>> out = new ArrayList<>(tail.size());
+        int firstSeq = Math.max(since, 0) + 1;
+        for (int i = 0; i < tail.size(); i++) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("seq", i + 1);
-            m.put("type", e.type());
-            m.put("sourceId", e.sourceId());
-            m.put("timestamp", e.timestamp().toString());
-            m.put("payload", e.payload() == null ? Map.of() : e.payload());
+            m.put("seq", firstSeq + i);
+            m.putAll(io.duo.sim.kernel.api.EventProjections.toMap(tail.get(i)));
             out.add(m);
         }
         return out;
@@ -451,6 +449,30 @@ public final class ScenarioHost implements AutoCloseable {
             FaultLog.failed(action.target().componentId().value(), action.type(), r.reason());
         }
         return r;
+    }
+
+    /**
+     * 手动清除一次热注入（M10 W-API-8）。时间线里带 duration 的动作由 {@code TimelineScheduler}
+     * 到期自动 clear；本方法是 Web 控制台「撤销注入」的控制面通路：薄委托
+     * {@code ScenarioRuntime.clear}（内核已有，零内核改动）。
+     *
+     * <p>不重复记日志——内核在 clear 路径上会发出 {@code sim.fault-cleared} 事实事件，
+     * 因果链由事件流承载（§12）；「场景未运行」由返回值显式携带，不静默。
+     */
+    public ScenarioRuntime.InjectionResult clear(FaultAction action) {
+        if (engine == null || state != State.RUNNING) {
+            return new ScenarioRuntime.InjectionResult(false, "scenario not running");
+        }
+        return engine.runtime().clear(action);
+    }
+
+    /** 事件缓冲丢弃计数（透传 {@code ScenarioEngine.droppedEvents()}，供 /events 暴露给控制台）。 */
+    public long droppedEvents() {
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = engine;
+        }
+        return eng == null ? 0L : eng.droppedEvents();
     }
 
     /**

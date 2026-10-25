@@ -24,6 +24,56 @@
 
 ### 新增
 
+- **M10 计划二：console-ui 前端（D16，2026-10-01）**：`console-ui/`（Vue3+TS+Vite，Node 仅构建期）。
+  三页：令牌页（sessionStorage 会话，401 自动回登录且草稿不丢）、场景库（模板/用户库、fork、删除）、
+  工作区（拓扑画布 @vue-flow + 属性面板 + YAML 抽屉双向同步——YAML 唯一事实来源、未动子树注释保留、
+  布局坐标存 localStorage 不进 YAML；编辑⇄运行双模式；注入面板动作下拉来自 `/api/capabilities`；
+  观测三 tab＝事件流 live（1s 轮询 + 退避 + 丢弃计数可见）/断言/诊断链）。构建产物直出
+  `duo-sim-control/target/classes/console`（`npm run build` 内置 CSP 兼容门：禁内联脚本/外域资源），
+  CI regression job 接入 node 构建 + Vitest。端到端冒烟 11 步全过（fork→改→存→启动→注入→
+  事件/诊断→停止→清理）；Java 侧零改动，全量 423 测全绿 + 前端 Vitest 46 测全绿（含终审
+  修复轮 `64f1162`：轮询退避落效/僵尸链代次防护/注入面板切节点刷新/实例故障灯接线/属性面板
+  误清空/409「停止并替换」确认/beforeunload 拦截；复审 CLEAN，I-1~I-7 全 ADDRESSED，新增破坏 0）。
+  **收尾轮补修 I-8（2026-10-01，真实浏览器实测取证）**：注入面板动作清单原按 `contract` 过滤
+  ⇒ ① `worker/real`（`supportedFaults=∅`）继承 `worker/virtual` 的 4 个动作，注入
+  `freeze` 回 `component does not implement FaultInjectable`；② `crash`/`restart` 是**生命周期
+  动作**，内核 `ScenarioRuntime.dispatch` 走 `stop/restart` 分支**不查 `supportedFaults`**，
+  故下拉里从不出现——**规格 §12 门槛判据 G-W2 第 5 步「注入 crash」在 UI 上无路可走**
+  （实测内核接受 `crash workers[2]` → `success:true` 而 UI 无从下达）。现按 **(contract,tier)**
+  精确匹配 + 补常驻生命周期动作；无 `instanceControl` 的档位不再索要实例号；SUT 节点不渲染下拉
+  （「撤销注入」的显隐判据随后在 I-10 修正，见下）。`inject-logic.test.ts` 3→14 例
+  （RED 10 failed → GREEN 36/36），
+  并经真 serve + 真 SPA 复验（crash→实例 3→「已下达」→ 事件流见 `sim.fault-injected` +
+  `sim.worker-instance-crashed` → 画布 `⚠ 1/4 实例故障`）。容器档 `restart()` 不可用按设计
+  下沉实现层守卫、无法用元数据表达，**有意不在前端硬编码**（失败 reason 显式回给用户）。
+  **独立评审再修两处（I-9/I-10）**：经 fresh-eyes subagent 独立复审（不信提交信息、只认源码 +
+  活体实测；verdict FIX_REQUIRED 0C/2I/4M）确认并修复——**I-9 大小写敏感**：`/api/capabilities`
+  显式输出小写而 `/topology` 原样回显 YAML，DSL 侧大小写不敏感（`Tier.fromYaml` 走 `toUpperCase`），
+  故 `tier: Virtual` 是合法场景，旧实现 `===` 比较令下拉**静默**退化成 `[crash,restart]`
+  （内核照收 freeze/slow/resource-exhaust）＝I-8a 以静默形式复发；**I-10 清除判据错**：
+  `ScenarioRuntime.clear` 不按动作类型分派而只调 `fi.clear(action)`，`VirtualFilestore`
+  声明 `supportedFaults()={crash}` 且其 `clear()` 显式接受 CRASH（实测 `clear crash` →
+  `success:true`，事件 `sim.filestore-crashed`→`sim.fault-cleared`），旧实现按动作名一律
+  隐藏 crash 的清除按钮属相对上一版的**功能倒退**。修复＝`norm()` 归一双方比较；
+  `isClearable` 改判「该 (contract,tier) 是否声明此动作」；能力清单加载失败不再静默。
+  测试 14→24 例（RED 6 failed/40 passed → GREEN **46/46**）。
+  另 3 条 Minor 按流程 parked（容器档 restart 恒抛＝有意的元数据缺口、`supportedFaults`
+  尾随顺序随 JVM Set 迭代序、未知档位组合返回生命周期动作）。
+- **M10 计划一：Web 控制台 Java 控制面（D16，2026-10-01）**：`duo serve` 场景参数改为**可选**
+  （无参数＝IDLE 态启动，浏览器打开 `http://127.0.0.1:<port>/` 即控制台入口）+ `--library-dir`
+  场景库目录（缺省 `./duo-console-library`）。新端点族（全部过既有 Bearer/回环校验管道）：
+  `/api/scenarios`（列表/读/存/删/fork/validate，内置模板只读 + 外部输入档校验与 `POST /scenario`
+  同档）、`/api/capabilities`（契约×档位×supportedFaults 能力元数据，ServiceLoader 直读）、
+  `/api/meta`（serve 自述）、`/api/inject/clear`（手动清除注入，薄委托 `ScenarioRuntime.clear`）、
+  `GET /diagnose`（诊断链一等化，复用 `FaultDiagnostics`）。`GET /events` 响应向后兼容地新增
+  `next` 游标与 `dropped` 丢弃计数；`GET /scenario/status` 新增 `warnings`；SPA 静态托管
+  （`/console/**`，CSP `default-src 'self'` + nosniff，穿越显式拒绝）。**顺手修复**：
+  `respond()` 对不可序列化响应体原会静默吞掉异常 ⇒ 客户端挂死，现显式回 500。
+  设计文档 `docs/superpowers/specs/2026-09-30-duo-web-console-design.md`；计划一
+  `docs/superpowers/plans/2026-09-30-duo-web-console-m10-java-plan.md`（+24 测，全量 423 全绿）；
+  计划二 `docs/superpowers/plans/2026-09-30-duo-web-console-m10-ui-plan.md`（console-ui 前端，
+  见上条）。内核/场景/组件模块零改动。
+
 - **M9 Phase A：首个真实第三方系统接入（DolphinScheduler 3.4.3，第 34 轮）**：DS standalone 以
   external SUT 形态接入，registry 由缺省 jdbc 翻转到 Duo 的 embedded 真 ZK（CuratorRegistry），
   完成 registry-flap 端到端演练并全绿（55.51s）。交付物：`m9-ds-failover.yaml` 场景模板 +

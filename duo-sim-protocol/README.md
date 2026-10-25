@@ -3,7 +3,7 @@
 **Duo 线协议**的帧格式、编解码与契约报文定义。
 
 - 依赖：`jackson-databind`（**无内部模块依赖**——第三方协议适配器只需依赖本工件 + 内核公开 SPI，不依赖内核内部实现）
-- 测试：12 条（`mvn -o -pl duo-sim-protocol test`）
+- 测试：12 条（`mvn -o -pl duo-sim-protocol test`；2026-10-01 实测）
 
 ## 关键类
 

@@ -43,6 +43,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * VirtualWorker（worker 契约 virtual 档）单元测试：发现→注册→心跳主链、发现有界等待
+ * （端点未出现重试/超限失败）、派发执行与终态回报、logLines 先于终态；实例级 stop/restart
+ * 保身份、task-kill（在途 CANCELLED / 空转 no-op）、freeze/slow/resource-exhaust 三故障、
+ * 满载显式拒绝（G9）与拒绝后可重派、未声明动作注入失败。FakeScheduler 夹具自起真 DUO_PORT
+ * 服务端——worker 侧走的是真线协议，不是 mock 方法调用。
+ */
 class VirtualWorkerTest {
 
     private SimpleEventBus bus;

@@ -3,7 +3,12 @@
 - 日期：2026-09-13（v4 终审修订）
 - 依据：设计文档 v1.0（冻结）§14 M1 行；M0 已验收（commit 29b1a42）
 - 范围：M0 遗留 8 项 + 设计文档 §14 M1 产出 + v2/v3 新增的验收前提项
-- 状态：待用户批准（批准前不动代码）
+- 状态：**已实施完成并验收通过**（M1 验收 2026-09-14，提交 `d377829`，全仓 156 测全绿；
+  清理提交 `1956b49`，148 测全绿）。原状态行「待用户批准（批准前不动代码）」为 M1 开工前文本；
+  本条为 **2026-10-01 回填**，保留原文以便追溯——自本条起，本计划状态行以**实际收尾状态**为准
+  （同 M2 勘误先例）。
+- 进度：**[回填] T16–T23 全部已落地（8/8）**，逐任务落地位置与证据见文末附录
+  「任务落地状态（2026-10-01 回填）」。
 - 修订记录见文末附录
 
 ---
@@ -67,6 +72,24 @@ T16 → T17 → **T19** → T18 → T20 → T21 → T22 → T23（T19 提前：T
 ---
 
 ## 附录：修订记录
+
+- **回填（2026-10-01，进度可视）**：本节为**追溯性补记**，不改动 §1~§5 的原始承诺文本
+  （同 M2 勘误、M4 v1.1 先例）。T16–T23 逐任务落地状态如下：
+
+  | # | 状态 | 落地位置（实测） | 对应测试（实测） |
+  | --- | --- | --- | --- |
+  | T16 | ✅ | `scenario/TimelineScheduler`；`ScenarioResult` 落 `scenario/ScenarioResult`（**实际位置非计划预想的 kernel**） | `TimelineSchedulerTest` |
+  | T17 | ✅ | `components/taskstub/BehaviorProfile` 补 `failAtPercent`/`neverReport`/`progressMode`；`components/provider/BehaviorResolver` 四级匹配 | `BehaviorProfileM1FieldsTest`、`BehaviorResolverM1Test` |
+  | T19 | ✅ | `examples/scheduler/DemoScheduler`：`DispatchSelector`（freeSlots 视图 + 最大者/`dispatchCursor` 轮转）、`SlotReport` 解析、崩溃转移（`sut.task-retry`/`sut.failover`） | `DispatchSelectorTest` + `DemoScheduler` 转移用例 |
+  | T18 | ✅ | `components/registry/VirtualRegistry`：`registry-flap`（端点快照重放 + flap 期间注册边界语义） | `VirtualRegistryTest`（flap 族用例） |
+  | T20 | ✅ | `kernel/assertion`：`Assertions`（failoverWithin/noTaskLost/eventSequence/affectedTasksAtLeast）+ `AssertionParser` | `AssertionsTest` |
+  | T21 | ✅ | `scenario/EventRecorder`（JSON Lines → `build/scenarios/<name>/events.jsonl`，`MAX_BUFFERED_EVENTS=500_000` + `droppedEvents()`） | `EventRecorderTest` |
+  | T22 | ✅ | `scenario/HookRegistry` + `ScenarioValidator` 对 `custom-hook` 的 SUT 豁免（:284-291） | `HookRegistryTest`、`CustomHookAcceptanceTest` |
+  | T23 | ✅ | `m1-failover-acceptance.yaml`（4 并行 duration 15s/jitter 0.1、slots=1、timeline 3 动作、4 断言） | `FailoverAcceptanceTest`（全绿＝M1 验收口径） |
+
+  **实测完成判据（2026-10-01 复核）**：`FailoverAcceptanceTest`、`CustomHookAcceptanceTest`
+  在常规回归内常绿；M0 `TierSwapAcceptanceTest` 回归保持全绿（§1 通过条件）；
+  当前整 reactor **423 测 / 0 失败 / 0 错误 / 12 skip BUILD SUCCESS**。
 
 - **v1（2026-09-13）**：初稿 6 任务。
 - **v2（2026-09-13）**：依评审修订——新增 T19 崩溃转移、金标准 4 并行长任务 + 守护断言、flap 端点快照重放（方案一）、noTaskLost=requireAllSuccess、custom-hook DSL 形态、ScenarioResult 归 T16、P3 全落。

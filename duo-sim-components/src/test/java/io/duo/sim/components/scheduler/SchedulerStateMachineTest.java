@@ -12,6 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * SchedulerStateMachine（两档 scheduler 共用的调度状态机）单元测试：DAG 依赖门控的派发顺序、
+ * 有界重试超限 FAILED + 下游 SKIPPED、重试回 PENDING 重派、实例失联在途任务重排 + failover 事实。
+ * Recorder 夹具直接实现 Listener 逐回调断言——纯状态机语义，不经网络与协议层。
+ */
 class SchedulerStateMachineTest {
 
     /** 录制型 listener。 */

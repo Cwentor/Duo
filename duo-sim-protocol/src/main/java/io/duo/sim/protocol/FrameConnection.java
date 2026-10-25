@@ -23,6 +23,7 @@ public final class FrameConnection implements Closeable {
     /** 写侧串行化锁（与读侧分离：持锁读会阻塞写，且读本就要求单线程）。 */
     private final Object writeLock = new Object();
 
+    /** 在已连接 socket 上装配缓冲读写流（读单线程/写串行化的约束见类注释）。 */
     public FrameConnection(Socket socket) throws IOException {
         this.socket = socket;
         this.in = new BufferedInputStream(socket.getInputStream());

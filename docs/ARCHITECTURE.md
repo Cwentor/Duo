@@ -20,10 +20,6 @@
                       ┌────────────────────┐
                       │ duo-sim-protocol   │  Duo 线协议帧/报文（只依赖 Jackson）
                       └─────────┬──────────┘
-```
-`FrameConnection` 的并发契约：**读侧单线程**（并发读会互相偷帧），**写侧多线程安全**
-（生产侧同一条连接上有心跳主循环线程、下行读线程的拒绝回报、任务线程的终态回报/槽位三个写者；
-`write` 把「写入 + flush」作为临界区串行化，保证帧边界不被交错或截断）。
                                 │
    ┌────────────────────────────┴─────────────────────────────┐
    │ duo-sim-kernel                                           │  SPI/注册表/管理器/
@@ -39,16 +35,23 @@
        └───────────┴───────────┴─────┬─────┴─────────────┘
                                      ▼
                             ┌──────────────────┐
-                            │ duo-sim-examples │  参考 SUT + 场景 + 全部验收测试
+                            │ duo-sim-examples │  参考 SUT + 场景 + 跨模块验收测试
                             └──────────────────┘
 ```
+
+`FrameConnection` 的并发契约：**读侧单线程**（并发读会互相偷帧），**写侧多线程安全**
+（生产侧同一条连接上有心跳主循环线程、下行读线程的拒绝回报、任务线程的终态回报/槽位三个写者；
+`write` 把「写入 + flush」作为临界区串行化，保证帧边界不被交错或截断）。详见 §13 与
+[`duo-sim-protocol` README](../duo-sim-protocol/README.md)。
 
 依赖纪律：
 
 - `kernel` **不反向依赖** `scenario`。接线解析需要拓扑信息时，`scenario` 把 `NodeSpec` 适配成
   `WiringResolver.NodeView` 传入（`ScenarioEngine.toView`）。
-- `junit` / `control` **自身不带集成测试**；它们的测试放在 `examples`，避免 `junit ↔ examples` 循环依赖
-  （`@VirtualCluster` 的集成测试需要真实组件）。
+- `junit` / `control` **不带需真实组件的集成测试**；`junit` 的集成测试放在 `examples`
+  （`@VirtualCluster` 需要真实组件），避免 `junit ↔ examples` 循环依赖。`control` 第 14 轮起
+  **自带契约测试**（`src/test`，test 作用域依赖 `components`，依赖方向仍单向）；与示例强耦合的
+  编排用例（`DuoCliTest` / `ControlPlaneAcceptanceTest`）仍留在 `examples`。
 - `examples` 是唯一聚合全部模块的模块，既是示例也是验收载体。
 
 ## 3. 运行时数据流
@@ -208,8 +211,8 @@ real 档 `DemoScheduler` 与 virtual 档 `VirtualScheduler` 共用它，换档�
 | `VirtualWorker`（`virtual-worker`） | worker / virtual | DUO_PORT | ✅ | ✅ | `task-kill`、`freeze`、`slow`、`resource-exhaust` |
 | `VirtualScheduler`（`virtual-scheduler`） | scheduler / virtual | DUO_PORT | — | — | `freeze` |
 | `VirtualEngine`（`virtual-engine`） | engine / virtual | DUO_PORT | — | — | `freeze`、`slow`、`resource-exhaust` |
-| `VirtualFilestore`（`virtual-filestore`） | filestore / virtual | FS_PATH | ✅ | — | ∅ |
-| `VirtualMessageBroker`（`virtual-message-broker`） | message / virtual | NONE | ✅ | — | ∅ |
+| `VirtualFilestore`（`virtual-filestore`） | filestore / virtual | FS_PATH | ✅ | — | `crash` |
+| `VirtualMessageBroker`（`virtual-message-broker`） | message / virtual | NONE | ✅ | — | `freeze` |
 | `VirtualResourceManager`（`virtual-resource`） | resource / virtual | NONE | ✅ | — | `resource-exhaust` |
 | `CuratorRegistry`（`curator-registry`） | registry / embedded | THIRD_PARTY | ✅ | — | `registry-flap` |
 | `ZookeeperContainerRegistry`（`zk-container-registry`） | registry / container | THIRD_PARTY | ✅ | — | ∅ |
@@ -219,9 +222,17 @@ real 档 `DemoScheduler` 与 virtual 档 `VirtualScheduler` 共用它，换档�
 | `DemoScheduler`（`demo-scheduler`） | scheduler / real | DUO_PORT | — | — | ∅ |
 | `DemoRealWorker`（`demo-real-worker`） | worker / real | DUO_PORT | ✅ | — | ∅ |
 
-> **故障动作支持矩阵**（M5-3 落地，见 §8）：`freeze` = worker + engine + scheduler；`slow` = worker + engine；
-> `resource-exhaust` = worker + engine + resource。`task-kill` 仍是**实例级**动作（`injectOnInstance`）；
-> 组件级 `inject` 传 `task-kill` 显式抛 `UnsupportedOperationException`。
+> **故障动作支持矩阵**（M5-3 落地、M5 交付物 6 补 filestore/message，见 §8）：`freeze` = worker + engine + scheduler + message；
+> `slow` = worker + engine；`resource-exhaust` = worker + engine + resource。`task-kill` 仍是**实例级**动作（`injectOnInstance`）；
+> 组件级 `inject` 传 `task-kill` 显式抛 `UnsupportedOperationException`。`crash` 是**生命周期动作**，
+> 对任意可 `stop(CRASH)` 的组件都可用（上表 filestore 的 `crash` 是**另一条语义**，见下）。
+>
+> ⚠️ **`crash` 的两条通路别混**：`crash` 是**生命周期动作**，`ScenarioRuntime.dispatch` 优先走
+> `stop(CRASH)` 分支（§8），**不查 `supportedFaults`**——故它「受支持」与是否声明无关。
+> `VirtualFilestore` 声明 `supportedFaults={crash}` 表达的是**另一条语义**：经
+> `FaultInjectable.inject` 的「挂载丢失」（数据仍在盘上、读写显式失败），走组件级 `inject`
+> 通路而非 `stop(CRASH)`。该语义由 `VirtualFilestoreTest.crashInjectionLosesMountButNotData`
+> 单测钉住（组件门面级）；场景级目前无 `crash`→filestore 的 YAML 用例。
 >
 > **`VirtualScheduler` 的额外约束**：它需要一条 **DIRECT registry 接线**（缺绑定＝启动期显式失败），
 > 并把自身端点注册为 registry 中的 `"scheduler"` 端点，worker 侧据此发现 master；
@@ -240,8 +251,11 @@ real 档 `DemoScheduler` 与 virtual 档 `VirtualScheduler` 共用它，换档�
 | 缺省（无 `path`） | ≠ NONE | 任意 | 推断为 wire |
 | 缺省（无 `path`） | NONE | in-process | 推断为 direct（NONE ⇒ interfaceDirect 由注册期保证，恒自洽） |
 
-校验在**两处**执行，语义一致：`ScenarioValidator`（启动前批量报错，规则 3）与 `WiringResolver`（解析期兜底，
-抛 `WiringException`）。缺省推断保证「NONE 实现必然可 direct」，故推断结果永远通过 `interfaceDirect` 检查。
+判定表的**唯一权威**是 `WiringResolver.decide(...)`（结构化失败 `SlotFailure`）；
+`ScenarioValidator`（启动前批量报错，规则 2/3）与 `WiringResolver`（解析期兜底，抛
+`WiringException`）都消费同一结论、各自格式化消息——「同一判定两处实现」在结构上不可能，
+且静态校验同样拒绝未知 path 值（`bogus` 在校验期即报错，不拖到启动期）。
+缺省推断保证「NONE 实现必然可 direct」，故推断结果永远通过 `interfaceDirect` 检查。
 
 ### 6.2 拓扑排序
 
@@ -287,7 +301,8 @@ ScenarioHost.start(yaml)
 
 ## 8. 故障注入通路（`ScenarioRuntime`）
 
-注入分三层校验（§7.2，**无降级**）：
+注入分三层校验（§7.2，**无降级**；三层全部在 `ScenarioRuntime.precheck` 运行期落地——
+热注入与静态校验（规则 6）同口径，`Target` 携带注册期 `supportedFaults`）：
 
 1. **target 可解析**：组件存在；携带实例下标时 `index ∈ [1, count]`。
 2. **动作受支持**：动作在实现 `supportedFaults` 中，或属 `crash`/`restart` 生命周期动作。
@@ -360,12 +375,12 @@ SUT 事实事件（由参考 SUT `demo-scheduler` 发布，属**事实源**，�
 
 | 组件 | 事件 |
 | --- | --- |
-| `VirtualRegistry` | `sim.registry-started`、`sim.registry-crashed`、`sim.registry-stopped`、`sim.registry-restarted`、`sim.registry-session-opened`、`sim.registry-session-closed`、`sim.registry-watch-error` |
+| `VirtualRegistry` | `sim.registry-started`、`sim.registry-crashed`、`sim.registry-stopped`、`sim.registry-restarted`、`sim.registry-session-opened`、`sim.registry-session-closed`、`sim.registry-watch-error`、`sim.registry-flap-started`、`sim.registry-flap-cleared`（后 2 条＝`registry-flap`） |
 | `VirtualWorker` | `sim.worker-started`、`sim.worker-crashed`、`sim.worker-stopped`、`sim.worker-instance-crashed`、`sim.worker-instance-stopped`、`sim.worker-instance-offline`、`sim.worker-instance-restarted`、`sim.worker-task-status`、`sim.worker-task-progress`、`sim.worker-task-killed`、`sim.worker-task-unreported`、`sim.worker-task-rejected`、`sim.worker-log`（`logLines`，M5）、`sim.worker-frozen`、`sim.worker-resumed`、`sim.worker-slowed`、`sim.worker-speed-restored`、`sim.worker-resource-exhausted`、`sim.worker-resource-restored`（后 6 条＝M5-3 故障动作） |
 | `VirtualScheduler` | `sim.scheduler-started`、`sim.scheduler-stopped`、`sim.scheduler-crashed`、`sim.scheduler-restarted`、`sim.scheduler-frozen`、`sim.scheduler-resumed`、`sim.scheduler-unregister-failed`；另发布 `sut.*` 调度事实（见上） |
 | `VirtualEngine` | `sim.engine-started`、`sim.engine-stopped`、`sim.engine-crashed`、`sim.engine-restarted`、`sim.engine-submitted`、`sim.engine-task-status`、`sim.engine-task-progress`、`sim.engine-task-log`、`sim.engine-task-rejected`、`sim.engine-task-unreported`、`sim.engine-slot`、`sim.engine-protocol-error`、`sim.engine-frozen`、`sim.engine-resumed`、`sim.engine-slowed`、`sim.engine-speed-restored`、`sim.engine-resource-exhausted`、`sim.engine-resource-restored` |
-| `VirtualFilestore` | `sim.filestore-started`、`sim.filestore-stopped`、`sim.filestore-crashed`、`sim.filestore-restarted`、`sim.filestore-written` |
-| `VirtualMessageBroker` | `sim.message-started`、`sim.message-stopped`、`sim.message-crashed`、`sim.message-restarted`、`sim.message-published` |
+| `VirtualFilestore` | `sim.filestore-started`、`sim.filestore-stopped`、`sim.filestore-crashed`、`sim.filestore-restarted`、`sim.filestore-written`；`crash` 注入期另有 `sim.filestore-mount-lost`、清除期 `sim.filestore-mount-restored`（M5 交付物 6） |
+| `VirtualMessageBroker` | `sim.message-started`、`sim.message-stopped`、`sim.message-crashed`、`sim.message-restarted`、`sim.message-published`；`freeze` 注入期另有 `sim.message-frozen`、清除期 `sim.message-resumed`（M5 交付物 6） |
 | `VirtualResourceManager` | `sim.resource-started`、`sim.resource-stopped`、`sim.resource-crashed`、`sim.resource-restarted`、`sim.resource-allocated`、`sim.resource-released`、`sim.resource-exhausted`、`sim.resource-restored` |
 | `PostgresContainerStore` | `sim.store-started`（载荷带 `kind=container`）、`sim.store-stopped`、`sim.store-crashed`、`sim.store-connection-opened`、`sim.store-slow-query`；**不发** `sim.store-connection-closed`（与 `H2Store` 同因：SUT 持有裸连接，关闭不可观测） |
 | `HookRegistry` | `sim.hook-executed`（hook 自身 `ctx.emit(...)` 的事实排在其前） |
@@ -470,19 +485,22 @@ DuoCli ──┬── 同进程模式（run --keep 注册进程级 attach 表�
               ScenarioEngine（内核）
 ```
 
-REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 外全部要求 `Authorization: Bearer <token>`，
-且 `Host`/`Origin` 必须回环——见下方「控制面信任模型」）：
+REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 与 `/console/**` 静态资源外，
+**全部端点一律要求** `Authorization: Bearer <token>`，且 `Host`/`Origin` 必须回环——见下方
+「控制面信任模型」；**M10 起**另有 `/api/**` 控制台端点族，见 §12.2）：
 
 | 端点 | 方法 | 说明 | 错误 |
 | --- | --- | --- | --- |
 | `/health` | GET | 服务存活（**唯一免认证**端点，供探针使用） | — |
 | `/scenario` | POST / DELETE | 启动（body＝YAML 文本，**按外部输入档校验**）/ 停止（立即返回，不等 SUT 收尾） | 400 解析/校验失败、401 缺令牌、403 跨站/非回环 Host、409 已在运行、413 body 超限 |
-| `/scenario/status` | GET | 状态/断言/注入失败 | 401、409 未启动 |
-| `/events?since=N` | GET | 事件增量 | 400 `since` 非整数、401 |
+| `/scenario/status` | GET | 状态/断言/注入失败/告警（`warnings`，M10 新增） | 401、409 未启动 |
+| `/events?since=N` | GET | 事件增量；响应含 `since`/`next`/`dropped`/`events`（`next = since + events.size()`，M10 新增游标与丢弃计数，向后兼容） | 400 `since` 非整数或为负、401 |
 | `/inject` | POST | body＝`FaultAction` JSON | 400 解析失败、401、404 未知 target、409 未运行、405 方法不符 |
 | `/assertions` | GET | 断言与注入失败明细 | 401、409 未启动 |
 | `/topology` | GET | 节点/契约/档位/实例/在线状态 | 401、409 未启动 |
 | `/metrics` | GET | Prometheus 抓取 | 401 |
+| `/diagnose` | GET | 诊断链一等端点（M10；复用 `FaultDiagnostics`，`Report` 手工转 JSON 安全 Map） | 401、409 未启动 |
+| `/console/**` | GET | SPA 静态托管（M10；classpath `/console`，无扩展名回 `index.html`，`CSP default-src 'self'` + `nosniff`） | 404 未知扩展名/穿越 |
 
 ### 12.1 控制面信任模型（安全审计 2026-09-20 C-1/H-1/H-2/M-4）
 
@@ -491,8 +509,8 @@ REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 外
 
 | 输入来源 | 信任档 | 能力 |
 | --- | --- | --- |
-| 本机 YAML 文件 / CLI / 测试 / classpath 资源 | 配置档（`Trust.CONFIG`，边界＝本机权限） | 与整改前一致：可起外部进程、可加载 SUT 主类 |
-| 控制面 `POST /scenario` body、任何远程/浏览器来源 | 外部输入档（`Trust.EXTERNAL_INPUT`） | 禁派生进程、禁框架外主类、`config` 键白名单、值禁绝对路径/URL scheme、规模上限 |
+| 本机 YAML 文件 / CLI / 测试 / classpath 资源 | 配置档（`InputTrust.CONFIG`，边界＝本机权限） | 与整改前一致：可起外部进程、可加载 SUT 主类 |
+| 控制面 `POST /scenario` body、任何远程/浏览器来源 | 外部输入档（`InputTrust.EXTERNAL_INPUT`） | 禁派生进程、禁框架外主类、`config` 键白名单、值禁绝对路径/URL scheme、规模上限 |
 
 三层防线，缺一层都不成立：
 
@@ -507,6 +525,31 @@ REST 端点与错误映射（**安全审计 2026-09-20 后**：除 `/health` 外
 `CopyOnWriteArrayList`，故下标稳定、天然不重不漏，直接切片即 O(新增)；**跨快照的严格全序不承诺**。
 （早期版本用 `LinkedHashMap` + 线性扫描防 `record equals` 折叠，整体 O(n²) 且永不释放，M4 万级规模下不可接受，
 已在 `7ac458b` 整改。）
+
+### 12.2 控制台端点族（M10，`/api/` 前缀）
+
+**为什么单起一个前缀**：`/scenario`、`/inject` 等核心端点被 CLI 依赖，签名冻结；控制台专属面
+收进 `/api/`，与既有端点互不干扰。**全部过同一条认证管道**（`RestRoutes`：Bearer + 回环 Host/Origin，guard/方法检查/
+错误映射/消息掩码 `sanitizeReason` 全在管道内唯一一份——新增端点只写「注册 + 业务分支」），
+错误映射沿用既有口径：`IllegalArgumentException`→400、`IllegalStateException`→405、
+`NoSuchFileException`→404。
+
+| 端点 | 方法 | 说明 | 错误 |
+| --- | --- | --- | --- |
+| `/api/scenarios` | GET | 场景库列表，`{"templates":[…],"user":[…]}` | 401、503 未配置库 |
+| `/api/scenarios/{id}` | GET / PUT / DELETE | 读（`{id,template,yaml}`）/ 存（body＝YAML，**过外部输入档校验**，失败带逐条 `errors`）/ 删 | 400 坏 id 或校验不过、401、404 不存在、405 模板只读、503 |
+| `/api/scenarios/{id}/fork` | POST | body＝`{"id":"new-id"}`，从模板或用户场景复制进用户库 | 400 body/新 id 非法、401、404 源不存在、405 目标已存在（含与模板撞名）、503 |
+| `/api/scenarios/validate` | POST | body＝YAML 文本，返回 `{ok,errors:[…]}`（外部输入档全量校验，**不落盘**） | 400、401、503 |
+| `/api/capabilities` | GET | 能力元数据 `{"providers":[{contract,tier,impl,default,supportedFaults,…}]}`（ServiceLoader 直读，枚举按 DSL 方言转小写） | 401 |
+| `/api/meta` | GET | serve 自述 `{version,auth,libraryDir,eventBufferMax}`（`libraryDir` 为绝对路径） | 401 |
+| `/api/inject/clear` | POST | body＝`FaultAction` JSON，手动清除一次热注入（薄委托 `ScenarioRuntime.clear`） | 400、401、404 未知 target、409 未运行、405 |
+
+**库 id 白名单与路径穿越**（规格 §7 安全口径）：`ScenarioLibrary.validId` 只接受
+`[A-Za-z0-9._-]+`——路径分隔符、`..`、点号开头、空串一律 400，且**路由前先解码再逐段校验**
+（`..%2F..%2Fsecret` 形态在原实现里会落成结构性 404，现为 400）；写入严格限定在
+`--library-dir` 内，模板目录（classpath `/console-templates/`）只读。**外部输入档收窄延伸到库**：
+经 Web 上传的 YAML 不因「存成了文件」而升档——`PUT /api/scenarios/{id}` 与 `POST /scenario`
+同档（规则 1–8 + 9–11）。
 
 ## 13. Duo 线协议（§3）
 

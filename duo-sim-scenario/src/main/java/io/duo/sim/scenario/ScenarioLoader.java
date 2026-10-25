@@ -20,12 +20,14 @@ public final class ScenarioLoader {
     private ScenarioLoader() {
     }
 
+    /** 文件形态（委托 {@link #load(InputStream)}）。 */
     public static Scenario load(Path file) throws IOException {
         try (InputStream in = Files.newInputStream(file)) {
             return load(in);
         }
     }
 
+    /** 结构解析入口：name/topology 必填（空即拒），behaviors/timeline/assertions 缺省空；语义校验归 {@link ScenarioValidator}。 */
     @SuppressWarnings("unchecked")
     public static Scenario load(InputStream in) {
         Map<String, Object> doc = new Yaml().load(in);

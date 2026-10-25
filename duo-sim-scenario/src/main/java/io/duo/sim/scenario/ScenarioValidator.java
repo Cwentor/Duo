@@ -20,7 +20,7 @@ import java.util.Set;
  * 规则 2 做简写补全与静态一致性检查；6 校验时间线动作；7 校验剧本绑定；
  * 8 固定端口可用性；4 external 节点端点声明与 ready 探针。
  *
- * <p><b>规则 9–11 只在 {@link InputTrust#EXTERNAL} 档生效</b>（控制面 {@code POST /scenario}
+ * <p><b>规则 9–11 只在 {@link InputTrust#EXTERNAL_INPUT} 档生效</b>（控制面 {@code POST /scenario}
  * 等外部输入）。它们不改变「本机 YAML 文件」的能力——本地文件与命令行同级信任，
  * 能力保持原样（这张网只兜外部输入）。
  */
@@ -28,13 +28,11 @@ public final class ScenarioValidator {
 
     /** 校验报告：失败列表（启动前快速失败）+ 警告（如 M0 不支持的 assertions 节）。 */
     public record Report(List<String> errors, List<String> warnings) {
+        /** 无失败即通过（警告不影响启动）。 */
         public boolean ok() {
             return errors.isEmpty();
         }
     }
-
-    /** 输入信任档：本机配置（不限）／外部输入（规则 9–11 生效）。 */
-    public enum InputTrust { CONFIG, EXTERNAL }
 
     // ---- 外部输入档的规模上限（审计 H-2：无认证 DoS 的次级防线）----
 
@@ -91,15 +89,18 @@ public final class ScenarioValidator {
     private final ContractRegistry registry;
     private final InputTrust trust;
 
+    /** 等价于 {@code this(registry, InputTrust.CONFIG)}——本机文件/CLI/测试的同级信任。 */
     public ScenarioValidator(ContractRegistry registry) {
         this(registry, InputTrust.CONFIG);
     }
 
+    /** @param trust 输入信任档：EXTERNAL_INPUT 时启用规则 9–11（能力收窄，见类注释）。 */
     public ScenarioValidator(ContractRegistry registry, InputTrust trust) {
         this.registry = registry;
         this.trust = trust;
     }
 
+    /** 全量校验（规则 1–8 恒查，9–11 仅外部输入档）；errors 非空即启动前快速失败，warnings 不阻断。 */
     public Report validate(Scenario scenario) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -184,23 +185,25 @@ public final class ScenarioValidator {
                     continue; // 规则 1 已报
                 }
                 boolean hasEndpoint = m.endpointShape() != io.duo.sim.kernel.api.EndpointShape.NONE;
-                String path = slot.path() == null ? (hasEndpoint ? "wire" : "direct")
-                        : slot.path();
-                boolean consumerExternal = isExternal(n);
-                if ("wire".equals(path) && !hasEndpoint) {
-                    errors.add("node " + n.id() + ": slot '" + w.getKey()
-                            + "' targets endpoint-less '" + target.id()
-                            + "'; upgrade target tier or use direct path");
+                // §6.1 判定表（kernel 唯一权威，卡 3b）：本侧只做消息格式化，判定逻辑不再平行实现
+                var decision = io.duo.sim.kernel.core.WiringResolver.decide(
+                        isExternal(n), slot.path(), hasEndpoint, m.interfaceDirect());
+                if (decision.failure() == null) {
+                    continue;
                 }
-                if ("direct".equals(path)) {
-                    if (consumerExternal) {
-                        errors.add("node " + n.id() + " is external: slot '" + w.getKey()
-                                + "' cannot use interface-direct (§6)");
-                    }
-                    if (!m.interfaceDirect()) {
-                        errors.add("node " + n.id() + ": slot '" + w.getKey() + "' targets '"
-                                + target.id() + "' which does not support interface-direct");
-                    }
+                switch (decision.failure()) {
+                    case WIRE_WITHOUT_ENDPOINT -> errors.add("node " + n.id() + ": slot '"
+                            + w.getKey() + "' targets endpoint-less '" + target.id()
+                            + "'; upgrade target tier or use direct path");
+                    case DIRECT_EXTERNAL_CONSUMER -> errors.add("node " + n.id()
+                            + " is external: slot '" + w.getKey()
+                            + "' cannot use interface-direct (§6)");
+                    case DIRECT_NOT_SUPPORTED -> errors.add("node " + n.id() + ": slot '"
+                            + w.getKey() + "' targets '" + target.id()
+                            + "' which does not support interface-direct");
+                    case UNKNOWN_PATH -> errors.add("node " + n.id() + ": unknown path '"
+                            + slot.path() + "' on slot '" + w.getKey()
+                            + "' (expect wire|direct)");
                 }
             }
         }
@@ -347,7 +350,7 @@ public final class ScenarioValidator {
         }
 
         // 规则 9–11：外部输入的信任边界（安全审计 2026-09-20）
-        if (trust == InputTrust.EXTERNAL) {
+        if (trust == InputTrust.EXTERNAL_INPUT) {
             checkExternalInput(scenario, byId, metadataByNode, errors);
         }
 
@@ -484,16 +487,12 @@ public final class ScenarioValidator {
     }
 
     private static boolean isExternal(Scenario.NodeSpec n) {
-        return n.launch() != null && "external".equals(n.launch().mode());
+        return NodeSpecs.isExternal(n);
     }
 
     /** external 节点的兜底探针端口（首个非 0 expose 端口；无则 0＝由 ReadyProbe 报错）。 */
     private static int firstExposedPort(Scenario.NodeSpec n) {
-        return n.exposes().stream()
-                .filter(e -> e.port() != null && e.port() > 0)
-                .mapToInt(Scenario.ExposeSpec::port)
-                .findFirst()
-                .orElse(0);
+        return NodeSpecs.firstExposedPort(n);
     }
 
     private static boolean isPortBusy(int port) {

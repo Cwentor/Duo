@@ -27,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * VirtualRegistry（registry 契约 virtual 档）单元测试：会话/临时节点/watch 的内存状态机语义——
+ * 会话关闭清临时节点、crash 后端点隐藏到 restart、watch 增删触发；重点压 registry-flap 语义族
+ * （计划 T18）：全量会话失效、快照重放对 SUT 透明、flap 期间注册入快照、带 duration 自动 clear、
+ * 幂等；外加未声明动作显式拒绝与 Provider 元数据一致性。
+ */
 class VirtualRegistryTest {
 
     private VirtualRegistry newRegistry() {

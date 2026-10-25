@@ -1,5 +1,6 @@
 package io.duo.sim.components.scheduler;
 
+import io.duo.sim.components.server.WorkerFeedServer;
 import io.duo.sim.kernel.api.ComponentContext;
 import io.duo.sim.kernel.api.ComponentException;
 import io.duo.sim.kernel.api.ComponentId;
@@ -14,24 +15,13 @@ import io.duo.sim.kernel.api.StopMode;
 import io.duo.sim.kernel.api.VirtualComponent;
 import io.duo.sim.kernel.contract.SchedulerContract;
 import io.duo.sim.protocol.FrameConnection;
-import io.duo.sim.protocol.message.HeartbeatReport;
-import io.duo.sim.protocol.message.RegisterRequest;
-import io.duo.sim.protocol.message.RegisterResponse;
-import io.duo.sim.protocol.message.SlotReport;
-import io.duo.sim.protocol.message.TaskAck;
 import io.duo.sim.protocol.message.TaskDispatch;
-import io.duo.sim.protocol.message.TaskStatus;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -42,9 +32,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>连接模型与 real 档**完全一致**（计划 §2）：绑定自身 DUO_PORT → 经 direct registry
  * 把端点写进 {@code /duo/endpoints/scheduler} → 接受 worker 拨号注册 → 按 freeSlots 派发
- * → 收状态回报。**调度语义与 real 档共用同一份 {@link SchedulerStateMachine} 与
- * {@link DispatchSelector}**（M5 起下沉到本模块），故 DAG 依赖、有界重试、失败转移、
- * G9「显式拒绝 → 回滚尝试重派 + 拒绝上限兜底」在两档之间不可能分叉。
+ * → 收状态回报。**连接面与槽位记账（含 G10 拒绝回滚）由两档共用的
+ * {@link WorkerFeedServer} 承载；调度语义共用同一份 {@link SchedulerStateMachine}**——
+ * 两档从协议机制到 DAG 语义都不可能分叉。
  *
  * <p>事实面（tier parity，档位可换而断言不改）：
  * <ul>
@@ -69,19 +59,15 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class VirtualScheduler implements VirtualComponent, SchedulerContract,
         FaultInjectable {
 
-    /** 首帧/注册限时（半开连接不占资源）。 */
-    private static final int REGISTER_TIMEOUT_MS = 10_000;
     /** 派发轮询间隔：与 real 档一致（50ms 级），保证档位互换后的时序量级相同。 */
     private static final long PUMP_INTERVAL_MS = 20;
-    /** accept backlog：与 real 档一致（万级并发拨号下缺省 50 会拒连）。 */
-    private static final int ACCEPT_BACKLOG = 4096;
     /** 缺省 DAG：与 real 档 {@code DemoScheduler} 同一套演示拓扑（档位互换时配置零改动）。 */
     private static final String DEFAULT_DAG =
             "load-orders,clean-orders,build-features,unstable-task,aggregate-report";
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
-    private volatile ServerSocket server;
+    private volatile WorkerFeedServer feedServer;
     private volatile SchedulerStateMachine stateMachine;
     private volatile int heartbeatSampleRate = 1;
 
@@ -89,22 +75,7 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     private final AtomicBoolean frozen = new AtomicBoolean(false);
     private final AtomicBoolean dagTerminalFired = new AtomicBoolean(false);
     private final AtomicLong heartbeatCount = new AtomicLong();
-    private final Map<String, WorkerFeed> feeds = new ConcurrentHashMap<>();
-    private final List<FrameConnection> conns = new CopyOnWriteArrayList<>();
-    private final DispatchSelector selector = new DispatchSelector();
-    private volatile Thread acceptor;
     private volatile Thread pump;
-
-    /** 单条 worker 连接（注册成功后建立）。 */
-    private static final class WorkerFeed {
-        final String name;
-        final FrameConnection conn;
-
-        WorkerFeed(String name, FrameConnection conn) {
-            this.name = name;
-            this.conn = conn;
-        }
-    }
 
     // ---- VirtualComponent ----
 
@@ -129,19 +100,19 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
         var registry = ctx.directRegistry().orElseThrow(() -> new ComponentException(
                 "virtual scheduler requires direct registry binding to publish its endpoint"
                         + " (workers discover it there): " + id));
+        WorkerFeedServer fs = new WorkerFeedServer(id.value(), new FeedListener());
+        int port;
         try {
-            server = new ServerSocket();
-            server.bind(new InetSocketAddress("127.0.0.1", 0), ACCEPT_BACKLOG);
+            port = fs.start();
         } catch (IOException e) {
             running.set(false);
             throw new ComponentException("bind scheduler port failed: " + id, e);
         }
-        int port = server.getLocalPort();
+        this.feedServer = fs;
         registry.registerEndpoint("scheduler", "127.0.0.1:" + port);
 
         stateMachine = new SchedulerStateMachine(readDag(ctx.config()), new StateListener());
         dagTerminalFired.set(false);
-        acceptor = Thread.ofVirtual().name(id.value() + "-accept").start(this::acceptLoop);
         pump = Thread.ofVirtual().name(id.value() + "-pump").start(this::pumpLoop);
         fire(Event.sut("sut.scheduler-started", id.value(),
                 Map.of("tasks", String.join(",", stateMachine.topoTasks()))));
@@ -189,7 +160,6 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
         // §7.1：身份保留、内部状态视为全新实例。端点端口重绑（随机端口）→ 重新注册，
         // 使 worker 的发现路径仍指向本实例的新端点。
         stop(StopMode.GRACEFUL);
-        feeds.clear();
         heartbeatCount.set(0);
         frozen.set(false);
         start();
@@ -198,16 +168,18 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
 
     @Override
     public HealthReport health() {
-        return running.get() && server != null && !server.isClosed()
+        WorkerFeedServer fs = feedServer;
+        return running.get() && fs != null && fs.isOpen()
                 ? HealthReport.ok() : HealthReport.down("scheduler not running");
     }
 
     @Override
     public List<ExposedEndpoint> endpoints() {
+        WorkerFeedServer fs = feedServer;
         try {
-            return server != null && server.isBound()
+            return fs != null && fs.isOpen()
                     ? List.of(ExposedEndpoint.tcp(Contract.SCHEDULER, "127.0.0.1",
-                            server.getLocalPort()))
+                            fs.port()))
                     : List.of();
         } catch (RuntimeException e) {
             return List.of();
@@ -271,116 +243,7 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
         return frozen.get();
     }
 
-    // ---- 内部：accept / 读连接 ----
-
-    private void acceptLoop() {
-        try {
-            while (running.get()) {
-                Socket s = server.accept();
-                // 每连接独立虚拟线程：注册/读取失败只影响该连接，不拖垮 accept 环
-                Thread.ofVirtual().name(id.value() + "-conn").start(() -> handleConnection(s));
-            }
-        } catch (IOException e) {
-            // server 关闭（停止/重启）
-        }
-    }
-
-    private void handleConnection(Socket s) {
-        WorkerFeed feed = null;
-        try {
-            s.setSoTimeout(REGISTER_TIMEOUT_MS);
-            feed = register(s);
-            s.setSoTimeout(0);
-            readFeed(feed);
-        } catch (IOException | RuntimeException e) {
-            if (feed == null) {
-                fire(Event.sut("sut.register-failed", id.value(),
-                        Map.of("error", String.valueOf(e.getMessage()))));
-            } else if (running.get()) {
-                onFeedLost(feed);
-            }
-            try {
-                s.close();
-            } catch (IOException ignored) {
-                // 尽力而为
-            }
-        }
-    }
-
-    private WorkerFeed register(Socket s) throws IOException {
-        FrameConnection conn = new FrameConnection(s);
-        var first = conn.read();
-        if (!(first instanceof RegisterRequest req)) {
-            conn.write(new RegisterResponse(false, "first frame must be register"));
-            conn.close();
-            throw new IOException("bad first frame");
-        }
-        conn.write(new RegisterResponse(true, null));
-        WorkerFeed feed = new WorkerFeed(req.instanceName(), conn);
-        conns.add(conn);
-        feeds.put(req.instanceName(), feed);
-        selector.register(req.instanceName());
-        fire(Event.sut("sut.worker-registered", id.value(),
-                Map.of("instance", req.instanceName())));
-        return feed;
-    }
-
-    private void readFeed(WorkerFeed feed) {
-        try {
-            while (running.get()) {
-                var msg = feed.conn.read();
-                if (msg instanceof TaskStatus ts) {
-                    // 线协议 TaskStatus 自带 instanceName：透传给状态事件（断言数据契约）
-                    // G10 修复（P1）：worker **显式拒绝**时必须把派发时的本地槽位预留退还，
-                    // 否则「最后一格容量」被被拒任务永久占用、且无其它候选 ⇒ 被拒任务停在
-                    // 待派发态、DAG 永不收敛（缺口用例 rejectedTaskIsNotRedispatchedAfterWorkerRefuses）。
-                    // 仅回滚**本地记账**（selector 自己的账）；不发 SlotReport、不替 worker 报数——
-                    // 权威数值仍只由 worker 的 SlotReport 决定。
-                    if (TaskStatus.REJECTED.equals(ts.state())) {
-                        selector.onDispatchRolledBack(feed.name);
-                    }
-                    stateMachine.onStatus(ts.taskId(), ts.state(), ts.detail(),
-                            ts.instanceName());
-                } else if (msg instanceof HeartbeatReport hb) {
-                    long n = heartbeatCount.incrementAndGet();
-                    if (heartbeatSampleRate > 0 && n % heartbeatSampleRate == 0) {
-                        fire(Event.sut("sut.heartbeat", id.value(),
-                                Map.of("instance", hb.instanceName())));
-                    }
-                } else if (msg instanceof SlotReport sr) {
-                    if (feed.name.equals(sr.instanceName())) {
-                        selector.onSlotReport(feed.name, sr.freeSlots());
-                    }
-                } else if (msg instanceof TaskAck) {
-                    // 受理即视为在途，无需额外动作
-                }
-            }
-        } catch (IOException e) {
-            onFeedLost(feed);
-        }
-    }
-
-    /**
-     * 连接丢失 → 崩溃转移：从 feeds 移除 + 其在途任务重置重派发（受重试上限约束）。
-     * 检测可靠：worker 实例崩溃即关 socket，此处阻塞读立刻 IOException。
-     */
-    private void onFeedLost(WorkerFeed feed) {
-        feeds.remove(feed.name);
-        conns.remove(feed.conn);
-        selector.onRemoved(feed.name);
-        SchedulerStateMachine sm = stateMachine;
-        if (sm == null) {
-            return;
-        }
-        List<String> requeued = sm.onInstanceLost(feed.name, "connection lost");
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("instance", feed.name);
-        if (!requeued.isEmpty()) {
-            payload.put("requeued", String.join(",", requeued));
-        }
-        fire(Event.sut("sut.instance-lost", id.value(), Map.copyOf(payload)));
-        maybeFireDagTerminal();
-    }
+    // ---- 派发轮询 ----
 
     /** 派发轮询：可派发任务 → 选实例（freeSlots 最大、平局轮转）→ 发 TaskDispatch。 */
     private void pumpLoop() {
@@ -399,22 +262,22 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
                 continue;
             }
             for (String task : sm.dispatchable()) {
-                String target = selector.select();
+                String target = feedServer.selector().select();
                 if (target == null) {
                     break; // 本轮无可用 worker（槽位耗尽或未上报槽位）
                 }
-                WorkerFeed feed = feeds.get(target);
-                if (feed == null) {
-                    selector.onRemoved(target);
+                FrameConnection conn = feedServer.feed(target);
+                if (conn == null) {
+                    feedServer.selector().onRemoved(target);
                     continue;
                 }
                 try {
-                    int attempt = sm.dispatch(task, feed.name);
-                    selector.onDispatched(feed.name); // 本地递减；SlotReport 到达时权威刷新
-                    feed.conn.write(new TaskDispatch(task, task, attempt, 1, 1));
+                    int attempt = sm.dispatch(task, target);
+                    feedServer.selector().onDispatched(target); // 本地递减；SlotReport 到达时权威刷新
+                    conn.write(new TaskDispatch(task, task, attempt, 1, 1));
                     // sut.task-dispatched 由 StateListener.onDispatch 单一来源发布（去重）
                 } catch (IOException e) {
-                    onFeedLost(feed);
+                    feedServer.drop(target);
                 }
             }
             maybeFireDagTerminal();
@@ -447,28 +310,19 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     }
 
     private void closeAll() {
-        for (FrameConnection c : conns) {
-            try {
-                c.close();
-            } catch (IOException ignored) {
-                // 忽略关闭异常
-            }
-        }
-        conns.clear();
-        feeds.clear();
-        Thread a = acceptor;
-        if (a != null) {
-            a.interrupt();
+        WorkerFeedServer fs = feedServer;
+        if (fs != null) {
+            // 连接关闭 + acceptor join barrier 在共享件内（2026-10 restart 竞态修复沉入此处）
+            fs.close();
         }
         Thread p = pump;
         if (p != null) {
             p.interrupt();
-        }
-        if (server != null && !server.isClosed()) {
+            // 等待旧 pump 线程退出，避免 restart() 中 start() 与残留线程竞态
             try {
-                server.close();
-            } catch (IOException ignored) {
-                // 忽略关闭异常
+                p.join(1_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -476,6 +330,53 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     private void fire(Event e) {
         if (ctx != null) {
             ctx.eventBus().publish(e);
+        }
+    }
+
+    /** 连接面回调 → 事实发布与状态机驱动（协议机制在 {@link WorkerFeedServer}）。 */
+    private final class FeedListener implements WorkerFeedServer.Listener {
+
+        @Override
+        public void onRegistered(String instance) {
+            fire(Event.sut("sut.worker-registered", id.value(),
+                    Map.of("instance", instance)));
+        }
+
+        @Override
+        public void onRegisterFailed(String error) {
+            fire(Event.sut("sut.register-failed", id.value(), Map.of("error", error)));
+        }
+
+        @Override
+        public void onStatus(String taskId, String state, String detail, String instance) {
+            SchedulerStateMachine sm = stateMachine;
+            if (sm != null) {
+                sm.onStatus(taskId, state, detail, instance);
+            }
+        }
+
+        @Override
+        public void onHeartbeat(String instance) {
+            long n = heartbeatCount.incrementAndGet();
+            if (heartbeatSampleRate > 0 && n % heartbeatSampleRate == 0) {
+                fire(Event.sut("sut.heartbeat", id.value(), Map.of("instance", instance)));
+            }
+        }
+
+        @Override
+        public void onFeedLost(String instance) {
+            SchedulerStateMachine sm = stateMachine;
+            if (sm == null) {
+                return;
+            }
+            List<String> requeued = sm.onInstanceLost(instance, "connection lost");
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("instance", instance);
+            if (!requeued.isEmpty()) {
+                payload.put("requeued", String.join(",", requeued));
+            }
+            fire(Event.sut("sut.instance-lost", id.value(), Map.copyOf(payload)));
+            maybeFireDagTerminal();
         }
     }
 
@@ -531,6 +432,7 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
 
     /** 当前已注册实例名（诊断/测试用）。 */
     public List<String> registeredInstances() {
-        return new ArrayList<>(feeds.keySet());
+        WorkerFeedServer fs = feedServer;
+        return fs == null ? new ArrayList<>() : fs.registeredInstances();
     }
 }

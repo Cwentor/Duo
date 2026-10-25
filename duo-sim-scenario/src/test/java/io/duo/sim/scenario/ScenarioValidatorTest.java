@@ -20,6 +20,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * ScenarioValidator 规则逐条测试：规则 3（path 枚举外值校验期拒绝）、规则 5（恰好一个 SUT）、
+ * autoStart 守卫（普通节点可关 / SUT 与 external 关了即拒）；规则 1 交互型契约档位（embedded
+ * 形态不存在）、规则 2 简写槽契约不匹配、direct 的两种失败与推断告警、规则 4 external 全族
+ * （显式端口 / ready / configOut / 探针类型 / 超时单位）、规则 6 时间线（SUT 目标仅
+ * custom-hook 豁免、下标越界）、规则 7 未绑定剧本拒绝、flap+duration 的档位差异警告、
+ * 断言节合法 / 未知断言拒绝。
+ */
 class ScenarioValidatorTest {
 
     // ---- 测试替身（kernel-api 可见）----
@@ -98,11 +106,23 @@ class ScenarioValidatorTest {
                 List.of(), List.of());
     }
 
+    /** 卡 3b：未知 path 值此前漏检（垃圾 path 过静态校验、启动期 WiringResolver 才炸）——判定表收敛后静态校验补上这一行。 */
+    @Test
+    void rule3UnknownPathValueIsRejectedAtValidation() {
+        var v = new ScenarioValidator(registry());
+        var r = v.validate(scenario(List.of(
+                node("zk", "registry", "virtual", true, null),
+                node("w", "worker", "virtual", false,
+                        Map.of("registry", new Scenario.WiringSpec("zk", "registry", "bogus"))))));
+        assertFalse(r.ok());
+        assertTrue(String.join(";", r.errors()).contains("unknown path"),
+                () -> "garbage wiring path must fail validation, got: " + r.errors());
+    }
+
     // ---- 规则 5 ----
 
     @Test
-    void rule5ExactlyOneSut() {
-        var v = new ScenarioValidator(registry());
+    void rule5ExactlyOneSut() {        var v = new ScenarioValidator(registry());
         var r1 = v.validate(scenario(List.of(
                 node("zk", "registry", "virtual", false, null))));
         assertFalse(r1.ok());

@@ -118,10 +118,12 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
     private final List<Connection> connections = new CopyOnWriteArrayList<>();
     private final Map<String, Long> slowQueries = new ConcurrentHashMap<>();
 
+    /** 缺省镜像构造（{@link #DEFAULT_IMAGE}，固定 tag——版本漂移即破坏「真 PostgreSQL 语义」的可比性）。 */
     public PostgresContainerStore() {
         this(DEFAULT_IMAGE);
     }
 
+    /** @param image 自定义镜像 tag（空/空白回落缺省镜像）。 */
     public PostgresContainerStore(String image) {
         this.image = image == null || image.isBlank() ? DEFAULT_IMAGE : image;
     }

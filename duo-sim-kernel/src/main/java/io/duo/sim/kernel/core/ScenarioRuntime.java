@@ -20,8 +20,9 @@ import java.util.function.Consumer;
  * <p>顺序为「先因后果」：框架的注入事件先落流，组件反应事件随后（M6 验收暴露的顺序缺陷修正，
  * 详见 {@link #inject}）。
  *
- * <p>校验三查（§7.2）：① target 可解析（下标 ∈ [1,count]）；② 动作在 supportedFaults
- * 或属 crash/restart 生命周期；③ 带下标时实现必须 instanceControl。
+ * <p>校验三查（§7.2，卡 3c 起全部在 {@link #precheck} 实现——此前仅①落地、②只在静态
+ * 校验器、③靠 dispatch 异常兜底）：① target 可解析（下标 ∈ [1,count]）；② 动作在
+ * supportedFaults 或属 crash/restart 生命周期；③ 带下标时实现必须 instanceControl。
  * 任一不满足：热注入记注入失败一级事件并返回失败（§12，不静默）。
  */
 public final class ScenarioRuntime {
@@ -38,8 +39,9 @@ public final class ScenarioRuntime {
         }
     }
 
-    /** 已解析的实例目标（ScenarioEngine 注册）。 */
-    public record Target(VirtualComponent component, String componentId, int instanceCount) {
+    /** 已解析的实例目标（ScenarioEngine 注册）。supportedFaults＝注册期能力元数据（§7.5），运行期第②查的依据。 */
+    public record Target(VirtualComponent component, String componentId, int instanceCount,
+                         Set<String> supportedFaults) {
     }
 
     /** 注入钩子：供 duration 自动 clear（M0 简单起见不启用 duration；M1 时间线用）。 */
@@ -48,6 +50,7 @@ public final class ScenarioRuntime {
     private final Set<String> sutIds = ConcurrentHashMap.newKeySet();
     private final Consumer<Event> recorder;
 
+    /** @param recorder 注入相关事件的统一汇（ScenarioEngine 里接事件总线——与内存流/录制共用单一订阅路径，T21）。 */
     public ScenarioRuntime(Consumer<Event> recorder) {
         this.recorder = recorder;
     }
@@ -57,10 +60,12 @@ public final class ScenarioRuntime {
         recorder.accept(event);
     }
 
+    /** 注册已解析的注入目标（装配期由 bootstrapper 调；supportedFaults 取注册期能力元数据，运行期第②查的依据）。 */
     public void registerTarget(String id, Target t) {
         targets.put(id, t);
     }
 
+    /** 标记节点为 SUT（§7.2：SUT 不得为注入目标——precheck 第①查的依据）。 */
     public void markSut(String id) {
         sutIds.add(id);
     }
@@ -118,6 +123,12 @@ public final class ScenarioRuntime {
             return failAndRecord(componentId, action,
                     "component does not implement FaultInjectable");
         }
+        // 第②查同款（卡 3c）：不能清除本就不可注入的动作
+        if (!isLifecycle(action) && !t.supportedFaults().contains(action.type())) {
+            return failAndRecord(componentId, action, "action '" + action.type()
+                    + "' unsupported by '" + componentId + "' (§7.2 无降级, supported: "
+                    + t.supportedFaults() + ")");
+        }
         // 同上（因果顺序）：sim.fault-cleared 先落流再派发，保证「窗口收尾」先于组件反应事件
         recorder.accept(Event.sim("sim.fault-cleared", componentId,
                 Map.of("action", action.type())));
@@ -149,7 +160,24 @@ public final class ScenarioRuntime {
             return InjectionResult.fail("instance index out of range [1," + t.instanceCount()
                     + "]: " + idx);
         }
+        // ② 动作受支持（§7.2）：非生命周期动作必须在注册期 supportedFaults 中——
+        //    此前仅静态校验器（规则 6）检查、热注入不复查（体检实证的语义分叉，卡 3c 补齐）
+        if (!isLifecycle(action) && !t.supportedFaults().contains(action.type())) {
+            return InjectionResult.fail("action '" + action.type() + "' unsupported by '"
+                    + componentId + "' (§7.2 无降级, supported: " + t.supportedFaults() + ")");
+        }
+        // ③ 实例能力（§7.2）：带下标须 instanceControl——注册期一致性校验（§7.5）保证
+        //    元数据与实现接口对应，故直接以接口形态判定，少一个可漂移的传递字段
+        if (idx != null && !(t.component() instanceof InstanceControl)) {
+            return InjectionResult.fail("instance index requires instanceControl capability: "
+                    + componentId);
+        }
         return InjectionResult.ok();
+    }
+
+    /** crash/restart 是生命周期动作（§8 分发规则），不受 supportedFaults 约束。 */
+    private static boolean isLifecycle(FaultAction action) {
+        return FaultAction.CRASH.equals(action.type()) || FaultAction.RESTART.equals(action.type());
     }
 
     private void dispatch(Target t, Integer idx, FaultAction action) {

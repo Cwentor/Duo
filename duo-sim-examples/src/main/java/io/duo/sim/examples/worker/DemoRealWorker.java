@@ -185,9 +185,8 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
         Thread.ofVirtual().name(inst.name + "-task-" + d.taskId()).start(() -> {
             try {
                 var entry = behaviors.resolve(d.taskName());
-                var profile = new BehaviorProfile(entry.durationMillis(), entry.jitterRatio(),
-                        entry.successRate(), entry.exceptionType(), entry.logLines(),
-                        entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+                var profile = io.duo.sim.components.taskstub.TaskBehaviors.profile(
+                        entry, entry.durationMillis());
                 var r = profile.execute(d.taskName(), new Random(), pct ->
                         ctx.eventBus().publish(Event.sim("sim.worker-task-progress",
                                 id.instanceSourceId(inst.index),

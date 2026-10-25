@@ -34,10 +34,12 @@ public final class ZookeeperContainerRegistry extends ZkBackedRegistry {
     private volatile GenericContainer<?> container;
     private final String image;
 
+    /** 缺省镜像构造（{@link #DEFAULT_IMAGE}＝zookeeper:3.9）。 */
     public ZookeeperContainerRegistry() {
         this(DEFAULT_IMAGE);
     }
 
+    /** @param image 自定义镜像 tag（空/空白回落缺省镜像）。 */
     public ZookeeperContainerRegistry(String image) {
         this.image = image == null || image.isBlank() ? DEFAULT_IMAGE : image;
     }

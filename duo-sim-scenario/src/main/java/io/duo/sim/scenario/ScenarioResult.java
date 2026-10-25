@@ -26,14 +26,17 @@ public final class ScenarioResult {
             new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<String> warnings = new CopyOnWriteArrayList<>();
 
+    /** 记一条注入失败（时间戳取当前；与 sim.fault-inject-failed 一级事件同步——双通道可定位同一原因）。 */
     public void recordInjectionFailure(String action, String target, String reason) {
         injectionFailures.add(new InjectionFailure(action, target, reason, Instant.now()));
     }
 
+    /** 记一条断言评估结果（断言名/是否通过/明细）。 */
     public void recordAssertion(String name, boolean passed, String detail) {
         assertions.add(new AssertionOutcome(name, passed, detail));
     }
 
+    /** 记一条警告（不判场景成败，但收尾告警与结果快照都可见）。 */
     public void recordWarning(String warning) {
         warnings.add(warning);
     }
@@ -53,6 +56,7 @@ public final class ScenarioResult {
                            List<AssertionOutcome> assertions,
                            List<String> warnings) {
 
+        /** 同收集器的 {@link ScenarioResult#passed()} 口径：无注入失败且断言全过。 */
         public boolean passed() {
             return injectionFailures.isEmpty() && assertions.stream().allMatch(AssertionOutcome::passed);
         }
@@ -64,6 +68,7 @@ public final class ScenarioResult {
     }
 
     // 占位避免误用：快照之外不可变视图
+    /** 注入失败列表的不可变拷贝（运行期读取面；结束态用 {@link #snapshot()}）。 */
     public List<InjectionFailure> injectionFailures() {
         return List.copyOf(injectionFailures);
     }

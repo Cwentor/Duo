@@ -228,6 +228,36 @@ class DuoCliTest {
                 "serve without a token and without --insecure-no-auth must refuse to start");
     }
 
+    /** M10 计划一 Task 9：无场景参数的 serve 同样必须显式提供认证材料（C-1 口径不因空载启动松动）。 */
+    @Test
+    void serveWithoutScenarioStillRequiresToken() throws Exception {
+        if (System.getenv("DUO_TOKEN") != null) {
+            return; // 环境里已有令牌时不适用（避免测试依赖宿主机环境）
+        }
+        assertEquals(1, DuoCli.run("serve", "--port", "0"),
+                "serve without yaml still refuses to start without a token");
+    }
+
+    /** M10 计划一 Task 9：help 反映 [scenario.yaml] 可选与 --library-dir。 */
+    @Test
+    void helpListsOptionalScenarioArgument() {
+        String help = captureStdout(() -> DuoCli.run("help"));
+        assertTrue(help.contains("serve [scenario.yaml]"), help);
+        assertTrue(help.contains("--library-dir"), help);
+    }
+
+    private static String captureStdout(java.util.function.Supplier<Integer> action) {
+        var original = System.out;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            action.get();
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     // ---- 由 RestControlServerTest 迁入的两条「外部输入拒绝」用例（第 14 轮，2026-09-20）----
     // 原因：它们需要一条带 launch.main 与 config 的**真实 SUT 节点**才能构造场景，
     // 而 duo-sim-control 的测试类路径上没有档位实现（SUT 就是本模块的 DemoScheduler）。

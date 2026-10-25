@@ -34,6 +34,7 @@ public final class CuratorRegistry extends ZkBackedRegistry {
     private volatile TestingServer server;
     private final Path tempDir;
 
+    /** 缺省构造（TestingServer 自管临时数据目录）。 */
     public CuratorRegistry() {
         this(null);
     }

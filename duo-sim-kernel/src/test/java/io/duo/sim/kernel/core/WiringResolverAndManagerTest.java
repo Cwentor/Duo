@@ -18,6 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * WiringResolver 与 ComponentManager 的组合单元测试：拓扑排序（依赖先起 / 成环拒绝）与
+ * §6.1 判定表——无端点目标推断 direct、有端点推断 wire、外部消费方显式 direct 拒绝、
+ * direct 目标缺同进程适配失败、槽契约不匹配失败、wire 到无端点目标给出升档提示；
+ * Recorder 夹具记录 init/start 时序验证管理器按拓扑序启动。
+ */
 class WiringResolverAndManagerTest {
 
     // ---- 拓扑素材 ----

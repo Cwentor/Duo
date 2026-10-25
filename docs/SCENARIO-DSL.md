@@ -223,7 +223,7 @@ timeline:
 | `registry-flap` | FaultInjectable | ✅ 已落地 | `VirtualRegistry`（持续窗口）、`CuratorRegistry`（瞬时整服重启） |
 | `task-kill` | FaultInjectable | ✅ 已落地 | `VirtualWorker`（实例级） |
 | `custom-hook` | 用户钩子 | ✅ 已落地（M5） | `HookRegistry`：`ScenarioEngine.withHooks(h)` / `engine.hooks()` / `ScenarioHost.hooks()` |
-| `freeze` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine`、`VirtualScheduler` |
+| `freeze` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine`、`VirtualScheduler`、`VirtualMessageBroker`（M5 交付物 6） |
 | `slow` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine` |
 | `resource-exhaust` | FaultInjectable | ✅ 已落地（M5 第 4 轮） | `VirtualWorker`、`VirtualEngine`、`VirtualResourceManager` |
 
@@ -429,7 +429,7 @@ YAML 内置评估在场景结束（`ScenarioEngine.stop()`）执行，结果写�
 | `external node 'm' must declare launch.configOut` | external 缺端点配置文件路径（§7.3 主途径） | 补 `launch.configOut` |
 | `unsupported ready.type 'udp' (expected tcp\|http)` | 探针类型非法 | 改 `tcp` 或 `http` |
 | `ready probe needs a port` | 既无 `ready.port` 也无非 0 `exposes` | 补其一 |
-| `timeline action 'freeze' unsupported by 'files'` | 该节点**未声明**该故障（`supportedFaults`） | 换到声明了该动作的节点（`freeze`＝worker/engine/scheduler、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource），或换动作 |
+| `timeline action 'freeze' unsupported by 'files'` | 该节点**未声明**该故障（`supportedFaults`） | 换到声明了该动作的节点（`freeze`＝worker/engine/scheduler/message、`slow`＝worker/engine、`resource-exhaust`＝worker/engine/resource），或换动作 |
 | `slow factor must be > 1.0 (params.factor or config slow.factor), got 0.5` | `slow` 倍数 ≤1.0（等于没变慢） | 写 `params: {factor: 2}` 或节点 `config slow.factor: 2.0` |
 | `timeline target 'workers' is SUT` | 对 SUT 注入 | 改用 `custom-hook`，或改注入替身节点 |
 | `config 'behaviors.X.jitter' must be a ratio in [0,1] or a percentage like 20%` | jitter 越界或写错形态 | 写 `0.1` 或 `10%` |
