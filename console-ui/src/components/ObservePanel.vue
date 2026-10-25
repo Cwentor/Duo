@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// 观测面板（规格 §7 三 tab）：事件流（只展示尾部 200 条窗口；dropped 计数可见，§12）、
+// 断言（场景收摊后可见）、诊断链（点击 tab 时按需拉取一次 GET /diagnose——不轮询：
+// 报文大且变化频率低；断链 gaps 非空时红色展示）。
 import { computed, ref } from 'vue'
 import { runtime } from '../stores/runtime'
 import { api, DiagnoseReport } from '../api/client'

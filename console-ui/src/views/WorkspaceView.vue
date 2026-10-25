@@ -27,6 +27,8 @@ const newNode = ref<{ id: string; contract: string; tier: string }>({
   id: '', contract: 'registry', tier: 'virtual',
 })
 
+// 契约 × 档位全集（设计 §5/§6），仅供「添加节点」表单做选项——
+// 不是校验依据：写了服务端不认识的值仍会被 validator 拒绝（规则 1）。
 const CONTRACTS = ['registry', 'worker', 'scheduler', 'engine', 'store', 'resource', 'message', 'filestore']
 const TIER = ['virtual', 'embedded', 'container', 'real']
 

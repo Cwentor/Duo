@@ -1,25 +1,39 @@
 import { parseDocument, YAMLMap, YAMLSeq, isMap, isSeq, Document } from 'yaml'
 
+/** 拓扑节点在画布/属性面板上的投影（只读视图——事实源是 YAML 文本）。 */
 export interface NodeView {
+  /** 节点 id（拓扑内唯一）。 */
   id: string
+  /** 角色契约。 */
   contract: string
+  /** 实现档位。 */
   tier: string
+  /** 是否 SUT（场景内恰好一个）。 */
   sut: boolean
+  /** 声明实例数（null＝YAML 未写 count，生效值由服务端定缺省）。 */
   count: number | null
+  /** 节点 config 键值（launch.ready.* 已被加载器展平进来）。 */
   config: Record<string, string>
+  /** 接线槽：槽名 → {目标节点, 契约}（path 不建模——由服务端校验器推断/检查）。 */
   wiring: Record<string, { node: string; contract: string }>
+  /** launch.mode（in-process / external；非 SUT 节点为 null）。 */
   launchMode: string | null
+  /** launch.main（in-process SUT 的主类）。 */
   launchMain: string | null
 }
 
+/** 场景概览视图：拓扑已投影为节点；behaviors/timeline/assertions 保留原始节的文本形态。 */
 export interface ScenarioView {
+  /** 场景名。 */
   name: string
   nodes: NodeView[]
+  /** 以下为对应 YAML 节的 JSON 串（不投影成结构——编辑往返不丢信息）。 */
   behaviorsText?: string
   timelineText?: string
   assertionsText?: string
 }
 
+/** 解析失败（problems 携带 yaml 库的全部错误，UI 逐条展示）。 */
 export class ScenarioParseError extends Error {
   constructor(public problems: string[]) {
     super(`scenario parse failed: ${problems.join('; ')}`)
@@ -34,6 +48,7 @@ export class ScenarioParseError extends Error {
 export class ScenarioDoc {
   private constructor(private doc: Document) {}
 
+  /** 解析 YAML 文本（有错误即抛 ScenarioParseError，不产生半成品实例）。 */
   static parse(text: string): ScenarioDoc {
     const doc = parseDocument(text)
     const problems = doc.errors.map((e) => String(e.message ?? e))
@@ -41,6 +56,7 @@ export class ScenarioDoc {
     return new ScenarioDoc(doc)
   }
 
+  /** 全量投影：YAML → {name, nodes, 原始节文本}（每次变更后重算）。 */
   view(): ScenarioView {
     const root = (this.doc.toJS() ?? {}) as any
     const nodes: NodeView[] = (root?.topology ?? []).map((n: any) => ({
@@ -67,6 +83,7 @@ export class ScenarioDoc {
     this.doc.setIn(['name'], name)
   }
 
+  /** 追加节点骨架（id/contract/tier；其余字段留给属性面板补）。 */
   addNode(node: { id: string; contract: string; tier: string }) {
     const topology = this.doc.getIn(['topology'])
     if (!isSeq(topology)) {
@@ -77,6 +94,7 @@ export class ScenarioDoc {
     ;(topology as YAMLSeq).add(this.doc.createNode({ ...node }))
   }
 
+  /** 删除节点，并连带移除所有指向它的接线。 */
   removeNode(id: string) {
     const topology = this.doc.getIn(['topology']) as YAMLSeq | undefined
     if (!isSeq(topology)) return
@@ -90,6 +108,7 @@ export class ScenarioDoc {
     }
   }
 
+  /** 字段级补丁（tier/sut/count/config；写「假值/空」即删键，保持 YAML 干净）。 */
   updateNode(id: string, patch: Partial<NodeView>) {
     const path = this.nodePath(id)
     if (path == null) throw new ScenarioParseError([`unknown node: ${id}`])
@@ -116,20 +135,24 @@ export class ScenarioDoc {
       this.doc.createNode({ node: toNodeId, contract }))
   }
 
+  /** 移除一槽接线。 */
   disconnect(fromNodeId: string, contract: string) {
     const path = this.nodePath(fromNodeId)
     if (path == null) return
     this.doc.deleteIn([...path, 'wiring', contract])
   }
 
+  /** 序列化回 YAML 文本（未改动子树的注释保留——CST 文档的卖点）。 */
   toString(): string {
     return String(this.doc)
   }
 
+  /** 同 toString（语义别名：取原始文本）。 */
   rawText(): string {
     return String(this.doc)
   }
 
+  /** 定位节点在 Document 中的路径（['topology', i]；找不到返回 null）。 */
   private nodePath(id: string): (string | number)[] | null {
     const topology = this.doc.getIn(['topology'])
     if (!isSeq(topology)) return null
@@ -141,6 +164,7 @@ export class ScenarioDoc {
   }
 }
 
+/** 把 YAML 值转 Record（可选对每个值套 map；非对象输入落空表）。 */
 function recordOf<T = string>(v: any, map?: (x: any) => T): Record<string, T> {
   const out: Record<string, T> = {}
   if (v && typeof v === 'object') {

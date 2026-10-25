@@ -30,18 +30,31 @@ export function deriveInstanceFaults(events: ScenarioEvent[],
   return faults
 }
 
+/** 运行时 store：三路合并视图（状态/拓扑/事件）+ 轮询生命周期。单例（模块级 reactive）。 */
 interface RuntimeStore {
+  /** 宿主状态机（null＝尚未连上）。 */
   state: StatusInfo['state'] | null
+  /** 最新状态快照。 */
   status: StatusInfo | null
+  /** 最新全量拓扑。 */
   nodes: TopologyNode[]
+  /** 增量累积的事件流（时间序；UI 自行截尾展示）。 */
   events: ScenarioEvent[]
+  /** 事件游标（/events 的 next；随 reset 归零）。 */
   next: number
+  /** 服务端累计丢弃数。 */
   dropped: number
+  /** serve 是否可达（三路全空才算断，见 tick）。 */
   connected: boolean
+  /** POST /scenario 启动并立即开轮询。 */
   start(yamlText: string): Promise<void>
+  /** DELETE /scenario 停止，收轮询并清空视图。 */
   stop(): Promise<void>
+  /** 开轮询（代次 +1 作废旧在途轮；幂等——先收再开）。 */
   beginPolling(): void
+  /** 收轮询（代次 +1：在途响应返回时自判僵尸）。 */
   endPolling(): void
+  /** 视图归零（连接态一并复位）。 */
   reset(): void
 }
 

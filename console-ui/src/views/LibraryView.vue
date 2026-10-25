@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// 场景库首页（规格 §3）：两节——内置模板（只读，只能 fork）与我的场景（可编辑/删除）。
+// fork 目标 id 由 library-logic 生成去重；401 在此静默（request 已统一清会话跳登录）。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ScenarioEntry, ApiError } from '../api/client'
