@@ -10,6 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * BehaviorProfile（TaskStub 行为模型，§9）单元测试：确定性——exception 剧本必失败、
+ * successRate 0/1 两端必失败/必成功、jitter 有界；非法输入（越界比率等）构造期显式拒绝。
+ */
 class BehaviorProfileTest {
 
     private static final Random SEEDED = new Random(42L);

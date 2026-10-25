@@ -24,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * ContractRegistry 单元测试：注册期一致性校验三则（NONE ⇒ interfaceDirect、instanceControl ⇒
+ * 实现 InstanceControl、supportedFaults 非空 ⇒ 实现 FaultInjectable）、同 (contract,tier) 内
+ * implName 去重、缺省唯一性（0 个/多个都拒）、resolve 按 implName 或缺省解析；另有 SimpleEventBus
+ * 前缀强制与 ComponentId 实例级 sourceId 约定（§7.4）的钉住用例。
+ */
 class ContractRegistryTest {
 
     // ---- fixtures ----

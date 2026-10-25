@@ -12,6 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * DuoCodec/FrameCodec（线协议编解码）单元测试：全报文类型 JSON 往返、帧头 layout
+ * （magic/version/length 大端）、非法输入显式拒绝（魔数/版本/长度/截断/未知类型）、
+ * 帧自包含（一帧解码不依赖后续字节）。
+ */
 class DuoCodecTest {
 
     @Test

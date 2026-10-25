@@ -15,6 +15,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * SutLauncher（in-process SUT 启动器）单元测试：正常退出发 sut.exited / 异常发 sut.crashed、
+ * ready 超时归启动失败；「ready 前退出」快失败并报真实根因（正常/崩溃两形态）、ready 后退出
+ * 不算启动失败；协作停止（handler 触发 / 未注册回落 interrupt）；SUT 事件门面强制 sut. 前缀。
+ */
 class SutLauncherTest {
 
     private final List<Event> events = new ArrayList<>();

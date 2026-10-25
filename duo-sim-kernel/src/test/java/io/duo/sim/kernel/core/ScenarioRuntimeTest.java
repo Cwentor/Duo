@@ -22,6 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * ScenarioRuntime（注入通路）单元测试：生命周期动作派发与 sim.fault-injected 的实例级
+ * sourceId、组级 crash 走组件 stop；三查拒绝族——SUT 目标、下标越界、未知目标、无
+ * instanceControl 的下标注入（§7.2 无降级，均发 sim.fault-inject-failed 不静默）；
+ * FaultInjectable 声明内动作的派发、热注入/clear 对未声明动作在校验期即失败（卡 3c）。
+ */
 class ScenarioRuntimeTest {
 
     private final List<Event> events = new ArrayList<>();
