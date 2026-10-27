@@ -119,8 +119,10 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
 ### 3.1 交互式架构图（ReactFlow）
 
 > GitHub 的 README 不执行脚本，交互画布部署在 GitHub Pages（`architecture-ui` 由 CI 自动构建部署）：
-> **[打开交互式架构图](https://cwentor.github.io/Duo/)** —— 支持平移/缩放、点击节点查看职责与关键类、
-> 按模块着色的 MiniMap 导航；下图为静态快照。
+> **[打开交互式架构图](https://cwentor.github.io/Duo/)** —— **点击节点聚焦**（视口放大到该节点 +
+> 浮出语义护照：职责、incoming/outgoing 连线、关键类、文档入口，无关节点自动淡出，`Esc` 退出），
+> 连线按箭头方向区分三种语义（灰＝依赖装配、青虚线＝事件流、金＝SUT 生命周期）；
+> 另有平移/缩放与按模块着色的 MiniMap 导航。下图为静态快照。
 
 ![Duo 架构图（静态快照；交互版见上方链接）](docs/assets/architecture-preview.png)
 
@@ -407,7 +409,7 @@ assertions:
 | 文档 | 内容 |
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | 全仓文档索引与阅读路径 |
-| [交互式架构图](https://cwentor.github.io/Duo/) | ReactFlow 交互画布（源码 [`architecture-ui/`](architecture-ui/README.md)）：平移/缩放、点选节点查看职责与关键类；静态快照见 §3.1 |
+| [交互式架构图](https://cwentor.github.io/Duo/) | ReactFlow 交互画布（源码 [`architecture-ui/`](architecture-ui/README.md)）：点击节点聚焦（放大 + 语义护照 + 上下游高亮）、带箭头的三类连线语义；静态快照见 §3.1 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构详解：模块、SPI、契约与档位、接线规则、事件总线、SUT 适配面、控制面、线协议 |
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
 | [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（19 个指标族的语义、刷新时机与已知边界） |
