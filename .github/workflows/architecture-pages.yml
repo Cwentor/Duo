@@ -1,0 +1,50 @@
+# Duo 交互式架构图（architecture-ui，ReactFlow）→ GitHub Pages。
+# 与 console-ui 同纪律：构建期独立于 Maven reactor；产物不进仓库，由本 workflow 构建并部署。
+# 前置开关（一次性手工）：仓库 Settings → Pages → Source 选 "GitHub Actions"。
+name: architecture-pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'architecture-ui/**'
+      - 'docs/assets/architecture-preview.png'
+      - '.github/workflows/architecture-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只保留一次部署（新推送取消在途部署）
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: architecture-ui/package-lock.json
+      - name: Build architecture-ui（仓库站点子路径 /Duo/）
+        run: npm ci && npm run build -- --base=/Duo/
+        working-directory: architecture-ui
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719ea # v3.0.1
+        with:
+          path: architecture-ui/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

@@ -28,6 +28,7 @@
 
 | 文档 | 内容 | 何时需要改它 |
 | --- | --- | --- |
+| [交互式架构图](https://cwentor.github.io/Duo/)（源码 [`architecture-ui/`](../architecture-ui/README.md)） | ReactFlow 交互画布：模块分组、契约四档、控制面/观测面数据流；点击节点看职责与关键类。静态快照内嵌两份 README（`docs/assets/architecture-preview.png`） | 架构结构变化（新模块/新契约/新档位）后同步图数据——节点描述的事实来源是各包 `package-info.java` |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块依赖、内核 SPI、契约与档位、能力元数据与注册期校验、wiring 连接路径规则、启动/停止时序、事件总线与命名空间、SUT 适配面、断言与录制、控制面（含 M10 `/api/**` 控制台端点族与 SPA 托管）、Duo 线协议 | 改动内核 SPI、新增契约/档位、改变接线或生命周期语义 |
 | [`SCENARIO-DSL.md`](SCENARIO-DSL.md) | 场景 YAML 字段全集、校验规则 1–8、行为剧本字段、时间线动作、断言清单与语义、内置组件 config 键、完整示例、常见报错 | 新增/修改 DSL 字段、校验规则、断言或内置组件配置键 |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | 环境与工具链、构建/测试命令、测试分层与门控、扩展点操作步骤、模块依赖纪律、编码与提交约定、已知工程债 | 构建方式、测试门控、开发流程变化 |
