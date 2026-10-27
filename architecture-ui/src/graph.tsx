@@ -41,7 +41,22 @@ export const MODULES: Record<ModuleKey, ModuleMeta> = {
   junit: { label: 'duo-sim-junit', bg: '#f7fee7', border: '#84cc16', text: '#4d7c0f' },
 }
 
-export interface CardData extends Record<string, unknown> {
+/** 聚焦态：由 Canvas 在选中节点时注入，节点自身不持有交互状态。 */
+export interface FocusFields {
+  dimmed?: boolean
+  focused?: boolean
+  incoming?: EdgeRef[]
+  outgoing?: EdgeRef[]
+}
+
+export interface EdgeRef {
+  id: string
+  label: string
+  title: string
+  kind: EdgeKind
+}
+
+export interface CardData extends Record<string, unknown>, FocusFields {
   title: string
   module: ModuleKey
   classes: string[]
@@ -239,40 +254,63 @@ export const initialNodes: Node[] = [
   } },
 ]
 
-const dep = (id: string, source: string, target: string, label?: string,
-  sourceHandle = 'r', targetHandle = 'l'): Edge => ({
-  id, source, target, sourceHandle, targetHandle, label,
-  type: 'smoothstep',
-  style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-  markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
-})
+export type EdgeKind = 'dep' | 'event' | 'sut'
 
-const event = (id: string, source: string, target: string, label?: string,
-  sourceHandle = 'r', targetHandle = 'l'): Edge => ({
-  id, source, target, sourceHandle, targetHandle, label,
-  type: 'smoothstep', animated: true,
-  style: { stroke: '#0891b2', strokeWidth: 1.8, strokeDasharray: '6 4' },
-  markerEnd: { type: MarkerType.ArrowClosed, color: '#0891b2' },
-})
+/** 连线语义：三种走向各自有颜色、粗细、箭头尺寸与图例文案。 */
+export const EDGE_KINDS: Record<
+  EdgeKind,
+  { stroke: string; width: number; dash?: string; label: string; hint: string }
+> = {
+  dep: {
+    stroke: '#94a3b8', width: 2, label: '依赖 / 装配',
+    hint: '装配期依赖，箭头指向被依赖方',
+  },
+  event: {
+    stroke: '#0891b2', width: 2, dash: '7 5', label: '事件流',
+    hint: '运行期事件流向（sim.* / sut.*），唯一事实来源',
+  },
+  sut: {
+    stroke: '#d97706', width: 2.4, label: 'SUT 生命周期',
+    hint: '被测系统的启动、就绪探测与退出回执',
+  },
+}
+
+const mkEdge = (kind: EdgeKind) =>
+  (id: string, source: string, target: string, label?: string,
+    sourceHandle = 'r', targetHandle = 'l'): Edge => {
+    const k = EDGE_KINDS[kind]
+    return {
+      id, source, target, sourceHandle, targetHandle, label,
+      type: 'smoothstep',
+      animated: kind === 'event',
+      data: { kind },
+      style: { stroke: k.stroke, strokeWidth: k.width, strokeDasharray: k.dash },
+      // 箭头显式给尺寸：默认约 12px，在 1080p 整图缩放下等于看不见。
+      markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: k.stroke },
+    }
+  }
+
+const dep = mkEdge('dep')
+const event = mkEdge('event')
+const sut = mkEdge('sut')
 
 export const initialEdges: Edge[] = [
   // 场景引擎内部流水线
   dep('e1', 'yaml', 'loader', '载入'),
-  dep('e2', 'loader', 'validator', '结构→语义', 'b', 't'),
-  dep('e3', 'validator', 'engine', '通过', 'b', 't'),
+  dep('e2', 'loader', 'engine', '校验通过', 'b', 't'),
+  dep('e3', 'engine', 'journal', '持有', 'r', 'l'),
   dep('e4', 'engine', 'boot', '装配', 'b', 't'),
   dep('e5', 'boot', 'wiring', '接线解析', 'r', 'l'),
   dep('e6', 'boot', 'registry', '解析实现', 'r', 'l'),
   dep('e7', 'boot', 'manager', '拓扑启动', 'r', 'l'),
   dep('e8', 'boot', 'sutface', 'SUT 双形态', 'b', 't'),
-  dep('e9', 'inputtrust', 'validator', '档位决定规则 9–11', 'b', 'r'),
-  dep('e10', 'engine', 'journal', '持有', 'r', 'l'),
-  dep('e11', 'timeline', 'runtime', '时间线动作', 'r', 'l'),
+  dep('e10', 'timeline', 'runtime', '时间线动作', 'r', 'l'),
   // 内核
-  dep('e12', 'spi', 'registry', 'ServiceLoader 注册', 'b', 'r'),
-  dep('e13', 'registry', 'manager', 'resolve', 'b', 't'),
-  event('e14', 'runtime', 'bus', 'sim.* 事件', 'r', 'l'),
-  event('e15', 'bus', 'journal', '单一订阅点', 'b', 'r'),
+  dep('e11', 'spi', 'registry', 'ServiceLoader 注册', 'b', 'r'),
+  dep('e12', 'registry', 'manager', 'resolve', 'b', 't'),
+  event('e13', 'runtime', 'bus', 'sim.* 事件', 'r', 'l'),
+  event('e14', 'bus', 'journal', '单一订阅点', 'b', 'r'),
+  event('e15', 'bus', 'assertions', '读事件窗口', 'l', 't'),
   // 契约与四档实现
   dep('e16', 'contracts', 'virtual', '实现', 'b', 't'),
   dep('e17', 'contracts', 'embedded', '实现', 'b', 't'),
@@ -281,24 +319,27 @@ export const initialEdges: Edge[] = [
   dep('e20', 'manager', 'virtual', '拓扑序启动', 'b', 't'),
   dep('e21', 'manager', 'embedded', '拓扑序启动', 'b', 't'),
   dep('e22', 'manager', 'container', '拓扑序启动', 'b', 't'),
-  dep('e23', 'sutface', 'real', '启动 SUT', 'b', 't'),
+  // SUT 生命周期（金线）
+  sut('e23', 'sutface', 'real', '启动 SUT', 'b', 't'),
+  sut('e24', 'real', 'sutface', '就绪 / 退出回执', 'l', 'l'),
   // 线协议：worker 拨号 ↔ master 接受
-  dep('e24', 'virtual', 'protocol', 'worker 拨号', 'r', 'l'),
-  dep('e25', 'protocol', 'real', 'accept 注册', 'b', 'r'),
+  dep('e25', 'virtual', 'protocol', 'worker 拨号', 'r', 'l'),
+  dep('e26', 'protocol', 'real', 'accept 注册', 'b', 'r'),
   // SUT 事实回流
-  event('e26', 'real', 'bus', 'sut.* 事实', 't', 'b'),
+  event('e27', 'real', 'bus', 'sut.* 事实', 't', 'b'),
   // 控制面
-  dep('e27', 'web', 'rest', 'fetch /api/**', 'r', 'l'),
-  dep('e28', 'cli', 'rest', '--url REST 客户端', 't', 'b'),
-  dep('e29', 'rest', 'host', '端点管道', 'r', 'l'),
-  dep('e30', 'rest', 'web', 'SPA 托管 /console/**', 'b', 'r'),
-  dep('e31', 'host', 'engine', '持有 / 操作', 't', 'b'),
-  dep('e32', 'host', 'metrics', '读数', 'r', 'l'),
-  dep('e33', 'host', 'diag', '因果链重建', 'b', 't'),
-  dep('e34', 'junit', 'engine', '@VirtualCluster 驱动', 't', 'r'),
+  dep('e28', 'web', 'rest', 'fetch /api/**', 'r', 'l'),
+  dep('e29', 'cli', 'rest', '--url REST 客户端', 't', 'b'),
+  dep('e30', 'rest', 'host', '端点管道', 'r', 'l'),
+  dep('e31', 'rest', 'web', 'SPA 托管 /console/**', 'b', 'r'),
+  dep('e32', 'host', 'engine', '持有 / 操作', 't', 'b'),
+  dep('e33', 'host', 'metrics', '读数', 'r', 'l'),
+  dep('e34', 'host', 'diag', '因果链重建', 'b', 't'),
+  dep('e35', 'rest', 'library', '场景库 CRUD', 'b', 'l'),
+  dep('e36', 'junit', 'engine', '@VirtualCluster 驱动', 't', 'r'),
   // 观测面：三条通道都从同一事实源取数
-  event('e35', 'journal', 'eventsfile', 'JSONL 落盘', 'b', 't'),
-  event('e36', 'journal', 'logs', '人读镜像', 'b', 't'),
-  event('e37', 'metrics', 'metricsout', 'Prometheus 文本', 'r', 'l'),
-  event('e38', 'journal', 'assert', '事件快照评估', 'b', 't'),
+  event('e37', 'journal', 'eventsfile', 'JSONL 落盘', 'b', 't'),
+  event('e38', 'journal', 'logs', '人读镜像', 'b', 't'),
+  event('e39', 'metrics', 'metricsout', 'Prometheus 文本', 'r', 'l'),
+  event('e40', 'journal', 'assert', '事件快照评估', 'b', 't'),
 ]

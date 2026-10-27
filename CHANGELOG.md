@@ -139,6 +139,19 @@
 
 ### 修复
 
+- **架构图交互补强（2026-10-27）**：`architecture-ui` 三处硬伤——①**箭头形同不存在**：边
+  `strokeWidth` 1.5→2/2.4，`markerEnd` 显式给 `width/height` 20（默认约 12px，整图缩放下看不见），
+  且原实现只有灰（依赖）与青（事件流）两色，**头部文案承诺的「金线＝SUT 生命周期」在代码里根本
+  没有**——现补齐第三种语义，SUT 启动与「就绪/退出回执」双向金线；②**点击无聚焦**：原实现只弹
+  右侧固定面板，节点本身零变化；现改为 `setCenter` 到该节点并 zoom 1.15、节点放大加环、无关节点
+  淡到 0.16、边只留上下游、`NodeToolbar` 浮出语义护照（职责 / incoming / outgoing / 关键类 /
+  文档），`Esc` 或点空白退出，护照内 Copy link 生成 `#节点id` 深链；③**整图噪声**：40 条边标签在
+  fit-view（zoom<0.75）下只有 6px 高，改为按缩放级别隐藏、放大后才显示。
+  **同时修掉 3 条悬空边**：`e2/e3/e9` 指向的 `validator` / `inputtrust` 节点从来不存在（二者只是
+  loader 卡片里的类名），这三条边一直在静默丢弃；`library` / `assertions` 两个孤立节点补上连线。
+  验证：`tsc -b` + `vite build` 通过；CDP 驱动真实鼠标事件实测——passport 出现、viewport
+  `scale(1.15)`、26 个节点淡出、Esc 清除，全部 PASS；README 快照按新版重拍（1920×1080，
+  506 KB→278 KB）。
 - **CI 供应链升级（2026-09-26）**：三个 action 升到 **Node 24 原生版本**并重钉 commit SHA——
   `actions/checkout` v4.2.2→**v7.0.1**、`actions/setup-java` v4.7.1→**v6.0.1**、
   `actions/upload-artifact` v4.6.2→**v7.0.1**；runner 由 `ubuntu-latest` pin 为 **`ubuntu-24.04`**——

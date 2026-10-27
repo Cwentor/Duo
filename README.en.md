@@ -132,7 +132,10 @@ injectable faults, and assembly into arbitrary pipeline topologies** — the ker
 
 > GitHub READMEs don't run scripts, so the interactive canvas is deployed to GitHub Pages
 > (`architecture-ui`, built and deployed by CI): **[open the interactive diagram](https://cwentor.github.io/Duo/)** —
-> pan/zoom, click any node for its responsibility and key classes, module-colored MiniMap navigation.
+> **click a node to focus it** (the viewport zooms to it and a semantic passport floats up with the
+> node's responsibility, incoming/outgoing edges, key classes and doc links; unrelated nodes fade out,
+> `Esc` exits). Edges are arrowed and colour-coded by meaning (grey = dependency/wiring, cyan dashed =
+> event stream, gold = SUT lifecycle). Pan/zoom and a module-colored MiniMap are also available.
 > The image below is a static snapshot.
 
 ![Duo architecture diagram (static snapshot; interactive version at the link above)](docs/assets/architecture-preview.png)
