@@ -124,6 +124,18 @@
   「只验某契约、不让 worker 把 DAG 一起跑完」的拓扑裁剪；缺省 `true`＝声明即启动。
   未知节点键改为**显式报错**（此前静默忽略）；SUT/external 节点上的 `autoStart: false`
   由校验器拒绝（那两类节点由 `startSut()` 启动，写在这里无意义）。
+- **交互式架构图（2026-10-27）**：新增 `architecture-ui/`（Vite + React + TS + `@xyflow/react`，
+  构建期独立于 Maven reactor，与 `console-ui` 同纪律）：34 节点覆盖场景引擎 / 仿真内核 / 契约四档 /
+  控制面 / 观测面，38 条边按语义分型——依赖装配（灰）、事件流（青虚线动画）、SUT 生命周期（金）；
+  图数据事实来源为各包 `package-info.java` 与 `docs/ARCHITECTURE.md`，非手绘。交互：平移/缩放、
+  点击节点看职责与关键类（带文档跳转）、按模块着色 MiniMap、图例、SUT 节点金框高亮。
+  部署：`architecture-pages.yml` 在 push `master` 时 `npm ci` → `vite build --base=/Duo/` →
+  `deploy-pages`（action SHA pin 对齐仓库惯例），站点 <https://cwentor.github.io/Duo/>，
+  Pages 侧已设 `build_type=workflow`。README 因 GitHub 渲染不执行脚本，故 `README.md` /
+  `README.en.md` §3.1 放静态快照（`docs/assets/architecture-preview.png`，1920×1080）并给出
+  交互版链接，`docs/README.md` 文档索引同步登记。踩坑：React 18 StrictMode 双挂载与 xyflow
+  节点测量时序叠加，会卡在「画布已渲染但节点 `visibility:hidden`、点击不选中」的中间态，
+  图查看器已移除 StrictMode 并在 `main.tsx` 注明原因。
 
 ### 修复
 

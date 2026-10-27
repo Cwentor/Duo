@@ -128,6 +128,15 @@ injectable faults, and assembly into arbitrary pipeline topologies** — the ker
      Observability: event stream (single source of truth) · logs (causal chain) · metrics (/metrics) · assertions
 ```
 
+### 3.1 Interactive Architecture Diagram (ReactFlow)
+
+> GitHub READMEs don't run scripts, so the interactive canvas is deployed to GitHub Pages
+> (`architecture-ui`, built and deployed by CI): **[open the interactive diagram](https://cwentor.github.io/Duo/)** —
+> pan/zoom, click any node for its responsibility and key classes, module-colored MiniMap navigation.
+> The image below is a static snapshot.
+
+![Duo architecture diagram (static snapshot; interactive version at the link above)](docs/assets/architecture-preview.png)
+
 ## 4. Module Map
 
 Every module has its own `README.md` (responsibilities / dependencies / key classes / tests /
