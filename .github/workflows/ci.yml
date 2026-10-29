@@ -51,6 +51,10 @@ jobs:
         run: |
           npm ci
           npm test
+          # 类型门禁（评审 T2，2026-10-30）：vitest 走 esbuild 不做类型检查，首次接入即抓出
+          # 6 处真实类型错误（含一处功能性 bug：@click 直传处理器把 PointerEvent 当
+          # startScenario 的 replacing 实参，恒真使 409"确认替换"路径不可达）。
+          npm run typecheck
           npm run build
       # 无 Docker 档：显式关闭容器档（-Dduo.docker.enabled=false），保证「常规回归零 Docker 依赖」
       # 是**确定**的而不是「恰好这台机器没 Docker」

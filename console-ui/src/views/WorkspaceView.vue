@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { ScenarioDoc, ScenarioView } from '../model/scenario'
@@ -15,7 +15,9 @@ import { draftKey } from '../components/workspace-logic'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id))
-const doc = ref<ScenarioDoc | null>(null)
+// shallowRef：ScenarioDoc 带 private 字段，ref 的 UnwrapRef 映射类型会剥掉私有品牌
+// （vue-tsc 报"missing doc/nodePath"）；文档本就整体替换、手动重投影，无需深层响应式
+const doc = shallowRef<ScenarioDoc | null>(null)
 const view = ref<ScenarioView | null>(null)
 const selectedId = ref<string | null>(null)
 const yamlText = ref('')
@@ -157,7 +159,7 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
       <template v-if="mode === 'edit'">
         <button @click="save">保存</button>
         <button @click="validate">校验</button>
-        <button class="primary" @click="startScenario">▶ 启动场景</button>
+        <button class="primary" @click="startScenario()">▶ 启动场景</button>
       </template>
       <template v-else>
         <span class="state">{{ runtime.state }}</span>

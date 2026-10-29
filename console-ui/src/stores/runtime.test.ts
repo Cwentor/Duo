@@ -72,7 +72,7 @@ describe('runtime store 逻辑', () => {
     // 退避递增（按 /events 一路计数；每拍三路各一次 fetch）：首拍后 failures=1 → 下一拍 2s
     const afterFirst = eventCalls()
     await vi.advanceTimersByTimeAsync(1000)
-    expect(eventCalls()).toBe(afterFirst, '1s 处不得重试（应等 2s）')
+    expect(eventCalls()).toBe(afterFirst) // 1s 处不得重试（应等 2s）
     await vi.advanceTimersByTimeAsync(1200)
     expect(eventCalls()).toBe(afterFirst + 1)
     runtime.endPolling()
@@ -90,6 +90,6 @@ describe('runtime store 逻辑', () => {
       r(new Response('{"since":0,"next":0,"dropped":0,"events":[]}', { status: 200 }))
     }
     await vi.advanceTimersByTimeAsync(10000)
-    expect(resolvers.length).toBe(callsAtPending, '停止后不得再有新请求')
+    expect(resolvers.length).toBe(callsAtPending) // 停止后不得再有新请求
   })
 })
