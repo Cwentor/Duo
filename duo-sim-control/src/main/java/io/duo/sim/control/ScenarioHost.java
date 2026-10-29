@@ -250,7 +250,14 @@ public final class ScenarioHost implements AutoCloseable {
 
     /** 本层累积的告警（如录制缓冲溢出、临时文件清理失败）；只读快照。 */
     public synchronized List<String> warnings() {
-        return List.copyOf(warnings);
+        // M10 Task 10 契约的实际承载（评审 T1，2026-10-30）：除宿主级告警（外部进程遗留等）外，
+        // 引擎结果告警（校验期 + 收摊期 + 时间线，如 lifecycle 动作 duration 被忽略）同样对控制台可见——
+        // 此前只回宿主列表，结果告警没有任何出口，"warnings 可见"仅靠 containsKey 恒真维持假绿。
+        var merged = new ArrayList<>(warnings);
+        if (engine != null) {
+            merged.addAll(engine.result().snapshot().warnings());
+        }
+        return List.copyOf(merged);
     }
 
     /**
