@@ -33,6 +33,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class DemoScheduler implements SutMain {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** dag-terminal 单一发布守卫（F2，评审 2026-10-30）：状态机 onAllTerminal 回调与 run()
+     *  循环退出都会到达同一事实，CAS 保证基数恒为 1——与 VirtualScheduler.dagTerminalFired
+     *  同款（此前本类漏了同一守卫，容器实测两次运行各双发，tier parity 被破坏）。 */
+    private final AtomicBoolean dagTerminalFired = new AtomicBoolean(false);
     /** worker 连接面（协议机制 + 槽位记账含 G10 拒绝回滚——两档 scheduler 共用，卡 4）。 */
     private WorkerFeedServer feedServer;
     private SchedulerStateMachine stateMachine;
@@ -93,11 +97,18 @@ public final class DemoScheduler implements SutMain {
                 pumpDispatches();
                 Thread.sleep(50);
             }
-            ctx.events().publish("sut.dag-terminal", Map.of());
+            publishDagTerminalOnce();
         } finally {
             running.set(false);
             stopHeartbeatMeter();
             closeAll();
+        }
+    }
+
+    /** dag-terminal 单一发布点（两处到达：状态机回调 / run() 循环退出——见字段注释）。 */
+    private void publishDagTerminalOnce() {
+        if (dagTerminalFired.compareAndSet(false, true)) {
+            ctx.events().publish("sut.dag-terminal", Map.of());
         }
     }
 
@@ -442,7 +453,7 @@ public final class DemoScheduler implements SutMain {
 
         @Override
         public void onAllTerminal() {
-            ctx.events().publish("sut.dag-terminal", Map.of());
+            publishDagTerminalOnce();
         }
     }
 
