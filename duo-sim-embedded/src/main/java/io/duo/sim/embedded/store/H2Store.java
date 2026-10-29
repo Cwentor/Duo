@@ -17,11 +17,6 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 /**
  * store 契约的 embedded 档实现（M2 T27）：**H2 内存数据库**（真实 JDBC、真实 SQL 引擎）。
@@ -34,19 +29,15 @@ import java.util.function.Consumer;
  * （{@code sim.store-slow-query}，阈值 {@code store.slowQueryMillis}，缺省 1000ms）。
  * 语句计数与慢查询经 {@link #recordStatement(String, long)} 在 SQL 执行处累计
  * （SUT/测试直接 JDBC 执行时由调用方报告，避免重量级连接代理）。
+ * 连接/事务/计量层与 container 档共享同一骨架（{@link JdbcStoreSupport}，评审 R1）；
+ * 本类只保留 H2 特有面：URL 生成与探活、restart 同 URL 语义、health。
  */
-public final class H2Store implements VirtualComponent, StoreContract {
+public final class H2Store extends JdbcStoreSupport implements VirtualComponent {
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
-    private volatile boolean running;
     private volatile String jdbcUrl;
     private volatile long slowQueryMillis = 1000;
-
-    private final AtomicLong executedStatements = new AtomicLong();
-    private final AtomicInteger activeConnections = new AtomicInteger();
-    private final List<Connection> connections = new CopyOnWriteArrayList<>();
-    private final Map<String, Long> slowQueries = new ConcurrentHashMap<>();
 
     @Override
     public ComponentId id() {
@@ -73,7 +64,7 @@ public final class H2Store implements VirtualComponent, StoreContract {
             try (Connection probe = DriverManager.getConnection(jdbcUrl)) {
                 probe.isValid(1);
             }
-            running = true;
+            markRunning(true);
             // 安全审计 2026-09-20 复核 M-5：embedded 档同源——store.jdbcUrl 可由输入指定，
             // 于是连接串（可能带 user/password）会经事件流进 events.jsonl 与 CI artifact。
             // 故这里也掩码凭据：与 container 档同一把尺子（报告当初只点了 container 档）。
@@ -87,16 +78,8 @@ public final class H2Store implements VirtualComponent, StoreContract {
 
     @Override
     public void stop(StopMode mode) {
-        running = false;
-        for (Connection c : connections) {
-            try {
-                c.close();
-            } catch (SQLException ignored) {
-                // 尽力而为
-            }
-        }
-        connections.clear();
-        activeConnections.set(0);
+        markRunning(false);
+        closeTrackedConnections();
         fire(Event.sim(mode == StopMode.CRASH ? "sim.store-crashed" : "sim.store-stopped",
                 id.value(), Map.of()));
     }
@@ -110,7 +93,7 @@ public final class H2Store implements VirtualComponent, StoreContract {
 
     @Override
     public HealthReport health() {
-        if (!running) {
+        if (!isRunning()) {
             return HealthReport.down("H2 store not running");
         }
         try (Connection c = DriverManager.getConnection(jdbcUrl)) {
@@ -122,7 +105,7 @@ public final class H2Store implements VirtualComponent, StoreContract {
 
     @Override
     public List<ExposedEndpoint> endpoints() {
-        return running
+        return isRunning()
                 ? List.of(new ExposedEndpoint(io.duo.sim.kernel.api.Contract.STORE,
                         "jdbc", jdbcUrl))
                 : List.of();
@@ -133,6 +116,38 @@ public final class H2Store implements VirtualComponent, StoreContract {
         return EndpointShape.THIRD_PARTY;
     }
 
+    // ---- JdbcStoreSupport 钩子（差异点如实声明）----
+
+    @Override
+    protected String meteringLabel() {
+        return "H2";
+    }
+
+    @Override
+    protected String notRunningPrefix() {
+        return "H2 store is not running";
+    }
+
+    @Override
+    protected Map<String, Object> meteringEventExtras() {
+        return Map.of();
+    }
+
+    @Override
+    protected ComponentId meteringId() {
+        return id;
+    }
+
+    @Override
+    protected long slowQueryMillis() {
+        return slowQueryMillis;
+    }
+
+    @Override
+    protected void fireMeteringEvent(Event e) {
+        fire(e);
+    }
+
     // ---- StoreContract ----
 
     @Override
@@ -140,78 +155,7 @@ public final class H2Store implements VirtualComponent, StoreContract {
         return jdbcUrl;
     }
 
-    @Override
-    public Connection openConnection() {
-        requireRunning();
-        try {
-            Connection c = DriverManager.getConnection(jdbcUrl);
-            connections.add(c);
-            activeConnections.incrementAndGet();
-            fire(Event.sim("sim.store-connection-opened", id.value(),
-                    Map.of("active", activeConnections.get())));
-            return c;
-        } catch (SQLException e) {
-            throw new ComponentException("H2 connection failed: " + e.getMessage(), e);
-        }
-    }
-
-    @Override
-    public void inTransaction(Consumer<Connection> work) {
-        requireRunning();
-        try (Connection c = DriverManager.getConnection(jdbcUrl)) {
-            activeConnections.incrementAndGet();
-            boolean autoCommit = c.getAutoCommit();
-            c.setAutoCommit(false);
-            try {
-                work.accept(c);
-                c.commit();
-            } catch (RuntimeException e) {
-                try {
-                    c.rollback();
-                } catch (SQLException ignored) {
-                    // 回滚失败已由原始异常主导
-                }
-                throw e;
-            } finally {
-                c.setAutoCommit(autoCommit);
-            }
-        } catch (SQLException e) {
-            throw new ComponentException("H2 transaction failed: " + e.getMessage(), e);
-        } finally {
-            activeConnections.decrementAndGet();
-        }
-    }
-
-    @Override
-    public long executedStatements() {
-        return executedStatements.get();
-    }
-
-    @Override
-    public int activeConnections() {
-        return activeConnections.get();
-    }
-
-    /** 语句计数入口（SQL 执行处调用；SUT/测试可自行报告）。 */
-    public void recordStatement(String sql, long millis) {
-        executedStatements.incrementAndGet();
-        if (millis >= slowQueryMillis) {
-            slowQueries.merge(sql, millis, Math::max);
-            fire(Event.sim("sim.store-slow-query", id.value(),
-                    Map.of("sql", sql, "millis", millis)));
-        }
-    }
-
-    /** 慢查询记录（诊断/测试用）。 */
-    public Map<String, Long> slowQueries() {
-        return Map.copyOf(slowQueries);
-    }
-
-    private void requireRunning() {
-        if (!running) {
-            throw new ComponentException("H2 store is not running: " + id);
-        }
-    }
+    // ---- internal ----
 
     private void fire(Event e) {
         if (ctx != null) {
