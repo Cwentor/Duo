@@ -1,0 +1,17 @@
+# 构建上下文裁剪：镜像构建（Dockerfile）只需要源码 + pom + wrapper + console-ui。
+# 本地产物、文档、CI 配置一律不进上下文（加速构建、避免缓存失效、防泄本机路径）。
+.git
+.gitignore
+.workbuddy-ai/
+.zcode/
+.github/
+build/
+docs/
+architecture-ui/
+scripts/
+*.md
+LICENSE
+CHANGELOG.md
+console-ui/node_modules/
+console-ui/dist/
+**/target/

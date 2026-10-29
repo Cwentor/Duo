@@ -138,19 +138,42 @@ public final class RestControlServer implements AutoCloseable {
     public static final Duration SCENARIO_FINISH_TIMEOUT = Duration.ofHours(1);
 
     /**
-     * 启动（port 0 = 自动分配）。返回实际端口。
+     * 启动（port 0 = 自动分配；绑定 {@code 127.0.0.1}——控制面缺省不对外网开放）。
+     * 返回实际端口。
      *
      * <p>注意这里**不**启动后台等待者：它的生命周期跟着"一次 start 请求"走，见
      * {@code /scenario} 的 POST 分支。放在服务启动时是错的——那时还没有任何场景。
      */
     public int start(int port) throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        return start(port, "127.0.0.1");
+    }
+
+    /**
+     * 启动并指定绑定地址（port 0 = 自动分配）。返回实际端口。
+     *
+     * <p>缺省 {@code 127.0.0.1} 保持"控制面不裸奔"的姿态（审计 C-1 同源）；容器部署需要
+     * 对外发布端口时显式传 {@code 0.0.0.0}——容器网络命名空间本身就是隔离边界，
+     * 真正的鉴权仍由 bearer token 承担。IPv6 字面量（如 {@code ::1}）同样接受。
+     *
+     * <p>绑定非回环地址时，{@link RestRoutes} 的 Host 回环守卫同步放开（否则远程访问在
+     * token 校验之前就被 403 挡死，绑定形同虚设——评审 2026-10-30 P1）；Origin 跨站
+     * 守卫与鉴权不受影响。
+     */
+    public int start(int port, String bindAddress) throws IOException {
+        server = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
         executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
-        routes = new RestRoutes(server, mapper, auth, token);
+        routes = new RestRoutes(server, mapper, auth, token, !isLoopbackBind(bindAddress));
         registerRoutes(routes);
         server.start();
         return server.getAddress().getPort();
+    }
+
+    /** 绑定地址是否回环（{@code localhost}/{@code 127.*}/{@code ::1}；{@code 0.0.0.0} 通配＝非回环）。 */
+    private static boolean isLoopbackBind(String bindAddress) {
+        String a = bindAddress == null ? "" : bindAddress.trim().toLowerCase();
+        return a.equals("localhost") || a.startsWith("127.")
+                || a.equals("::1") || a.equals("0:0:0:0:0:0:0:1");
     }
 
     /** 实际监听端口（未启动＝-1；start 传 port 0 时由此拿内核分配值）。 */

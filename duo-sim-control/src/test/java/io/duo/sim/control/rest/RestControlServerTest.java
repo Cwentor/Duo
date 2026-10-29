@@ -420,4 +420,51 @@ class RestControlServerTest {
             host.close();
         }
     }
+
+    /** 容器部署前提（评审 2026-10-30）：绑定地址可配置——显式 0.0.0.0 后回环仍可达；缺省重载不变。 */
+    @Test
+    void bindAddressIsConfigurableAndLoopbackStaysReachable() throws Exception {
+        ScenarioHost host = new ScenarioHost();
+        RestControlServer server = new RestControlServer(host, RestControlServer.Auth.INSECURE, null);
+        try {
+            int port = server.start(0, "0.0.0.0");
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            var resp = client.send(HttpRequest.newBuilder(URI.create(
+                            "http://127.0.0.1:" + port + "/health")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, resp.statusCode(), resp.body());
+        } finally {
+            server.close();
+            host.close();
+        }
+    }
+
+    /**
+     * Host 守卫随绑定面联动（评审 2026-10-30 P1）：绑定 0.0.0.0 时非回环 Host 放行
+     * （否则容器/局域网部署在 token 校验之前就被 403 挡死）；缺省回环绑定时照旧 403。
+     */
+    @Test
+    void remoteHostAllowedOnlyWhenBoundNonLoopback() throws Exception {
+        ScenarioHost host = new ScenarioHost();
+        RestControlServer server = new RestControlServer(host, RestControlServer.Auth.TOKEN,
+                TestTokens.TOKEN);
+        try {
+            int loopbackPort = server.start(0);
+            assertEquals(403, rawRequest(loopbackPort, "GET /health HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + loopbackPort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "default loopback bind must keep rejecting foreign Host");
+            server.close();
+
+            int remotePort = server.start(0, "0.0.0.0");
+            assertEquals(200, rawRequest(remotePort, "GET /health HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + remotePort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "non-loopback bind opens the Host guard for remote clients");
+            assertEquals(401, rawRequest(remotePort, "GET /scenario/status HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + remotePort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "guard relaxation must not waive authentication");
+        } finally {
+            server.close();
+            host.close();
+        }
+    }
 }

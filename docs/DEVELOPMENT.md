@@ -148,6 +148,32 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 
 ---
 
+### 2.2 容器化部署（`duo serve` 进容器，评审 2026-10-30）
+
+仓库根 `Dockerfile` 三段构建：`node:22-alpine` 出 console SPA → `eclipse-temurin:21-jdk`
+跑 reactor（`-DskipTests`，测试归 CI regression job）并把全部运行时 jar 收敛到 `libs/` →
+`eclipse-temurin:21-jre` 运行时。控制台 SPA 由 vite 直写 `duo-sim-control/target/classes/console`
+（§1.4 同序）后随 `package` 打进 control jar，镜像内**零源码、零构建链**。
+
+```bash
+docker build -t duo-sim .
+docker run -d --name duo -p 8080:8080 -e DUO_TOKEN=<T> duo-sim
+curl -s http://127.0.0.1:8080/health     # 免认证活性探针
+# 控制台：http://127.0.0.1:8080/（令牌页输入 DUO_TOKEN 值）
+```
+
+- **监听面**：镜像 ENTRYPOINT 固化 `--bind 0.0.0.0`（容器内必须，否则端口映射不通）；
+  隔离边界是容器网络命名空间，鉴权仍由 bearer token 承担。宿主机直跑 `serve`
+  **缺省仍绑 127.0.0.1**，需要局域网访问时显式 `--bind <addr>`（DuoCli serve 新选项）。
+  Host 回环守卫随绑定面联动：绑定非回环地址时白名单同步放开（否则远程访问在 token 校验
+  之前就被 403 挡死，评审 2026-10-30 P1）；Origin 跨站守卫与鉴权不受影响。
+- **令牌必填**（审计 C-1 同源）：`DUO_TOKEN` 环境变量或追加参数 `--token <T>`；两者皆缺时
+  容器按 C-1 拒绝启动——镜像不提供免鉴权捷径。
+- **场景库持久化**：`--library-dir /data/library`（`VOLUME /data`，fork/保存的用户场景落卷）。
+- **非 root 运行**：镜像内建 `duo` 用户（uid 10001），/data 卷属主随镜像固定。
+
+---
+
 ## 3. 测试分层与门控
 
 ### 3.1 分层
