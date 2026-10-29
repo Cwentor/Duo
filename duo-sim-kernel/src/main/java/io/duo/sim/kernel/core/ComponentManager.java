@@ -31,6 +31,20 @@ public final class ComponentManager {
         live.put(id, c);
     }
 
+    /**
+     * 从拆除序列摘除并停止一个已纳管组件（SUT 启动失败回滚，评审 A1 2026-10-30）。
+     * 与 {@link #stopAll()} 的"尽力而为"不同：停止失败**向上抛**——由回滚侧记 warnings，
+     * 不静默；返回是否确有此组件。
+     */
+    public boolean abandon(String id) {
+        VirtualComponent c = live.remove(id);
+        if (c == null) {
+            return false;
+        }
+        c.stop(StopMode.GRACEFUL);
+        return true;
+    }
+
     /** 注册额外停止动作（SUT 协作停止），按注册顺序逆序执行。 */
     public void registerExtraStop(String key, Runnable stop) {
         extraStops.put(key, stop);

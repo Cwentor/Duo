@@ -261,4 +261,43 @@ class ScenarioHostTest {
             assertThrows(IllegalStateException.class, () -> host.start(f));
         }
     }
+
+    /**
+     * SUT 启动失败回滚（评审 A1，2026-10-30）：{@code startDirectDependencies} 已把依赖
+     * start+adopt，此前 SUT 本体启动失败时 {@code ScenarioEngine.stop()} 因
+     * {@code started=false} 短路，依赖组件永不收摊——长驻 serve 进程里每次失败都泄漏
+     * 端口/连接且重试不可回收。回滚后事件流必须出现依赖的停止事实与一级回滚事件。
+     */
+    @Test
+    void failedSutLaunchRollsBackStartedDependencies(@TempDir Path tmp) throws Exception {
+        String yaml = """
+                name: sut-rollback
+                topology:
+                  - id: zk
+                    contract: registry
+                    tier: virtual
+                  - id: master
+                    contract: scheduler
+                    tier: virtual
+                    sut: true
+                    launch: { mode: in-process, main: io.duo.sim.control.testfixture.NoSuchSutMain }
+                    config: { dag.tasks: "a" }
+                    exposes: [{ contract: scheduler, port: 0 }]
+                    wiring:
+                      registry: { node: zk, contract: registry }
+                """;
+        Path f = writeScenario(tmp, yaml);
+        try (var host = new ScenarioHost()) {
+            var e = assertThrows(IllegalStateException.class, () -> host.start(f));
+            assertTrue(String.valueOf(e).contains("cannot launch SUT main"), String.valueOf(e));
+            var types = host.eventsSince(0).stream()
+                    .map(ev -> String.valueOf(ev.get("type"))).toList();
+            assertTrue(types.contains("sim.registry-stopped"),
+                    "started dependency must be rolled back (stopped), events=" + types);
+            assertTrue(types.contains("sim.sut-start-rollback"),
+                    "rollback must be a first-class event, events=" + types);
+            assertEquals(1, types.stream().filter("sim.registry-stopped"::equals).count(),
+                    "dependency must be removed from the teardown sequence (no double stop)");
+        }
+    }
 }
