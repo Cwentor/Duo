@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.library.ScenarioLibrary;
+import io.duo.sim.kernel.core.ScenarioRuntime;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -303,34 +304,46 @@ public final class RestControlServer implements AutoCloseable {
 
     private void inject(HttpCall call) throws Exception {
         call.require(host.isRunning(), 409, "scenario not running");
-        try {
-            var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
-            var result = host.inject(action);
-            if (!result.success() && result.reason() != null
-                    && result.reason().contains("unknown target")) {
-                call.error(404, result.reason());
-            } else {
-                call.ok(Map.of("success", result.success(),
-                        "reason", result.reason() == null ? "" : result.reason()));
-            }
-        } catch (NullPointerException e) {
-            // 结构上缺 target 的 FaultAction 能通过 JSON 绑定，却在**下游**抛 NPE
-            // （`FaultAction.target()` 为 null → 取 componentId()）。这仍然是"调用方输入
-            // 不合法"，不是我们的 bug：按审计口径必须是 400，而不是让它落进兜底 500。
-            call.error(400, "fault action is missing a required field: " + e.getMessage());
-        }
+        withFaultAction(call, host::inject);
     }
 
     private void clearInjection(HttpCall call) throws Exception {
         call.require(host.isRunning(), 409, "scenario not running");
-        try {
-            var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
-            var result = host.clear(action);
+        withFaultAction(call, host::clear);
+    }
+
+    /**
+     * inject 与 /api/inject/clear 的共享管道（评审 R16，2026-10-30）：JSON 绑定 → 显式判空 →
+     * 转发 → 统一结果/错误映射。此前复制已分叉——注册注释承诺"与 /inject 同构"，clear 却缺
+     * "unknown target → 404"映射（inject 有）。收敛后两端语义一致：
+     * ① unknown target → 404（可寻址资源不存在，两端口同判）；
+     * ② 其余 success:false → 200 + reason（如"无在途注入可清除"——clear 幂等口径不变）；
+     * ③ 结构缺字段（target/componentId 为 null）→ 400 **显式判空**优先于 NPE 捕获：
+     *    NPE 的 message 常为 null，且无法区分"输入缺字段"与"下游真 NPE"（后者该 500）。
+     */
+    private void withFaultAction(HttpCall call,
+                                 java.util.function.Function<io.duo.sim.kernel.api.FaultAction,
+                                         ScenarioRuntime.InjectionResult> forward) throws Exception {
+        var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
+        if (action == null || action.target() == null
+                || action.target().componentId() == null) {
+            call.error(400, "fault action is missing a required field: target.componentId");
+            return;
+        }
+        var result = forward.apply(action);
+        if (!result.success() && result.reason() != null
+                && result.reason().contains("unknown target")) {
+            call.error(404, result.reason());
+        } else {
             call.ok(Map.of("success", result.success(),
                     "reason", result.reason() == null ? "" : result.reason()));
-        } catch (NullPointerException e) {
-            call.error(400, "fault action is missing a required field: " + e.getMessage());
         }
+    }
+
+    /** 可读态守卫单点（P3 收敛）：RUNNING 或已固化结果（FINISHED/FAILED）皆可读——
+     *  事后审查是控制面核心用途（M3 验收 §1）。此前四处复制、一处参数序还写反。 */
+    private void requireScenarioReadable(HttpCall call) {
+        call.require(host.hasResult() || host.isRunning(), 409, "scenario not started");
     }
 
     /** {@code GET /diagnose}：四段诊断报告（注入 → 组件反应 → SUT 事实 → 断言）。 */
