@@ -166,8 +166,10 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
         <button @click="stopScenario">■ 停止</button>
         <button @click="mode = 'edit'">编辑（停止以编辑）</button>
       </template>
-      <span :class="runtime.connected ? 'ok' : 'down'">
-        {{ runtime.connected ? '● 已连接' : '● 连接断开' }}
+      <!-- IDLE 措辞修正（评审 P3，2026-10-30）：编辑态本就没开轮询，显示"连接断开"
+           误导（服务明明可达）——区分"编辑态 / 已连接 / 连接断开"三态 -->
+      <span :class="mode === 'edit' ? 'idle' : (runtime.connected ? 'ok' : 'down')">
+        {{ mode === 'edit' ? '● 编辑态' : (runtime.connected ? '● 已连接' : '● 连接断开') }}
       </span>
       <span v-if="runtime.dropped + runtime.truncatedLocal > 0" class="warn">
         已丢弃 {{ runtime.dropped }} 条事件<template v-if="runtime.truncatedLocal > 0">（本机截断 {{ runtime.truncatedLocal }}）</template>
@@ -231,6 +233,7 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
 .error { color: #c0392b; font-size: 12px; }
 .state { color: #2e8b57; font-weight: bold; }
 .ok { color: #2e8b57; font-size: 12px; }
+.idle { color: #888; font-size: 12px; }
 .down { color: #c0392b; font-size: 12px; }
 .warn { color: #d9a44a; font-size: 12px; }
 .primary { font-weight: bold; }
