@@ -395,9 +395,8 @@ public final class RealWorkerSut implements SutMain {
     private void execute(Inst inst, TaskDispatch d) {
         try {
             var entry = behaviors.resolve(d.taskName());
-            var profile = new BehaviorProfile(entry.durationMillis(), entry.jitterRatio(),
-                    entry.successRate(), entry.exceptionType(), entry.logLines(),
-                    entry.failAtPercent(), entry.neverReport(), entry.progressMode());
+            var profile = io.duo.sim.components.taskstub.TaskBehaviors.profile(
+                    entry, entry.durationMillis());
             io.duo.sim.components.taskstub.BehaviorProfile.Outcome r;
             try {
                 r = profile.execute(d.taskName(), new Random(), pct ->
