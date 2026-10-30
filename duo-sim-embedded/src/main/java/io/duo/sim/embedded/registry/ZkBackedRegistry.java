@@ -58,8 +58,6 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
     private final Map<String, List<String>> sessionPaths = new ConcurrentHashMap<>();
     /** watch 监听器（path -> listeners）。 */
     private final Map<String, List<Consumer<RegistryChange>>> watchers = new ConcurrentHashMap<>();
-    /** 已注册端点快照（仅用于诊断/恢复对比；**不重放**——真实语义）。 */
-    private final Map<String, String> endpoints = new ConcurrentHashMap<>();
 
     @Override
     public ComponentId id() {
@@ -200,7 +198,6 @@ abstract class ZkBackedRegistry implements VirtualComponent, RegistryContract, F
             } else {
                 facadeClient.setData().forPath(path, address.getBytes(StandardCharsets.UTF_8));
             }
-            endpoints.put(contract, address);
             notifyWatchers(path, address, RegistryChange.ChangeKind.CREATED);
         } catch (Exception e) {
             throw new ComponentException("registerEndpoint failed on real ZK: "
