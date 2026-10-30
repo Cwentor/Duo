@@ -82,10 +82,12 @@ public final class TimelineScheduler implements AutoCloseable {
             return;
         }
         String target = e.target();
-        var addr = parseTarget(target);
-        if (addr == null) {
+        io.duo.sim.kernel.api.FaultAction.ComponentAddress addr;
+        try {
+            addr = io.duo.sim.kernel.api.FaultAction.ComponentAddress.parse(target);
+        } catch (IllegalArgumentException ex) {
             result.recordInjectionFailure(e.action(), target,
-                    "unparseable target: " + target);
+                    "unparseable target: " + ex.getMessage());
             return;
         }
         Long durationMs = null;
@@ -96,8 +98,7 @@ public final class TimelineScheduler implements AutoCloseable {
                 result.recordWarning("timeline entry '" + e.action() + "': " + ex.getMessage());
             }
         }
-        boolean lifecycle = FaultAction.CRASH.equals(e.action())
-                || FaultAction.RESTART.equals(e.action());
+        boolean lifecycle = FaultAction.isLifecycle(e.action());
         if (durationMs != null && lifecycle) {
             result.recordWarning("action '" + e.action()
                     + "' is lifecycle — duration ignored (nothing to clear)");
@@ -118,31 +119,6 @@ public final class TimelineScheduler implements AutoCloseable {
                             "auto-clear failed: " + c.reason());
                 }
             }, durationMs, TimeUnit.MILLISECONDS));
-        }
-    }
-
-    /** 解析 {@code componentId} 或 {@code componentId[N]}（索引 1 起，§7.2）。 */
-    static FaultAction.ComponentAddress parseTarget(String target) {
-        if (target == null || target.isBlank()) {
-            return null;
-        }
-        int bracket = target.indexOf('[');
-        if (bracket < 0) {
-            return FaultAction.ComponentAddress.of(
-                    new io.duo.sim.kernel.api.ComponentId(target.trim()));
-        }
-        if (!target.endsWith("]")) {
-            return null;
-        }
-        try {
-            int idx = Integer.parseInt(target.substring(bracket + 1, target.length() - 1));
-            if (idx < 1) {
-                return null;
-            }
-            return FaultAction.ComponentAddress.ofInstance(
-                    new io.duo.sim.kernel.api.ComponentId(target.substring(0, bracket)), idx);
-        } catch (RuntimeException e) {
-            return null;
         }
     }
 

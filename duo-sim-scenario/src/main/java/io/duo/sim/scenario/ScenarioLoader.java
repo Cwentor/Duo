@@ -50,7 +50,7 @@ public final class ScenarioLoader {
                 (List<Map<String, Object>>) doc.getOrDefault("timeline", List.of())) {
             timeline.add(new Scenario.TimelineEntry(str(t.get("at")), str(t.get("action")),
                     str(t.get("target")), str(t.get("duration")),
-                    mapStrObj(t.get("params"))));
+                    asMap(t.get("params"))));
         }
         List<Map<String, Object>> assertions =
                 (List<Map<String, Object>>) doc.get("assertions");
@@ -197,17 +197,8 @@ public final class ScenarioLoader {
         return String.valueOf(vv);
     }
 
+    /** 键归一为 String 的 Map 视图（评审 R13：asMap 与 mapStrObj 此前逐字同形 ×2，删一）。 */
     private static Map<String, Object> asMap(Object o) {
-        if (o instanceof Map<?, ?> m) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            m.forEach((k, v) -> out.put(String.valueOf(k), v));
-            return out;
-        }
-        return Map.of();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> mapStrObj(Object o) {
         if (o instanceof Map<?, ?> m) {
             Map<String, Object> out = new LinkedHashMap<>();
             m.forEach((k, v) -> out.put(String.valueOf(k), v));

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.rest.RestControlServer;
-import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.FaultAction;
 import io.duo.sim.kernel.util.Durations;
 
@@ -515,15 +514,11 @@ public final class DuoCli {
 
     // ---- 解析辅助 ----
 
-    /** {@code workers[2]} → 实例级地址；{@code workers} → 整组。 */
+    /** {@code workers[2]} → 实例级地址；{@code workers} → 整组（解析/校验单点见
+     *  FaultAction.ComponentAddress.parse——评审 R14：此前 CLI 版不查下标合法性，
+     *  {@code workers[2x]} 以裸 NumberFormatException 冒出，现归入统一错误消息）。 */
     private static FaultAction.ComponentAddress parseTarget(String target) {
-        int bracket = target.indexOf('[');
-        if (bracket < 0) {
-            return FaultAction.ComponentAddress.of(new ComponentId(target.trim()));
-        }
-        int idx = Integer.parseInt(target.substring(bracket + 1, target.length() - 1));
-        return FaultAction.ComponentAddress.ofInstance(
-                new ComponentId(target.substring(0, bracket)), idx);
+        return FaultAction.ComponentAddress.parse(target);
     }
 
     /** 解析 {@code "crash workers[2]"} / {@code "registry-flap zk 5s"} 形式的动作规格。 */

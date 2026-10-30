@@ -175,9 +175,9 @@ public final class ScenarioRuntime {
         return InjectionResult.ok();
     }
 
-    /** crash/restart 是生命周期动作（§8 分发规则），不受 supportedFaults 约束。 */
+    /** crash/restart 是生命周期动作（§8 分发规则），不受 supportedFaults 约束（判定单点见 FaultAction.isLifecycle）。 */
     private static boolean isLifecycle(FaultAction action) {
-        return FaultAction.CRASH.equals(action.type()) || FaultAction.RESTART.equals(action.type());
+        return FaultAction.isLifecycle(action.type());
     }
 
     private void dispatch(Target t, Integer idx, FaultAction action) {
