@@ -51,8 +51,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class VirtualWorker implements VirtualComponent, WorkerContract,
         InstanceControl, FaultInjectable {
 
-    private static final long DISCOVER_INTERVAL_MS = 500;
-    private static final int DISCOVER_MAX_TRIES = 20;
     /** 心跳周期缺省值；可用 config {@code heartbeat.interval.ms} 覆盖（M4 压测：万级实例下调大）。 */
     private static final long DEFAULT_HEARTBEAT_INTERVAL_MS = 100;
     /** 连接重试（M4 压测 T36）：万级并发拨号下 accept 队列可能瞬时满，退避重试防误判离线。 */
@@ -165,24 +163,10 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     }
 
     private String discoverMaster() {
-        var registry = ctx.directRegistry()
-                .orElseThrow(() -> new io.duo.sim.kernel.api.ComponentException(
-                        "worker requires direct registry binding: " + id));
-        for (int tries = 0; tries < DISCOVER_MAX_TRIES; tries++) {
-            List<String> addrs = registry.discoverEndpoints("scheduler");
-            if (!addrs.isEmpty()) {
-                return addrs.get(0);
-            }
-            try {
-                Thread.sleep(DISCOVER_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        throw new io.duo.sim.kernel.api.ComponentException(
-                "scheduler endpoint not discovered within " + DISCOVER_MAX_TRIES
-                        + " tries: " + id);
+        return WorkerProtocol.discoverScheduler(ctx, id,
+                "worker requires direct registry binding: ",
+                "scheduler endpoint not discovered within "
+                        + WorkerProtocol.DISCOVER_MAX_TRIES + " tries: ");
     }
 
     /** 单实例主循环：连接 → 注册 → 心跳/槽位/读下行；崩溃即实例离线。 */
@@ -394,30 +378,21 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
     }
 
     /**
-     * 假日志落流（G7 修复）：{@code logLines} 逐行发 {@code sim.worker-log}（诊断/断言可见），
-     * 支持 {@code {task}}/{@code {taskId}} 占位符。此前该字段被 {@code BehaviorResolver} 固定置空，
-     * DSL 写了不生效（静默无效）。
+     * 假日志落流（G7 修复）：走 {@link WorkerProtocol#emitLogs} 两档共享单点（事件/载荷同形）。
+     * 此前该字段被 {@code BehaviorResolver} 固定置空，DSL 写了不生效（静默无效）。
      */
     private void emitLogs(InstanceState inst, TaskDispatch d, java.util.List<String> lines) {
-        for (String line : lines) {
-            fire(Event.sim("sim.worker-log", id.instanceSourceId(inst.index),
-                    Map.of("taskId", d.taskId(),
-                            "line", line.replace("{task}", d.taskName())
-                                    .replace("{taskId}", d.taskId()))));
-        }
+        WorkerProtocol.emitLogs(this::fire, id.instanceSourceId(inst.index), d, lines);
     }
 
     /**
      * 立即上报当前槽位（G9 加固）：槽位变化（受理/拒绝）后立刻发 {@link SlotReport}，不等下一次心跳。
      * 调度侧的槽位视图因此在一个 RTT 内收敛到真实状态，而不是最多滞后一个心跳周期——这正是
-     * 「陈旧视图 → 把任务派给已满实例」的窗口。写失败忽略：心跳周期上报仍会兜底。
+     * 「陈旧视图 → 把任务派给已满实例」的窗口。线上字节走 {@link WorkerProtocol#reportSlots}
+     * 共享单点；取值口径＝故障感知的 effectiveSlots（real 档为裸计数，异构如实分叉）。
      */
     private void reportSlots(InstanceState inst, FrameConnection conn) {
-        try {
-            conn.write(new SlotReport(inst.name, effectiveSlots(inst), totalSlots));
-        } catch (IOException ignored) {
-            // 连接不可写：心跳周期上报兜底
-        }
+        WorkerProtocol.reportSlots(conn, inst.name, effectiveSlots(inst), totalSlots);
     }
 
     /** 对外可见的空闲槽位：resource-exhaust 期间恒为 0（可观测面与准入判定同源）。 */
@@ -446,11 +421,7 @@ public final class VirtualWorker implements VirtualComponent, WorkerContract,
      * 回报写失败时由调度侧的失联检测（feed 读失败 → onFeedLost）兜底重排。
      */
     private void reject(FrameConnection conn, InstanceState inst, TaskDispatch d, String reason) {
-        try {
-            conn.write(new TaskStatus(d.taskId(), inst.name, TaskStatus.REJECTED, reason));
-        } catch (IOException ignored) {
-            // 连接已断：拒绝回报丢失，调度侧失联检测兜底
-        }
+        WorkerProtocol.writeRejected(conn, inst.name, d, reason);
         reportSlots(inst, conn); // 拒绝同时刷新槽位视图，避免调度侧继续把任务派到本实例
         fire(Event.sim("sim.worker-task-rejected", id.instanceSourceId(inst.index),
                 Map.of("taskId", d.taskId(), "reason", reason)));

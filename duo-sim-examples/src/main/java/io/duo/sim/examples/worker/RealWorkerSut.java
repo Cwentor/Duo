@@ -431,13 +431,14 @@ public final class RealWorkerSut implements SutMain {
         }
     }
 
-    /** 假日志落流（G7 口径，与 virtual/real 两档组件同构，支持 {@code {task}}/{@code {taskId}}）。 */
+    /** 假日志落流（G7 口径，与 virtual/real 两档组件同构，占位符走 {@code TaskBehaviors.expandLogLine} 单点）。 */
     private void emitLogs(Inst inst, TaskDispatch d, java.util.List<String> lines) {
         for (String line : lines) {
             events.publish("sut.worker-log", Map.of(
                     "instance", inst.name(),
                     "taskId", d.taskId(),
-                    "line", line.replace("{task}", d.taskName()).replace("{taskId}", d.taskId())));
+                    "line", io.duo.sim.components.taskstub.TaskBehaviors
+                            .expandLogLine(line, d.taskName(), d.taskId())));
         }
     }
 
