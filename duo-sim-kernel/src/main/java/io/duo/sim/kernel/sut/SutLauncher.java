@@ -2,6 +2,7 @@ package io.duo.sim.kernel.sut;
 
 import io.duo.sim.kernel.api.ComponentException;
 import io.duo.sim.kernel.api.Event;
+import io.duo.sim.kernel.api.ExposedEndpoint;
 import io.duo.sim.kernel.api.SutContext;
 import io.duo.sim.kernel.api.SutMain;
 
@@ -176,7 +177,7 @@ public final class SutLauncher implements AutoCloseable {
                             + " a peer node's exposes becomes visible only to later-started SUTs");
                 }
                 endpoints.forEach((contract, addr) ->
-                        pw.println("duo.endpoint." + contract + "=" + addr));
+                        pw.println(ExposedEndpoint.LINE_PREFIX + contract + "=" + addr));
             }
         } catch (IOException e) {
             throw new ComponentException("cannot write endpoint config: " + configOut, e);
