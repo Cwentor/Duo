@@ -169,7 +169,9 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
       <span :class="runtime.connected ? 'ok' : 'down'">
         {{ runtime.connected ? '● 已连接' : '● 连接断开' }}
       </span>
-      <span v-if="runtime.dropped > 0" class="warn">已丢弃 {{ runtime.dropped }} 条事件</span>
+      <span v-if="runtime.dropped + runtime.truncatedLocal > 0" class="warn">
+        已丢弃 {{ runtime.dropped }} 条事件<template v-if="runtime.truncatedLocal > 0">（本机截断 {{ runtime.truncatedLocal }}）</template>
+      </span>
       <input v-model="newNode.id" placeholder="新节点 id" class="new-id" />
       <select v-model="newNode.contract">
         <option v-for="c in CONTRACTS" :key="c" :value="c">{{ c }}</option>
