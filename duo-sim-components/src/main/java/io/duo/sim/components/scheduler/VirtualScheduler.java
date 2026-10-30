@@ -59,9 +59,6 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
 
     /** 派发轮询间隔：与 real 档一致（50ms 级），保证档位互换后的时序量级相同。 */
     private static final long PUMP_INTERVAL_MS = 20;
-    /** 缺省 DAG：与 real 档 {@code DemoScheduler} 同一套演示拓扑（档位互换时配置零改动）。 */
-    private static final String DEFAULT_DAG =
-            "load-orders,clean-orders,build-features,unstable-task,aggregate-report";
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
@@ -278,17 +275,7 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     }
 
     private static Map<String, List<String>> readDag(Map<String, String> config) {
-        String tasksCfg = config.getOrDefault("dag.tasks", DEFAULT_DAG);
-        Map<String, List<String>> dag = new HashMap<>();
-        for (String t : tasksCfg.split(",")) {
-            String name = t.trim();
-            if (name.isEmpty()) {
-                continue;
-            }
-            String deps = config.get("dag.deps." + name);
-            dag.put(name, deps == null || deps.isBlank()
-                    ? List.of() : List.of(deps.split(",")));
-        }
+        Map<String, List<String>> dag = DagTopology.parse(config);
         if (dag.isEmpty()) {
             throw new IllegalArgumentException("empty DAG (check dag.tasks)");
         }

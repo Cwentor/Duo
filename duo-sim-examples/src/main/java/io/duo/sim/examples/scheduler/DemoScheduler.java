@@ -1,5 +1,6 @@
 package io.duo.sim.examples.scheduler;
 
+import io.duo.sim.components.scheduler.DagTopology;
 import io.duo.sim.components.scheduler.DispatchPump;
 import io.duo.sim.components.scheduler.SchedulerFacts;
 import io.duo.sim.components.scheduler.SchedulerStateMachine;
@@ -8,7 +9,6 @@ import io.duo.sim.kernel.api.SutContext;
 import io.duo.sim.kernel.api.SutMain;
 import io.duo.sim.kernel.contract.RegistryContract;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -77,8 +77,8 @@ public final class DemoScheduler implements SutMain {
         registryAccess.register(duoPort);
         ctx.ready(); // 就绪：端点已可被发现
 
-        // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务）
-        Map<String, List<String>> dag = readDag(ctx.config());
+        // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务；解析走 DagTopology 两档共享单点）
+        Map<String, List<String>> dag = DagTopology.parse(ctx.config());
         if (dag.isEmpty()) {
             throw new IllegalStateException("demo-scheduler: empty DAG (check dag.tasks)");
         }
@@ -377,20 +377,6 @@ public final class DemoScheduler implements SutMain {
             }
         }
     }
-
-    private Map<String, List<String>> readDag(Map<String, String> config) {
-        String tasksCfg = config.getOrDefault("dag.tasks",
-                "load-orders,clean-orders,build-features,unstable-task,aggregate-report");
-        List<String> tasks = List.of(tasksCfg.split(","));
-        Map<String, List<String>> dag = new HashMap<>();
-        for (String t : tasks) {
-            String deps = config.get("dag.deps." + t.trim());
-            dag.put(t.trim(), deps == null || deps.isBlank() ? List.of()
-                    : List.of(deps.split(",")));
-        }
-        return dag;
-    }
-
 
     private void closeAll() {
         if (registryAccess instanceof ZkRegistryAccess zk) {
