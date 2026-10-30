@@ -549,12 +549,12 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
         }
     }
 
-    /** 假日志落流（与 worker 同口径：{@code logLines} 逐行、占位符可展开、终态之前）。 */
+    /** 假日志落流（与 worker 同口径：{@code logLines} 逐行、占位符走 TaskBehaviors 单点展开、终态之前）。 */
     private void emitLogs(String taskId, String taskName, List<String> lines) {
         for (String line : lines) {
             fire(Event.sim("sim.engine-task-log", id.value(),
-                    Map.of("taskId", taskId, "line", line.replace("{task}", taskName)
-                            .replace("{taskId}", taskId))));
+                    Map.of("taskId", taskId, "line", io.duo.sim.components.taskstub.TaskBehaviors
+                            .expandLogLine(line, taskName, taskId))));
         }
     }
 
