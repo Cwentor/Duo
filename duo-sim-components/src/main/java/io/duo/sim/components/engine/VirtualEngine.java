@@ -530,7 +530,8 @@ public final class VirtualEngine implements VirtualComponent, EngineContract,
      * 取消终态：**事实先在调用线程（＝stop/restart 的线程）落流**，再回写连接。
      *
      * <p>为什么必须与 {@link #reportTerminal} 分开：stop/restart 走的是
-     * 「先中断任务线程 → 再 {@code generation.incrementAndGet()}」的顺序，被中断的任务线程
+     * 「先递增代际 → 再同步发取消终态 → 最后中断任务线程」的顺序（勘误：现行实现已改为
+     * 先递增代际——历史顺序是"先中断后递增"，被中断的任务线程
      * 在 {@code catch (InterruptedException)} 里先读到**旧代际**、于是进入上报分支，
      * 随后才执行 {@code fire}——这条窗口让旧代际的 CANCELLED 事实**偶发**落到重启之后
      * （CI run 35419372086 实测：断言"旧代际不得向新一代报终态"失败）。

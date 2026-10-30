@@ -39,7 +39,7 @@ import java.util.concurrent.Executors;
  *   <li>{@code POST /inject}——body 为 FaultAction JSON（未启动→409；target 不可解析→404）</li>
  *   <li>{@code GET /assertions} / {@code GET /topology}——断言明细 / 拓扑（事后审查可读）</li>
  *   <li>{@code GET /metrics}——Prometheus 文本格式指标（M8）</li>
- *   <li>{@code GET /health}——服务存活（唯一免认证端点，供探针）</li>
+ *   <li>{@code GET /health}——服务存活（免认证端点之一：/health 与 / 的 SPA 静态托管；供探针）</li>
  *   <li>{@code GET /diagnose}——诊断链一等端点（M10）</li>
  *   <li>{@code /api/scenarios} 族——控制台场景库（M10；503＝未配置库）</li>
  *   <li>{@code GET /api/capabilities} / {@code GET /api/meta}——能力元数据 / serve 自述（M10）</li>
@@ -119,17 +119,6 @@ public final class RestControlServer implements AutoCloseable {
     public Auth auth() {
         return auth;
     }
-
-    /**
-     * 单请求处理时长上限（审计 M-4）。
-     *
-     * <p>注意：{@code com.sun.net.httpserver.HttpServer} **没有** {@code setMaxReqTime}
-     * （只有 jdk.httpserver 内部的 {@code ServerImpl} 有，不是公开 API；{@code sun.net.httpserver}
-     * 那套也没有可移植的公开入口）。所以这里不硬造一个"写了但不生效"的上限——那正是 §12
-     * 明确禁止的静默谎言。真正的时长约束由两件事保证：① {@code /scenario} 的启动路径本身是
-     * 有界的（ready 探针有超时、校验有上限）；② 请求体上限 1 MiB 让"慢速灌大包"占不住线程。
-     */
-    public static final Duration REQUEST_TIME_BUDGET = Duration.ofSeconds(60);
 
     /**
      * 后台等待 SUT 退出的上限（每个已受理的场景一份）。远超正常场景的时长，只为让

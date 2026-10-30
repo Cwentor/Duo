@@ -68,9 +68,9 @@ final class RestRoutes {
         }
     }
 
-    /** 回环主机名白名单（Host 头校验；含 IPv6 字面量）。 */
-    private static final Set<String> LOOPBACK_HOSTS = Set.of(
-            "127.0.0.1", "localhost", "[::1]", "::1", "0:0:0:0:0:0:0:1");
+    /** 回环主机名白名单（Host 头校验；含 IPv6 字面量——isLoopbackHost 的括号分支按
+     *  {@code [::1]} 形态整串比对，故裸 IPv6 条目不可达，评审 P3 清理）。 */
+    private static final Set<String> LOOPBACK_HOSTS = Set.of("127.0.0.1", "localhost", "[::1]");
 
     /**
      * 413 排空上限：拒绝超限上传前先读并丢弃的字节预算。正常超限上传（≈1 MiB 量级，

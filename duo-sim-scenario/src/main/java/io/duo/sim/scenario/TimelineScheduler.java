@@ -112,23 +112,36 @@ public final class TimelineScheduler implements AutoCloseable {
             return;
         }
         if (durationMs != null) {
-            pending.add(ticker.schedule(() -> {
-                var c = runtime.clear(action);
-                if (!c.success()) {
-                    result.recordInjectionFailure(e.action(), target,
-                            "auto-clear failed: " + c.reason());
-                }
-            }, durationMs, TimeUnit.MILLISECONDS));
+            try {
+                pending.add(ticker.schedule(() -> {
+                    var c = runtime.clear(action);
+                    if (!c.success()) {
+                        result.recordInjectionFailure(e.action(), target,
+                                "auto-clear failed: " + c.reason());
+                    }
+                }, durationMs, TimeUnit.MILLISECONDS));
+            } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                // 防御性收敛（评审 P3，2026-10-30）：close() 之后 ticker 已 shutdown，
+                // 此刻到达的 fire 若带 duration 会让 auto-clear 排程失败——显式记失败
+                // 而不是被 executor 静默吞掉（当前编排下 fire 由 ticker 线程自调，
+                // 与 close 竞态仅在场景终止窗口内可达，但"不静默"不区分可达性）。
+                result.recordInjectionFailure(e.action(), target,
+                        "timeline closed before auto-clear could be scheduled");
+            }
         }
     }
 
-    /** 停止调度（场景结束/关闭时）；已排定未触发的动作被取消——场景终止后不再注入。 */
+    /**
+     * 停止调度（场景结束/关闭时）；已排定未触发的动作被取消——场景终止后不再注入。
+     * 不复位 {@code started}（评审 P3，2026-10-30）：复位会让已关闭的调度器可被
+     * {@code start()} 重新 CAS 拉起并**重放全部时间线**（防御性收敛，当前编排下
+     * TimelineScheduler 随引擎一次性使用，不构成可达路径）。
+     */
     @Override
     public void close() {
         pending.forEach(f -> f.cancel(false));
         pending.clear();
         ticker.shutdownNow();
-        started.set(false);
     }
 
     /** 已排定未触发动作计数（测试用）。 */

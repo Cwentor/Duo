@@ -258,7 +258,7 @@ class VirtualSchedulerTest {
      * {@code sut.task-rejected} 必须带上可诊断的三字段（拒绝方实例名 / 原始 detail / 拒绝次数），
      * 且**回滚不消耗重试额度**（{@code sut.task-retry} 不得出现、attempt 不得推进）。
      *
-     * <p>线上重派的存在性由缺口用例 {@code rejectedTaskIsNotRedispatchedAfterWorkerRefuses} 说明；
+     * <p>线上重派的存在性由现役用例 {@code rejectedTaskIsRedispatchedAfterLocalSlotRollback} 说明（原缺口用例名已废）；
      * 状态机层面的重派与额度语义由 {@code SchedulerStateMachineRejectionTest} 确定性覆盖。
      */
     @Test
@@ -279,7 +279,7 @@ class VirtualSchedulerTest {
         assertEquals("no free slot", rejected.payload().get("reason"));
         assertEquals(1, rejected.payload().get("rejections"), "首次拒绝计数为 1");
 
-        // 现状（缺口）：拒绝后**不会再重派**（见 rejectedTaskIsNotRedispatchedAfterWorkerRefuses），
+        // 现状（缺口）：拒绝后**不会再重派**（现役守卫用例 rejectedTaskIsRedispatchedAfterLocalSlotRollback），
         // 故这里只断言「拒绝被如实记录、且未被误判成重试」，不假定后续还有派发。
         Thread.sleep(1_000);
         events.stream().filter(e -> "sut.task-dispatched".equals(e.type()))
@@ -419,7 +419,7 @@ class VirtualSchedulerTest {
      * {@link SchedulerStateMachine} 回滚尝试计数、回待派发，且**回滚不以重试的方式留痕**
      * （不得出现 {@code sut.task-retry}）。
      *
-     * <p>线上「重派」这一环由缺口用例 {@code rejectedTaskIsNotRedispatchedAfterWorkerRefuses}
+     * <p>线上「重派」这一环由守卫用例 {@code rejectedTaskIsRedispatchedAfterLocalSlotRollback}
      * 如实记录（当前**不发生**）；状态机的重派与额度语义由
      * {@code SchedulerStateMachineRejectionTest} 确定性覆盖。
      */
