@@ -26,7 +26,7 @@
 | 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
 | 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
 | 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次；**M10 完成（2026-10-01）：Web 控制台（Java 控制面 `/api/**` + `console-ui` Vue3 SPA，`duo serve` 同源托管）** |
-| 最近全量回归 | 2026-10-30（评审分支 `review/code-structure-audit`，报告见 [docs/code-review-2026-10-30.md](docs/code-review-2026-10-30.md)）· `./mvnw -o -B test` → **460 测 / 0 失败 / 0 错误 / 2 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：压测 1 + M9 真实 SUT 演练门控 1；容器档 10 条在本机 Docker 可用时**实跑**——PG 6 + ZK 4，同日 embedded 单独取证）；前端 `console-ui` Vitest **46 测 / 0 失败** + `vue-tsc` 类型门禁零错误（另计，不在 Maven reactor 内） |
+| 最近全量回归 | 2026-10-31（分支 `review/code-structure-audit`，评审 2026-10-30 修复轮收口，报告见 [docs/code-review-2026-10-30.md](docs/code-review-2026-10-30.md)）· `./mvnw -o -B test` → **461 测 / 0 失败 / 0 错误 / 2 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：压测 1 + M9 真实 SUT 演练门控 1；容器档 10 条在本机 Docker 可用时**实跑**——PG 6 + ZK 4）；前端 `console-ui` Vitest **46 测 / 0 失败** + `vue-tsc` 类型门禁零错误（另计，不在 Maven reactor 内） |
 | 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
 | 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
@@ -180,7 +180,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 460 测（2 条设计门控 skip：压测 1 + M9 真实 SUT 演练 1；容器档 10 条在有 Docker 的机器上实跑）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 461 测（2 条设计门控 skip：压测 1 + M9 真实 SUT 演练 1；容器档 10 条在有 Docker 的机器上实跑）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
