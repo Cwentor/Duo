@@ -191,7 +191,9 @@ public final class DuoCli {
         if (yamlPath != null) {
             host.start(Path.of(yamlPath));
             // SUT 自行退出时自动固化结果（客户端只需轮询 status，无需触发停止）
-            host.awaitFinishInBackground(30 * 60_000L);
+            // 预算与 REST 启动路径同源（评审 P3：此前 serve 30min / REST 1h 两套硬编码）
+            host.awaitFinishInBackground(
+                    io.duo.sim.control.rest.RestControlServer.SCENARIO_FINISH_TIMEOUT.toMillis());
         }
         int actual = server.start(port, bind == null ? "127.0.0.1" : bind);
         // 脚本据此发现端口（--port 0 时为实际分配值）；令牌**不**回显（它已经在客户端手里，

@@ -2,6 +2,7 @@ package io.duo.sim.protocol;
 
 import io.duo.sim.protocol.message.HeartbeatReport;
 import io.duo.sim.protocol.message.RegisterRequest;
+import io.duo.sim.protocol.message.RegisterResponse;
 import io.duo.sim.protocol.message.SlotReport;
 import io.duo.sim.protocol.message.TaskCancel;
 import io.duo.sim.protocol.message.TaskDispatch;
@@ -27,6 +28,10 @@ class DuoCodecTest {
         assertRoundTrip(new TaskDispatch("t-100", "spark-etl", 2, 1, 2));
         assertRoundTrip(new TaskStatus("t-100", "workers-1", TaskStatus.FAILED, "OOM"));
         assertRoundTrip(new TaskCancel("t-100", "upstream failed"));
+        // 评审 P3：RegisterResponse 此前不在往返枚举（8 缺 1），其编解码仅由
+        // FrameConnection 交错用例间接走通——补上显式钉住（含类型名映射）
+        assertRoundTrip(new RegisterResponse(true, null));
+        assertRoundTrip(new RegisterResponse(false, "server full"));
     }
 
     private void assertRoundTrip(DuoMessage original) {

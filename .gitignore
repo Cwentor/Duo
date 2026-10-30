@@ -24,3 +24,8 @@ replay_pid*.log
 
 # brainstorming visual companion sessions
 .superpowers/
+
+# 评审 P3（2026-10-30）：serve 缺省 --library-dir ./duo-console-library 会在 CWD 创建目录；
+# JVM 堆转储与 hs_err/replay 同属本机排障产物
+duo-console-library/
+*.hprof
