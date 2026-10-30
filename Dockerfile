@@ -23,7 +23,11 @@ COPY console-ui/ ./
 RUN npm run build
 
 # ---- ② Maven reactor + 运行时依赖收敛 ----
-FROM eclipse-temurin:21-jdk-jammy AS build
+# 用自带 Maven 的基础镜像直调 mvn，而非 ./mvnw：wrapper 会在容器内下载 Maven 发行包，
+# 在经代理/镜像源的受限网络下 distributionSha256Sum（A6 供应链校验，宿主侧实测通过）
+# 会因下载通道被改写而拒装——校验和的价值正是"宁可构建失败"，容器内因此直接用
+# 基础镜像钉死的 Maven（版本由镜像 tag 保证），宿主侧 wrapper 校验不受影响。
+FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /repo
 # 先拷 pom 与 wrapper：依赖不变时 Docker 层缓存直接命中
 COPY pom.xml mvnw ./
@@ -36,7 +40,7 @@ COPY duo-sim-embedded/pom.xml duo-sim-embedded/
 COPY duo-sim-junit/pom.xml duo-sim-junit/
 COPY duo-sim-control/pom.xml duo-sim-control/
 COPY duo-sim-examples/pom.xml duo-sim-examples/
-RUN ./mvnw -B -q dependency:go-offline || true
+RUN mvn -B -q dependency:go-offline || true
 COPY duo-sim-protocol duo-sim-protocol
 COPY duo-sim-kernel duo-sim-kernel
 COPY duo-sim-scenario duo-sim-scenario
@@ -51,7 +55,7 @@ COPY --from=frontend /src/duo-sim-control/target/classes/console duo-sim-control
 # 但 copy-dependencies 不含 examples **自身**的 artifact——SCHEDULER/REAL 档的
 # DemoSchedulerProvider 只在 examples jar 里（worker-crash-failover 模板依赖它），
 # 故再把全部模块 jar 显式拷入（实测缺失时 validate 报 no implementation registered for SCHEDULER/REAL）。
-RUN ./mvnw -B -DskipTests package dependency:copy-dependencies -DoutputDirectory=/repo/libs \
+RUN mvn -B -DskipTests package dependency:copy-dependencies -DoutputDirectory=/repo/libs \
     && cp duo-sim-*/target/duo-sim-*.jar /repo/libs/
 
 # ---- ③ 运行时 ----

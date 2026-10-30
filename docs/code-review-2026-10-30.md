@@ -230,6 +230,55 @@ UI 小问题（P3）：IDLE 态连接指示显示"● 连接断开"——服务�
 
 ---
 
+## 8. 修复落地记录（2026-10-30 同日完成，全部分支内提交）
+
+报告 §7 的三批建议当日全部落地，另有两个部署链路收尾项。逐提交对照：
+
+| 提交 | 对应发现 | 内容 |
+| --- | --- | --- |
+| `aab5198` | T1(P1) | statusExposesWarnings 假覆盖修复：warnings() 合并引擎结果告警（契约真正落地）+ 真实告警断言 |
+| `3d6d02b` | T2(P1) | 删前端 smoke 恒真用例 + vue-tsc 门禁入 CI；首跑抓出 6 处类型错误（含 @click 直传把 PointerEvent 当 replacing 实参、drag-stop 布局保存失效 2 个真 bug） |
+| `6aadd99` | A1(P1) | SUT 启动失败回滚已启动依赖（manager.abandon + sim.sut-start-rollback 一级事件）+ 回归守卫 |
+| `d086719` | R1(P1) | H2/PG 计量层抽 JdbcStoreSupport 共享骨架（差异经 5 钩子如实声明） |
+| `151fe85` | F1(P2) | FaultDiagnostics 配对 dispatch 失败事件——幽灵链消除 + 3 条合成事件用例 |
+| `62dc0b0` | F2(P2) | DemoScheduler dag-terminal CAS 收敛单点 + FailoverAcceptance 基数守卫 |
+| `a9f5e1d` | R3+R4(P2) | DispatchPump + SchedulerFacts 共享件（泵循环/事实监听器下沉，两档改接） |
+| `d1702fe` | R9(P2) | FrameCodec.parseHeader 帧头守门人单点 |
+| `279578e` | R14/R15/R13(P2) | ComponentAddress.parse 与 FaultAction.isLifecycle 单点化（校验器收严为解析期报错）+ asMap 去重 |
+| `c14429f` | R10(P2) | defaultImpl 注册期交叉校验——接入即抓出第 3 处漂移（测试夹具），三处全修 |
+| `83395f2` | R2(P2) | 删 ZkBackedRegistry 只写不读的 endpoints 死 Map |
+| `7e2648a` | R16(P2/P3) | inject/clear 共享管道（clear 对齐 unknown target→404）+ 显式判空替代 NPE 映射 + 可读态守卫单点 |
+| `3962239` | A2(P2) | ScenarioHost.inject/clear 锁内快照 |
+| `fab23c5` | A4(P2) | stopAll 停止失败可见化（warn 双写 + 启动回滚消息并入） |
+| `b0b9bee` | A5(P2) | duo-inject-demo.sh 自生成一次性 --token-file |
+| `4f0f410` | A6(P2) | Maven Wrapper distributionSha256Sum（官方产物实测哈希；清缓存强制重下验证生效） |
+| `00fcb51` | T3(P2) | 状态机拒绝语义去重（删 3 条严格子集用例） |
+| `fb79853` | A3(P2) | 前端事件流封顶 5000 + 本机截断计数可见（§12） |
+| `2b1d654` | P3 批 | 死常量/过时注释/死配置/TimelineScheduler 防御性收敛 |
+| `a04ee17` | P3 批 | DuoCli 预算单点/.gitignore/RegisterResponse 往返/EventProjections 单测 3 条 |
+| `ebbd53e` | P3 批 | 前端 request 非JSON容错+30s 超时、IDLE 态连接指示三态 |
+| 收尾提交 | 收尾 | Dockerfile 构建段改 maven 基础镜像直调 mvn（见下）+ README 数字回填 + 本节 |
+
+**收尾实测（全量取证）**：
+
+- 全量回归 `./mvnw -o -B test`：protocol 12 / kernel 94 / scenario 62 / components 129 /
+  embedded 57 / junit 0 / control 52 / examples 54（2 设计 skip）＝ **460 测 / 0 失败**；
+  embedded 因 Docker Desktop 守护进程中途退出该轮 10 条容器档 skip，daemon 恢复后
+  **单独补跑 57/0/0（PG 6/6 24s + ZK 4/4 10s 实跑）**——容器档证据在最终代码上闭合；
+- 依赖门禁 `-Dquality -DskipTests verify`：BUILD SUCCESS，8 个 jar 模块零未声明/零未使用；
+- 前端：Vitest 46/46、vue-tsc 零错误；
+- 容器：Dockerfile 构建段改 `maven:3.9-eclipse-temurin-21` 直调 `mvn`——A6 的发行包
+  校验和在容器内经代理下载时拒装（**校验和按设计工作**：下载通道被改写即宁可失败），
+  容器内因此不再依赖 wrapper 下载、由镜像 tag 钉死 Maven 版本，宿主侧校验不受影响；
+  新镜像（`32ac37dff070`）冒烟 **26/26 PASS（gaps=[]）+ 远程 Host 探针 200**。
+  ⚠️ 过程教训：镜像构建失败后 `docker run` 会静默用旧镜像——曾让一轮冒烟跑在 16 小时前
+  的镜像上，凭 BUILD_EXIT 才抓住；镜像新鲜度必须与冒烟结果一起核对。
+
+**遗留（不阻塞，台账）**：kernel/scenario 之外模块 README 的测试数（components 129、
+control 52）与 DEVELOPMENT.md §3.2 的 2026-10-01 快照表未逐格刷新（表带日期锚定属合法
+快照，本报告与 README 已给全量口径）；A3 的 `deriveInstanceFaults` 增量化与 M8 交付物 4
+（加速时钟评估）等既有台账项维持原状。
+
 ## 附录 A：三路审计原始清单
 
 > 以下为三个只读审计代理的完整产出（冗余/单测/全仓），主线对全部 P1 亲核后收录；P2/P3 由审计代理逐行比对出具，未逐条复跑。
