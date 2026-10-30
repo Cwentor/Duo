@@ -52,6 +52,9 @@ class ScenarioValidatorTest {
 
     static ComponentProvider provider(Contract c, Tier t, String name, boolean def,
                                       CapabilityMetadata m) {
+        // R10（评审 2026-10-30）：metadata.defaultImpl 与 isDefault() 双源——注册期交叉校验
+        // 会拒绝漂移。夹具统一在这里对齐（调用方只传 isDefault，元数据面自动跟随）。
+        CapabilityMetadata aligned = m.withDefault(def);
         return new ComponentProvider() {
             @Override public Contract contract() {
                 return c;
@@ -66,7 +69,7 @@ class ScenarioValidatorTest {
                 return def;
             }
             @Override public CapabilityMetadata metadata() {
-                return m;
+                return aligned;
             }
             @Override public VirtualComponent newComponent() {
                 return new RealStub();
