@@ -143,11 +143,25 @@ class RestControlServerTest {
 
         // DELETE 停止 → 200（异步收尾：立刻回状态，不阻塞在收尾上）
         assertEquals(200, request("DELETE", "/scenario", null).statusCode());
-        var stopped = request("GET", "/scenario/status", null);
-        assertEquals(200, stopped.statusCode());
-        assertTrue(stopped.body().contains("FINISHED") || stopped.body().contains("FAILED")
-                        || stopped.body().contains("RUNNING"),
-                () -> "after stop: " + stopped.body());
+        // 终态断言式等待（评审 2026-10-30 P3）：停止异步，刚 DELETE 短暂 RUNNING 属正常；
+        // 等 status 收敛到终态（FINISHED|FAILED）再断言——超时即失败，不接受 RUNNING 过关
+        String stopped = awaitTerminalState(10_000);
+        assertTrue(stopped.contains("FINISHED") || stopped.contains("FAILED"),
+                () -> "after stop (terminal wait): " + stopped);
+    }
+
+    /** 轮询 /scenario/status 直至终态（FINISHED/FAILED）；超时返回最后快照供断言报错。 */
+    private String awaitTerminalState(long timeoutMs) throws Exception {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        String last = "";
+        while (System.nanoTime() < deadline) {
+            last = request("GET", "/scenario/status", null).body();
+            if (last.contains("\"state\":\"FINISHED\"") || last.contains("\"state\":\"FAILED\"")) {
+                return last;
+            }
+            Thread.sleep(50);
+        }
+        return last;
     }
 
     @Test

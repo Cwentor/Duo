@@ -146,7 +146,7 @@ class ScenarioHostTest {
         Path f = writeScenario(tmp, longScenario);
         try (var host = new ScenarioHost()) {
             host.start(f);
-            Thread.sleep(500); // 让派发发生
+            awaitDispatchedFact(host, 30_000); // 断言式注入点（原 sleep(500) 盲等，评审 2026-10-30 P3）
             var action = new FaultAction(FaultAction.CRASH,
                     FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
                     Map.of(), null);
@@ -158,6 +158,26 @@ class ScenarioHostTest {
                             .anyMatch(e -> e.get("type").equals("sim.fault-injected")),
                     "injection must appear in the event stream");
         }
+    }
+
+    /**
+     * 断言式等待（照 examples 侧 {@code awaitInFlightTaskOnWorkers2} 先例）：夹具 SUT 的
+     * {@code sut.task-dispatched} 事实出现在事件流才返回——把「注入点＝派发已发生」从
+     * sleep 假设变成断言，超时报前提失败而非静默放过。
+     */
+    private static void awaitDispatchedFact(ScenarioHost host, long timeoutMs)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        while (System.nanoTime() < deadline) {
+            for (Map<String, Object> e : host.eventsSince(0)) {
+                if ("sut.task-dispatched".equals(e.get("type"))) {
+                    return;
+                }
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("no sut.task-dispatched fact within " + timeoutMs
+                + "ms — fixture SUT never reached its dispatch phase (inject precondition)");
     }
 
     @Test

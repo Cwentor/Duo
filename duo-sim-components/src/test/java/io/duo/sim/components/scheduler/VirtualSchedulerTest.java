@@ -258,7 +258,7 @@ class VirtualSchedulerTest {
      * {@code sut.task-rejected} 必须带上可诊断的三字段（拒绝方实例名 / 原始 detail / 拒绝次数），
      * 且**回滚不消耗重试额度**（{@code sut.task-retry} 不得出现、attempt 不得推进）。
      *
-     * <p>线上重派的存在性由现役用例 {@code rejectedTaskIsRedispatchedAfterLocalSlotRollback} 说明（原缺口用例名已废）；
+     * <p>线上重派的存在性由现役用例 {@code rejectedTaskIsRedispatchedAfterLocalSlotRollback} 说明；
      * 状态机层面的重派与额度语义由 {@code SchedulerStateMachineRejectionTest} 确定性覆盖。
      */
     @Test
@@ -293,7 +293,7 @@ class VirtualSchedulerTest {
      * **G10 修复守卫**（P1，本轮落地）：worker 对派发给出 {@code REJECTED} 后，调度侧必须把
      * 派发时的本地槽位预留**退还**，使被拒任务能继续被重派（受状态机的拒绝上限兜底）。
      *
-     * <p>修复前的实测症状（曾以缺口用例钉住）：实例只有 1 格容量时，{@link DispatchSelector}
+     * <p>修复前的实测症状：实例只有 1 格容量时，{@link DispatchSelector}
      * 的本地递减无人回滚 ⇒ {@code select()} 永远返回 null ⇒ 派发事实与拒绝事实**各只有 1 条**、
      * DAG 永不收敛。
      *
@@ -445,7 +445,7 @@ class VirtualSchedulerTest {
 
         // 2) 语义边界：回滚**不是**重试（不得发 sut.task-retry），且重派不消耗重试额度
         //    （若确实发生了重派，其 attempt 必须仍为 1；重派是否发生取决于槽位记账，
-        //     由缺口用例单独钉住，本用例不断言其发生性）
+        //     由守卫用例 {@code rejectedTaskIsRedispatchedAfterLocalSlotRollback} 单独钉住，本用例不断言其发生性）
         Thread.sleep(1_000);
         assertTrue(events.stream().noneMatch(e -> "sut.task-retry".equals(e.type())),
                 "拒绝回滚不等于重试：不得发 sut.task-retry");
