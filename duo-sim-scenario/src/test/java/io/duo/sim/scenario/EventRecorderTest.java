@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** T21 事件录制单测：落盘格式与回读等价。 */
@@ -40,17 +41,30 @@ class EventRecorderTest {
         assertEquals("t1", ((Map<?, ?>) back.get(1).get("payload")).get("taskId"));
     }
 
+    /**
+     * 评审 2026-10-30 A7：{@code flushIfCurrent} 必须带**写后复核**——世代判定与落盘之间存在
+     * 窗口，顶替方可能在检查之后接任。复核语义由本用例钉住：世代供应器第一次读（落盘前判定）
+     * 返回现任、第二次读（落盘后复核）返回已顶替 ⇒ 返回 false（显式告警），而非静默 true。
+     * 无调用方的危险 {@code close()}（绕过世代闸门）已随本修删除，原钉住该路径的用例一并移除。
+     */
     @Test
-    void closeFlushesIdempotently(@TempDir Path tmp) throws Exception {
-        Path file = tmp.resolve("events.jsonl");
+    void flushIfCurrentRechecksEpochAfterWrite(@TempDir Path tmp) {
+        Path file = tmp.resolve("recheck.jsonl");
         var recorder = EventRecorder.to(file);
         recorder.onEvent(Event.sim("sim.scenario-finished", "sc", Map.of()));
-        recorder.close();
-        recorder.close(); // 幂等：不重复写
-        assertEquals(1, Files.readAllLines(file).size());
-        // 关闭后的事件被忽略（不追加）
-        recorder.onEvent(Event.sim("sim.late", "sc", Map.of()));
-        recorder.flush();
+        var reads = new java.util.concurrent.atomic.AtomicLong();
+        boolean ok = recorder.flushIfCurrent(
+                () -> reads.incrementAndGet() <= 1 ? 1L : 2L, 1L);
+        assertEquals(2, reads.get(), "判定与落盘后复核各读一次世代");
+        assertFalse(ok, "写后复核发现已过期：必须显式失败（调用方告警），不得静默成功");
+    }
+
+    @Test
+    void flushIfCurrentWritesWhenCurrent(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("current.jsonl");
+        var recorder = EventRecorder.to(file);
+        recorder.onEvent(Event.sim("sim.scenario-started", "sc", Map.of()));
+        assertTrue(recorder.flushIfCurrent(() -> 7L, 7L), "现任世代落盘成功");
         assertEquals(1, Files.readAllLines(file).size());
     }
 
