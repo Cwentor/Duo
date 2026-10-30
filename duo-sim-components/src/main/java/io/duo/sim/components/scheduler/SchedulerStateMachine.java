@@ -275,29 +275,7 @@ public final class SchedulerStateMachine {
     }
 
     private static List<String> topoSort(Map<String, List<String>> dag) {
-        List<String> out = new ArrayList<>();
-        var done = new java.util.LinkedHashSet<String>();
-        var visiting = new java.util.LinkedHashSet<String>();
-        for (var name : dag.keySet()) {
-            visit(name, dag, done, visiting, out);
-        }
-        return out;
-    }
-
-    private static void visit(String name, Map<String, List<String>> dag,
-                              java.util.Set<String> done, java.util.Set<String> visiting,
-                              List<String> out) {
-        if (done.contains(name)) {
-            return;
-        }
-        if (!visiting.add(name)) {
-            throw new IllegalArgumentException("DAG cycle at " + name);
-        }
-        for (String d : dag.getOrDefault(name, List.of())) {
-            visit(d, dag, done, visiting, out);
-        }
-        visiting.remove(name);
-        done.add(name);
-        out.add(name);
+        return io.duo.sim.kernel.core.Graphs.topoOrder(dag.keySet(), dag,
+                name -> new IllegalArgumentException("DAG cycle at " + name));
     }
 }
