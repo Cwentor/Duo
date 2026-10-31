@@ -138,3 +138,42 @@ jobs:
           path: |
             duo-sim-examples/build/scale/*.json
           if-no-files-found: error
+
+  supply-chain:
+    name: supply chain (nightly image scan)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45   # 缺省 360 分钟挂死面收口（审计 N4）
+    # 2026-10-31 审计 P2-2：依赖门禁（-Dquality）只查 unused/undeclared，不查 CVE。
+    # 与 image.yml 分工（赘余审查 R2）：nightly 镜像构建+扫描独家在本 job，无双构建。
+    # trivy **报告制**：exit-code 0 只出报告，先取 1–2 周基线，
+    # 再收严为 HIGH/CRITICAL fail + 忽略清单（收严另立任务，一次提交一件事）。
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build image
+        run: docker build -t duo-sim:nightly .
+      - name: trivy scan (HIGH/CRITICAL, report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0（2026-10-31 ls-remote 实取；tag 对象 a9c7b0f 解引用即本 SHA）
+        with:
+          scan-type: image
+          image-ref: duo-sim:nightly
+          format: json
+          output: trivy-report.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+      - name: summary (must be visible)
+        if: always()
+        run: |
+          if [ -f trivy-report.json ]; then
+            echo "HIGH/CRITICAL findings: $(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)"
+          else
+            echo "::error::trivy-report.json missing — scan did not run"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          if-no-files-found: error
