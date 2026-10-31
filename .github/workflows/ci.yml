@@ -45,7 +45,7 @@ jobs:
           cache: maven
       # M10 计划二：console-ui 前端（Node 仅构建期）。先 build 再 mvnw——
       # maven-resources 缺省不覆盖更新的目标文件，SPA 产物不会被占位页反冲。
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
