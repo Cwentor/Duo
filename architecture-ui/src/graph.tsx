@@ -142,7 +142,7 @@ export const initialNodes: Node[] = [
   { id: 'spi', type: 'card', position: { x: 1820, y: 10 }, data: {
     title: '组件 SPI', module: 'kernel',
     classes: ['VirtualComponent', 'ComponentProvider', 'ComponentContext'],
-    desc: '生命周期 init/start/stop/restart；8 契约接口定义必发事件与档位语义差异（如 flap 后快照重放 vs 会话真实丢失）。',
+    desc: '生命周期 init/start/stop/restart；Contract 枚举 8 角色，契约接口定义必发事件与档位语义差异（如 flap 后快照重放 vs 会话真实丢失）。',
   } },
   { id: 'assertions', type: 'card', position: { x: 1580, y: 250 }, data: {
     title: '断言内核', module: 'kernel',
@@ -159,7 +159,7 @@ export const initialNodes: Node[] = [
   { id: 's-tier', type: 'section', position: { x: 280, y: 560 }, data: { label: '契约实现：四档 × 线协议' }, style: { width: 2050, height: 210 }, draggable: false, selectable: false },
   { id: 'virtual', type: 'card', position: { x: 300, y: 620 }, data: {
     title: 'virtual 档', module: 'virtual',
-    classes: ['VirtualWorker / Registry / Scheduler', 'VirtualEngine / Filestore', 'MessageBroker / ResourceManager'],
+    classes: ['VirtualWorker / Registry / Scheduler', 'VirtualEngine / Filestore', 'VirtualMessageBroker / VirtualResourceManager'],
     desc: '进程内状态机与行为模型（BehaviorProfile 剧本）；故障动作 freeze/slow/resource-exhaust/task-kill/registry-flap 全支持。',
     doc: { label: 'components README', url: GH + 'duo-sim-components/README.md' },
   } },
@@ -172,7 +172,7 @@ export const initialNodes: Node[] = [
   { id: 'container', type: 'card', position: { x: 780, y: 620 }, data: {
     title: 'container 档', module: 'container',
     classes: ['ZookeeperContainerRegistry', 'PostgresContainerStore'],
-    desc: 'Testcontainers 按需拉起真 ZK / 真 PostgreSQL（CI container job 断言 skip=0）；不支持 flap/restart，校验期显式拒绝。',
+    desc: 'Testcontainers 按需拉起真 ZK / 真 PostgreSQL（CI container job 断言 skip=0）；不支持 flap/restart——实例级守卫运行期显式拒绝（restart 防端口重映射挂起）。',
   } },
   { id: 'real', type: 'card', position: { x: 1020, y: 620 }, data: {
     title: 'real 档 · SUT', module: 'real', sut: true,
@@ -205,13 +205,13 @@ export const initialNodes: Node[] = [
   } },
   { id: 'cli', type: 'card', position: { x: 500, y: 1000 }, data: {
     title: 'CLI', module: 'control',
-    classes: ['DuoCli：run / serve / inject', 'status / events / assert / diagnose'],
+    classes: ['DuoCli：run / serve / stop / inject', 'status / events / metrics / assert', 'topology / diagnose'],
     desc: '同进程直连与 REST 客户端双模式；退出码即结论，供脚本化验收与 CI 使用。',
   } },
   { id: 'metrics', type: 'card', position: { x: 730, y: 890 }, data: {
     title: '指标', module: 'control',
     classes: ['MetricsCollector（/metrics）'],
-    desc: '从事件流与组件状态读数的薄层（19 指标族）；_total 计数器按游标单调推进——不丢、不重。',
+    desc: '从事件流与组件状态读数的薄层（18 指标族）；_total 计数器按游标单调推进——不丢、不重。',
     doc: { label: 'METRICS.md', url: GH + 'docs/METRICS.md' },
   } },
   { id: 'diag', type: 'card', position: { x: 960, y: 890 }, data: {

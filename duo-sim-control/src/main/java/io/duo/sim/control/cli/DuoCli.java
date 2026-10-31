@@ -20,7 +20,7 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * CLI 主类（M3 T34）：子命令
- * {@code run / serve / stop / inject / status / events / assert / topology / metrics / help}。
+ * {@code run / serve / stop / inject / status / events / assert / topology / metrics / diagnose / help}。
  *
  * <p>两种模式（计划 D2）：
  * <ul>
