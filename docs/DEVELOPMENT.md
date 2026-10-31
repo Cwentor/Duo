@@ -162,6 +162,9 @@ curl -s http://127.0.0.1:8080/health     # 免认证活性探针
 # 控制台：http://127.0.0.1:8080/（令牌页输入 DUO_TOKEN 值）
 ```
 
+容器就绪后可跑 26 项检查的 API 冒烟（G-W2 等价序列）：
+`BASE=http://127.0.0.1:8080 DUO_TOKEN=<T> bash scripts/duo-smoke-docker.sh`
+
 - **监听面**：镜像 ENTRYPOINT 固化 `--bind 0.0.0.0`（容器内必须，否则端口映射不通）；
   隔离边界是容器网络命名空间，鉴权仍由 bearer token 承担。宿主机直跑 `serve`
   **缺省仍绑 127.0.0.1**，需要局域网访问时显式 `--bind <addr>`（DuoCli serve 新选项）。

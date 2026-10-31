@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 容器化调度链路冒烟（评审 2026-10-30）——对运行中的 duo-sim 容器执行 G-W2 等价 API 序列。
-# 用法：BASE=http://127.0.0.1:8080 DUO_TOKEN=<T> bash build/smoke-docker.sh
+# 用法：BASE=http://127.0.0.1:8080 DUO_TOKEN=<T> bash scripts/duo-smoke-docker.sh
 set -euo pipefail
 
 BASE="${BASE:-http://127.0.0.1:8080}"
