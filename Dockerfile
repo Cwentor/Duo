@@ -59,7 +59,7 @@ RUN mvn -B -DskipTests package dependency:copy-dependencies -DoutputDirectory=/r
     && cp duo-sim-*/target/duo-sim-*.jar /repo/libs/
 
 # ---- ③ 运行时 ----
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:22-jre-jammy
 WORKDIR /app
 COPY --from=build /repo/libs libs/
 # 非 root 运行（评审 2026-10-30）：控制面是执行面（拉进程/写盘），root 会放大任何注入/校验缺陷的后果。
