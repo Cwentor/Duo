@@ -376,7 +376,7 @@ external 就绪判定不稳（→ 探针可配 + 明确超时归启动失败，�
 
 | 交付物 | 状态 | 取证 |
 | --- | --- | --- |
-| 1 Prometheus 指标导出 | ✅ | `MetricsCollector`（`duo-sim-control`）→ `GET /metrics`（`text/plain; version=0.0.4`）+ `duo metrics`；19 个指标族（`duo_up`/`duo_scenario_running`/`duo_events_total`/`duo_events_by_type_total`/`duo_injections_total`/`duo_injections_failed_total`/`duo_heartbeat_events_total`/`duo_assertions_*`/`duo_components_*`/`duo_endpoints_online` …）；`MetricsEndpointAcceptanceTest` 2 例（含暴露格式结构校验：每个样本都有 HELP/TYPE 且值可解析为 double） |
+| 1 Prometheus 指标导出 | ✅ | `MetricsCollector`（`duo-sim-control`）→ `GET /metrics`（`text/plain; version=0.0.4`）+ `duo metrics`；18 个指标族（`duo_up`/`duo_scenario_running`/`duo_events_total`/`duo_events_by_type_total`/`duo_injections_total`/`duo_injections_failed_total`/`duo_heartbeat_events_total`/`duo_assertions_*`/`duo_components_*`/`duo_endpoints_online` …）；`MetricsEndpointAcceptanceTest` 2 例（含暴露格式结构校验：每个样本都有 HELP/TYPE 且值可解析为 double） |
 | 2 logback 配置 + 结构化日志 | ✅ | 生产档 `duo-sim-examples/src/main/resources/logback.xml`（控制台可读 + 第三方降噪 + 可选 JSON 出口 `-Dduo.log.json=INFO`）、测试档 `logback-test.xml`；依赖侧钉住 `logback-classic/core` 1.5.16（此前 classpath 上只有 `logback-core:1.2.13` 且无绑定）；`FaultCausalChainLoggingTest` 2 例门禁（含"配置不得再引入 logback 条件块"的回归护栏） |
 | 3 单命令因果链导出 | ✅ | `FaultDiagnostics` + `duo diagnose [--url X] [--since N]`：四段结构化（注入 / 组件反应 / SUT 事实按类型归并 / 断言明细），断链以 `gaps` 显式报出且退出码 1；`FaultDiagnosticsAcceptanceTest` 1 例（链路完整性、归并"不丢不重"、CLI 退出码、拒绝路径不静默） |
 | 4 加速时钟评估 | ⏸ 未触发 | 触发条件为"出现小时级长稳场景且目标档位为 virtual"，当前场景集最长 60s，评估无输入（§17 开放问题 2 保持开放） |
@@ -524,7 +524,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | `docs/SCENARIO-DSL.md` | DSL 参考：字段全集、校验规则 1–8、行为剧本、时间线动作与实现状态、断言语义、组件 config 键、**现状与设计偏差**、报错速查 |
 | `docs/DEVELOPMENT.md` | 开发指南：环境、命令、测试分层与门控、**五类扩展点操作步骤**、依赖纪律、编码约定、工程债、排查手册 |
 | `docs/ROADMAP.md`（本文） | 目标达成度盘点、差距清单 G1–G11、M5–M8 阶段计划、优先级、决策点、达成判定清单 |
-| `docs/METRICS.md` | `/metrics` 指标口径（19 个指标族的语义、刷新时机、已知边界与后续可扩充项） |
+| `docs/METRICS.md` | `/metrics` 指标口径（18 个指标族的语义、刷新时机、已知边界与后续可扩充项） |
 | `docs/DECISIONS.md` | 决策台账 D1–D9：决定/理由/触发条件/落点 + 决策→交付物映射表 + 修订记录 |
 | `docs/superpowers/plans/m7-quality-gate-baseline.md` | 依赖门禁的**基线取证**：7 类告警逐条原文 + "哪几条是真修复、哪几条是有意保留"的取舍 |
 | 8 份模块 `README.md` | `duo-sim-{protocol,kernel,scenario,components,embedded,junit,control,examples}/README.md`：各模块职责、依赖、关键类、测试、踩坑 |
@@ -658,7 +658,7 @@ D9 启动失败即销毁子进程（与「场景结束不杀进程」不冲突�
 | 项 | 结果 |
 | --- | --- |
 | 拍板 | 沿用 D4：**零依赖手写** `/metrics`，不引 Prometheus 客户端；日志后端固定 logback（版本已在父 POM 管理）；诊断链复用既有事件流，不新增内核改动（§10「控制面零内核改动」延续） |
-| M8-1 指标导出（G6 ① ✅） | `MetricsCollector`（`duo-sim-control/metrics`）：以游标消费 `ScenarioHost` 事件流快照，`/metrics` 输出 Prometheus 文本格式（`text/plain; version=0.0.4`）；19 个指标族含 `duo_up`、`duo_scenario_running`、`duo_events_total`、`duo_events_by_type_total{type=…}`、`duo_injections_total`/`_failed_total`、`duo_heartbeat_events_total`、`duo_assertions_passed/total/failed`、`duo_components_hosted/unhealthy`、`duo_component_instances`、`duo_endpoints_online`。`ScenarioHost` 新增 `eventsSnapshot()`（**不持监视器**——`awaitFinish` 是同步且长驻的，持锁会死等）；`RestControlServer` 新增 GET `/metrics`（非 GET → 405）与 `respondText(...)`；CLI 新增 `duo metrics [--url X] [--summary]` |
+| M8-1 指标导出（G6 ① ✅） | `MetricsCollector`（`duo-sim-control/metrics`）：以游标消费 `ScenarioHost` 事件流快照，`/metrics` 输出 Prometheus 文本格式（`text/plain; version=0.0.4`）；18 个指标族含 `duo_up`、`duo_scenario_running`、`duo_events_total`、`duo_events_by_type_total{type=…}`、`duo_injections_total`/`_failed_total`、`duo_heartbeat_events_total`、`duo_assertions_passed/total/failed`、`duo_components_hosted/unhealthy`、`duo_component_instances`、`duo_endpoints_online`。`ScenarioHost` 新增 `eventsSnapshot()`（**不持监视器**——`awaitFinish` 是同步且长驻的，持锁会死等）；`RestControlServer` 新增 GET `/metrics`（非 GET → 405）与 `respondText(...)`；CLI 新增 `duo metrics [--url X] [--summary]` |
 | M8-2 日志（G6 ② ✅） | 生产档 `logback.xml`：控制台可读（时间/级别/线程/logger）、第三方（ZK/Curator/Netty/Testcontainers/H2/K8s mock）显式降噪到 WARN、`-Dduo.log.level` / `-Dduo.log.json=INFO` 两个开关；测试档 `logback-test.xml`：root WARN 保持「秒级反馈回路」（T7），但 `io.duo.sim.fault` 与 `io.duo.sim.control.metrics` 保持 INFO（**降噪不得静默因果链**，§12）。**依赖侧实测修正**：此前 classpath 上只有 `logback-core:1.2.13`（curator-test → zookeeper 传递）**且无绑定**（日志被静默丢弃）；本轮在父 POM 管理 `logback-classic`(+`core`) 1.5.16，embedded 与 examples 显式声明，control 只引 `slf4j-api`（绑定由宿主决定） |
 | **踩到的坑（如实记录）** | logback 1.5.16 下**条件配置块（`<if>`/`<else>`）会抛 `EmptyStackException`**（`ElseModelHandler → peekModel` 的隐式栈），导致整个 `LoggerContext` 初始化失败——**日志后端直接不可用**。首版配置正是这么写的（生产档与测试档各一处），实测炸在用例里才被发现。修复＝改用 `${属性:-默认值}` 占位符 + 无条件双出口；并把它写成**回归护栏**（用例断言两份配置都不得再出现条件块），避免日后有人"顺手"加回去 |
 | M8-3 单命令因果链（交付物 3 ✅） | `FaultLog`（固定 logger `io.duo.sim.fault`，成功 INFO / 拒绝 WARN，`ScenarioHost.inject` 在两个分支都记日志——含"场景未运行"的早退分支）+ `FaultDiagnostics`（按窗口重建四段：注入 → 组件反应 → SUT 事实 → 断言）。**窗口语义**：终点取「下一次注入 / `sim.scenario-finished` / `sim.sut-exited`」，因为链只在场景收口后才完整。**SUT 事实按类型归并计数**：一次 20s 场景 586 条 SUT 事件归并为 8 类（`sut.heartbeat×564` 等），逐条打印等于没有输出。**断链显式化**：无 SUT 事实 ⇒ `gaps` 记录原因、渲染 `MISSING`、CLI 退出码 1（§12） |

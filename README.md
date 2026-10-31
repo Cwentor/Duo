@@ -268,7 +268,7 @@ duo diagnose --url http://127.0.0.1:<port>
 
 **断链会被显式报出**：注入之后没有任何 `sut.*` 事实 ⇒ 报告打 `MISSING` 并列出原因、
 退出码非 0（"注入下达了但被测对象没反应"是最需要被看见的情形）。
-指标口径（19 个指标族逐个口径 + 已知边界）见 [`docs/METRICS.md`](docs/METRICS.md)。
+指标口径（18 个指标族逐个口径 + 已知边界）见 [`docs/METRICS.md`](docs/METRICS.md)。
 
 ### 5.5 写一个场景测试（JUnit5）
 
@@ -331,7 +331,7 @@ class MyScenarioTest {
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 五次取证为绿**（最近一次 run `36115793273` 三作业全绿；本机无 Docker 时 10 条容器用例按设计 skip） |
 | 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（10 条容器档因本机无 Docker、1 条未开压测开关、1 条未开 `-Dduo.ds=true` 真实 SUT 演练门控——其常驻守卫 `DsFailoverDrillGuardTest` 无门控进常规回归；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
-| — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
+| — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（18 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
 | — Web 控制台（M10，D16 推翻「精美 Web 控制台」非目标） | ✅ 已达成 | Java 控制面 `/api/scenarios`（场景库 CRUD/fork/校验）、`/api/capabilities`、`/api/meta`、`/api/inject/clear`、`GET /diagnose`、`/events` 游标 `next`/`dropped`、SPA 静态托管（`/console/**`，CSP `default-src 'self'`）；`console-ui`（Vue3+TS+Vite，构建期 Node）三页＝令牌页/场景库/工作区（画布+属性面板+YAML 抽屉，编辑⇄运行双模式、注入面板、观测三 tab）；产物内嵌 `duo-sim-control` classpath，`duo serve` 同源托管。**内核/场景模块零改动**；Java 423 测 + 前端 Vitest 46 测全绿 |
 
 **一句话总结**：1/4/5/6/7/8 与观测面已达成；2/3 剩的是**广度**而非能力——
@@ -348,7 +348,7 @@ class MyScenarioTest {
 | [交互式架构图](https://cwentor.github.io/Duo/) | ReactFlow 交互画布（源码 [`architecture-ui/`](architecture-ui/README.md)）：点击节点聚焦（放大 + 语义护照 + 上下游高亮）、带箭头的三类连线语义；静态快照见 §3.1 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构详解：模块、SPI、契约与档位、接线规则、事件总线、SUT 适配面、控制面、线协议 |
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（最小场景走读 / 字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
-| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（19 个指标族的语义、刷新时机与已知边界） |
+| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（18 个指标族的语义、刷新时机与已知边界） |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 开发指南：环境、构建、测试分层、扩展点、约定、已知工程债 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单 G1–G11、阶段计划与验收口径 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：拍板记录（决定/理由/触发条件/落点）与修订记录 |

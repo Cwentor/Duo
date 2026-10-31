@@ -293,7 +293,7 @@ duo diagnose --url http://127.0.0.1:<port>
 **Broken chains are reported explicitly**: if an injection produces no `sut.*` facts at all ⇒ the
 report prints `MISSING` with the reasons and exits non-zero ("the injection was issued but the
 subject under test did not react" is precisely the situation that most needs to be seen).
-Metric semantics (all 19 metric families + known boundaries) are documented in
+Metric semantics (all 18 metric families + known boundaries) are documented in
 [`docs/METRICS.md`](docs/METRICS.md).
 
 ### 5.5 Write a Scenario Test (JUnit 5)
@@ -359,7 +359,7 @@ Tier gaps and the plan to close them: [Roadmap M5](docs/ROADMAP.md#m5--契约与
 | 6 Real feedback (real protocol ports) | ✅ achieved | the embedded tier exposes real ZK/JDBC/K8s ports; interactive contracts speak the Duo wire protocol (**the worker side is real protocol too**: `RealWorkerSut` registers/heartbeats/claims/reports over `FrameConnection`); the container tier adds real PostgreSQL + real ZooKeeper, **five evidenced green runs on the CI `container` job** (latest: run `36115793273`, all three jobs green; the 10 container cases skip by design when no Docker is present locally) |
 | 7 Second-level feedback loop (single JVM, zero Docker) | ✅ achieved | full regression **423 tests / 0 failures / 0 errors / 12 skips** (10 container-tier cases due to no local Docker, 1 stress switch off, 1 `-Dduo.ds=true` real-SUT drill gate off — its always-on guard `DsFailoverDrillGuardTest` runs ungated in the regular regression; `-Dduo.docker.enabled=false` turns "no Docker" into a fact rather than an accident) |
 | 8 CI-friendly (JUnit 5 + assertions + scenarios in version control) | ✅ achieved | extension + assertion libraries, standard Wrapper, three CI jobs (M7; remote continuously green), release artifacts (source/javadoc + CHANGELOG), and the **dependency quality gate (`-Dquality`, round 11, wired into CI)** |
-| — Observability (design §11, M8) | ✅ achieved | all three channels landed: event-stream recording (pre-existing) + logs (`logback.xml`/`logback-test.xml`, `io.duo.sim.fault` causal chain) + metrics (`/metrics`, 19 metric families); single-command causal-chain export via `duo diagnose` |
+| — Observability (design §11, M8) | ✅ achieved | all three channels landed: event-stream recording (pre-existing) + logs (`logback.xml`/`logback-test.xml`, `io.duo.sim.fault` causal chain) + metrics (`/metrics`, 18 metric families); single-command causal-chain export via `duo diagnose` |
 | — Web console (M10; D16 overturns the "polished Web console" non-goal) | ✅ achieved | Java control plane: `/api/scenarios` (scenario library CRUD/fork/validate), `/api/capabilities`, `/api/meta`, `/api/inject/clear`, `GET /diagnose`, `/events` cursor `next`/`dropped`, SPA static hosting (`/console/**`, CSP `default-src 'self'`); `console-ui` (Vue 3 + TS + Vite, Node build-time only) ships three pages — token/login, scenario library, workspace (canvas + property panel + YAML drawer, edit⇄run dual mode, injection panel, three observation tabs); artifacts are embedded into the `duo-sim-control` classpath and served same-origin by `duo serve`. **Zero kernel/scenario module changes**; Java 423 tests + frontend Vitest 46 tests all green |
 
 **One-sentence summary**: goals 1/4/5/6/7/8 and observability are achieved; what remains for 2/3 is
@@ -380,7 +380,7 @@ Full gap analysis and stage plans: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 | [`docs/README.md`](docs/README.md) | Repo-wide doc index and reading paths |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Architecture deep-dive: modules, SPI, contracts & tiers, wiring rules, event bus, SUT adapter surface, control plane, wire protocol |
 | [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | Scenario DSL reference (minimal-scenario walkthrough / full field set / validation rules 1–8 / assertion semantics / built-in component config keys) |
-| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` metric semantics (all 19 metric families: meaning, refresh timing, known boundaries) |
+| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` metric semantics (all 18 metric families: meaning, refresh timing, known boundaries) |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Development guide: environment, build, test layering, extension points, conventions, known engineering debt |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Roadmap: goal-achievement inventory, gap list G1–G11, stage plans and acceptance criteria |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Decision ledger: rulings (decision / rationale / trigger / landing point) and revision records |
