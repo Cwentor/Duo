@@ -24,6 +24,11 @@
 
 ### 新增
 
+- **CI/CD 链条补全（2026-10-31）**：`image` 独立 workflow（镜像构建 + 26 项 API 冒烟进门禁，
+  paths-ignore 短路 docs-only 提交）、nightly `supply-chain` job（trivy 扫 HIGH/CRITICAL，
+  报告制取基线）、dependabot 五生态（maven / 双 npm / github-actions / docker）、
+  触发面补 dev/review/feat、全部 job 加 `timeout-minutes`。
+
 - **M10 计划二：console-ui 前端（D16，2026-10-01）**：`console-ui/`（Vue3+TS+Vite，Node 仅构建期）。
   三页：令牌页（sessionStorage 会话，401 自动回登录且草稿不丢）、场景库（模板/用户库、fork、删除）、
   工作区（拓扑画布 @vue-flow + 属性面板 + YAML 抽屉双向同步——YAML 唯一事实来源、未动子树注释保留、

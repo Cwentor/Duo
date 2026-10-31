@@ -118,13 +118,20 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 > **`-pl <module>` 记得带 `-am`**：不带时该模块会解析 `~/.m2` 里**已安装的旧内核 jar**，
 > 改了内核源码却报「找不到符号」——这是本仓最容易踩的坑。
 
-### 2.0 CI（`.github/workflows/ci.yml`，M7）
+### 2.0 CI（`ci.yml` 三档 + `image.yml` 镜像门禁，M7 起）
 
 | job | 触发 | 内容 |
 | --- | --- | --- |
 | `regression` | push / PR | `./mvnw -B -Dduo.docker.enabled=false test`（确定性无 Docker 档）+ skip 汇总 |
 | `container` | push / PR | `-pl duo-sim-embedded -am test -Dtest='ZookeeperContainer*'`，并**断言 skip=0**（有 Docker 时不许静默跳过） |
 | `scale` | nightly / 手动 | `-Dduo.scale=true`，压测 JSON 落 `duo-sim-examples/build/scale/`（模块工作目录）并上传为 artifact，`if-no-files-found: error`（G8「规模数据可追溯」）；事件录制不归档（M-8，口径见 DECISIONS D14） |
+| `image`（独立 workflow `image.yml`） | push / PR | `docker build` + 起容器跑 `scripts/duo-smoke-docker.sh` 26 项 API 冒烟（G-W2 等价）——镜像可构建可运行进门禁；paths-ignore 短路 docs-only 提交（与 `.dockerignore` 排除面对账：docs/、`*.md`、architecture-ui、.github、LICENSE） |
+| `supply-chain` | nightly / 手动 | `docker build` + trivy 扫 HIGH/CRITICAL，**报告制**（`exit-code: 0`，artifact `trivy-report.json`）；2026-10-31 基线 27 条（集中 jackson 2.18.2），观察 1–2 周后另立任务收严为 fail 门禁 + 忽略清单 |
+
+触发面（push）：`[master, main, dev, 'review/**', 'feat/**']`（审计 P2-1——dev/review 分支推送即跑，
+门禁不再是 squash 合入后的事后验证）；全部 job 带 `timeout-minutes`（regression/container/
+image/supply-chain 45、scale 120，审计 N4）。dependabot 五生态周更（maven / console-ui /
+architecture-ui / github-actions / docker——基础镜像浮动 tag 的升级 PR 兜底，审计 N1）。
 
 skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用于容器档门禁）。
 
