@@ -14,7 +14,7 @@
 # 拒绝启动并打印原因——镜像不提供免鉴权捷径；场景库落在 VOLUME /data。
 
 # ---- ① 控制台 SPA ----
-FROM node:22-alpine AS frontend
+FROM node:25-alpine AS frontend
 WORKDIR /src/console-ui
 COPY console-ui/package.json console-ui/package-lock.json ./
 RUN npm ci
