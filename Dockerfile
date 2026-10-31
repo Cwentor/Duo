@@ -27,7 +27,7 @@ RUN npm run build
 # 在经代理/镜像源的受限网络下 distributionSha256Sum（A6 供应链校验，宿主侧实测通过）
 # 会因下载通道被改写而拒装——校验和的价值正是"宁可构建失败"，容器内因此直接用
 # 基础镜像钉死的 Maven（版本由镜像 tag 保证），宿主侧 wrapper 校验不受影响。
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /repo
 # 先拷 pom 与 wrapper：依赖不变时 Docker 层缓存直接命中
 COPY pom.xml mvnw ./
