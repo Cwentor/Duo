@@ -14,7 +14,10 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # 2026-10-31 审计 P2-1：原 [master, main] 使 dev/review 分支推送零 CI——
+    # 门禁退化成「squash 合入 master 后的事后验证」。补 dev/review/feat 三族；
+    # concurrency cancel-in-progress 已保证旧推送被新推送顶掉，不烧额度。
+    branches: [master, main, dev, 'review/**', 'feat/**']
   pull_request:
   workflow_dispatch:
   schedule:
