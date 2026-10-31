@@ -54,6 +54,14 @@ CP="$CP$DEPS"
 
 run_duo() { java $JAVA_IO_OPTS -cp "$CP" io.duo.sim.control.cli.DuoCli "$@"; }
 
+# 令牌必填（安全审计 C-1 整改后 serve 拒绝无令牌启动——评审 A5：本脚本此前没传令牌，
+# 干净环境下必以"serve 未就绪"空转 30s 收场）。演示自行生成一次性令牌落临时文件，
+# serve 与各 REST 客户端命令共用（--token-file）；trap 清理时一并删除。
+TOKEN_FILE="$(mktemp)"
+(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' 
+') > "$TOKEN_FILE"
+REST_AUTH=(--token-file "$TOKEN_FILE")
+
 echo
 echo "======== 演示 1/2：同进程模式（单命令热注入）========"
 echo "\$ duo run $SCENARIO --inject-after 3s \"crash workers[2]\" --wait"
@@ -66,9 +74,9 @@ echo "\$ duo serve $SCENARIO --port $PORT &"
 LOG="$(mktemp)"
 # 直接后台起 java（不经函数包装）——这样 $! 就是 JVM 的 PID，trap 能真正杀掉它；
 # 若包装成 run_duo &，$! 只是子 shell，java 会残留并占住端口。
-java $JAVA_IO_OPTS -cp "$CP" io.duo.sim.control.cli.DuoCli serve "$SCENARIO" --port "$PORT" >"$LOG" 2>&1 &
+java $JAVA_IO_OPTS -cp "$CP" io.duo.sim.control.cli.DuoCli serve "$SCENARIO" --port "$PORT" --token-file "$TOKEN_FILE" >"$LOG" 2>&1 &
 SERVE_PID=$!
-trap 'kill $SERVE_PID 2>/dev/null || true; wait $SERVE_PID 2>/dev/null || true; rm -f "$LOG"' EXIT
+trap 'kill $SERVE_PID 2>/dev/null || true; wait $SERVE_PID 2>/dev/null || true; rm -f "$LOG" "$TOKEN_FILE"' EXIT
 
 # 等待服务端就绪（打印 "listening on http://127.0.0.1:<port>"）
 for _ in $(seq 1 60); do
@@ -85,25 +93,25 @@ echo "服务端就绪：$URL"
 
 echo
 echo "\$ duo status --url $URL"
-run_duo status --url "$URL"
+run_duo status --url "$URL" "${REST_AUTH[@]}"
 
 echo
 echo "\$ duo topology --url $URL"
-run_duo topology --url "$URL"
+run_duo topology --url "$URL" "${REST_AUTH[@]}"
 
 echo
 echo "\$ duo inject crash workers[2] --url $URL   # 运行中热注入"
-run_duo inject crash "workers[2]" --url "$URL"
+run_duo inject crash "workers[2]" --url "$URL" "${REST_AUTH[@]}"
 
 echo
 echo "\$ duo events --since 0 --url $URL | grep -E 'fault-injected|task-retry' | head -5"
-run_duo events --since 0 --url "$URL" | grep -E 'fault-injected|task-retry' | head -5 || true
+run_duo events --since 0 --url "$URL" "${REST_AUTH[@]}" | grep -E 'fault-injected|task-retry' | head -5 || true
 
 echo
 echo "\$ 轮询 duo status --url $URL 直到 SUT 退出（DAG 终态）"
 ST=""
 for _ in $(seq 1 120); do
-    ST="$(run_duo status --url "$URL")"
+    ST="$(run_duo status --url "$URL" "${REST_AUTH[@]}")"
     case "$ST" in
         *'"state":"FINISHED"'*|*'"state":"FAILED"'*) break ;;
     esac
@@ -117,7 +125,7 @@ esac
 
 echo
 echo "\$ duo assert --url $URL                     # 断言结果（退出码即结论）"
-run_duo assert --url "$URL"
+run_duo assert --url "$URL" "${REST_AUTH[@]}"
 
 echo
 echo "======== 演练完成：两个模式的注入均成功且断言通过 ========"

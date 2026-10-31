@@ -157,7 +157,11 @@ export class ApiError extends Error {
 async function request(path: string, init?: RequestInit): Promise<any> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (session.token) headers['Authorization'] = `Bearer ${session.token}`
-  const resp = await fetch(path, { ...init, headers })
+  // 请求超时（评审 P3，2026-10-30）：服务端无请求时限、此前 fetch 也无——UI 请求可无限悬挂。
+  // 30s 与控制面"单请求时长预算"的注释口径一致；AbortSignal.timeout 缺失的环境降级为无超时。
+  const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+    ? AbortSignal.timeout(30_000) : undefined
+  const resp = await fetch(path, { ...init, headers, signal })
   if (resp.status === 401) {
     // 令牌失效：清会话回登录页（草稿在 localStorage，不随会话丢失——规格 §10）
     session.logout()
@@ -165,7 +169,16 @@ async function request(path: string, init?: RequestInit): Promise<any> {
     throw new ApiError(401, 'unauthorized')
   }
   const text = await resp.text()
-  const body = text ? JSON.parse(text) : null
+  let body: any = null
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      // 网关/反向代理插入的 HTML 错误页等非 JSON 响应：以 ApiError（含状态码与片段）
+      // 呈现，而不是裸 SyntaxError——错误提示要能定位到"服务端返回了什么"（评审 P3）
+      throw new ApiError(resp.status, `non-JSON response (HTTP ${resp.status}): ${text.slice(0, 120)}`)
+    }
+  }
   if (!resp.ok) {
     const msg = body?.error ?? (Array.isArray(body?.errors) ? body.errors.join('; ') : null)
       ?? `HTTP ${resp.status}`

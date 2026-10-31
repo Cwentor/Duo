@@ -82,10 +82,12 @@ public final class TimelineScheduler implements AutoCloseable {
             return;
         }
         String target = e.target();
-        var addr = parseTarget(target);
-        if (addr == null) {
+        io.duo.sim.kernel.api.FaultAction.ComponentAddress addr;
+        try {
+            addr = io.duo.sim.kernel.api.FaultAction.ComponentAddress.parse(target);
+        } catch (IllegalArgumentException ex) {
             result.recordInjectionFailure(e.action(), target,
-                    "unparseable target: " + target);
+                    "unparseable target: " + ex.getMessage());
             return;
         }
         Long durationMs = null;
@@ -96,8 +98,7 @@ public final class TimelineScheduler implements AutoCloseable {
                 result.recordWarning("timeline entry '" + e.action() + "': " + ex.getMessage());
             }
         }
-        boolean lifecycle = FaultAction.CRASH.equals(e.action())
-                || FaultAction.RESTART.equals(e.action());
+        boolean lifecycle = FaultAction.isLifecycle(e.action());
         if (durationMs != null && lifecycle) {
             result.recordWarning("action '" + e.action()
                     + "' is lifecycle — duration ignored (nothing to clear)");
@@ -111,48 +112,36 @@ public final class TimelineScheduler implements AutoCloseable {
             return;
         }
         if (durationMs != null) {
-            pending.add(ticker.schedule(() -> {
-                var c = runtime.clear(action);
-                if (!c.success()) {
-                    result.recordInjectionFailure(e.action(), target,
-                            "auto-clear failed: " + c.reason());
-                }
-            }, durationMs, TimeUnit.MILLISECONDS));
-        }
-    }
-
-    /** 解析 {@code componentId} 或 {@code componentId[N]}（索引 1 起，§7.2）。 */
-    static FaultAction.ComponentAddress parseTarget(String target) {
-        if (target == null || target.isBlank()) {
-            return null;
-        }
-        int bracket = target.indexOf('[');
-        if (bracket < 0) {
-            return FaultAction.ComponentAddress.of(
-                    new io.duo.sim.kernel.api.ComponentId(target.trim()));
-        }
-        if (!target.endsWith("]")) {
-            return null;
-        }
-        try {
-            int idx = Integer.parseInt(target.substring(bracket + 1, target.length() - 1));
-            if (idx < 1) {
-                return null;
+            try {
+                pending.add(ticker.schedule(() -> {
+                    var c = runtime.clear(action);
+                    if (!c.success()) {
+                        result.recordInjectionFailure(e.action(), target,
+                                "auto-clear failed: " + c.reason());
+                    }
+                }, durationMs, TimeUnit.MILLISECONDS));
+            } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                // 防御性收敛（评审 P3，2026-10-30）：close() 之后 ticker 已 shutdown，
+                // 此刻到达的 fire 若带 duration 会让 auto-clear 排程失败——显式记失败
+                // 而不是被 executor 静默吞掉（当前编排下 fire 由 ticker 线程自调，
+                // 与 close 竞态仅在场景终止窗口内可达，但"不静默"不区分可达性）。
+                result.recordInjectionFailure(e.action(), target,
+                        "timeline closed before auto-clear could be scheduled");
             }
-            return FaultAction.ComponentAddress.ofInstance(
-                    new io.duo.sim.kernel.api.ComponentId(target.substring(0, bracket)), idx);
-        } catch (RuntimeException e) {
-            return null;
         }
     }
 
-    /** 停止调度（场景结束/关闭时）；已排定未触发的动作被取消——场景终止后不再注入。 */
+    /**
+     * 停止调度（场景结束/关闭时）；已排定未触发的动作被取消——场景终止后不再注入。
+     * 不复位 {@code started}（评审 P3，2026-10-30）：复位会让已关闭的调度器可被
+     * {@code start()} 重新 CAS 拉起并**重放全部时间线**（防御性收敛，当前编排下
+     * TimelineScheduler 随引擎一次性使用，不构成可达路径）。
+     */
     @Override
     public void close() {
         pending.forEach(f -> f.cancel(false));
         pending.clear();
         ticker.shutdownNow();
-        started.set(false);
     }
 
     /** 已排定未触发动作计数（测试用）。 */

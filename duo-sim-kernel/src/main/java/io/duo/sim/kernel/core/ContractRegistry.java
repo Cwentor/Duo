@@ -91,6 +91,18 @@ public final class ContractRegistry {
                 throw new RegistrationException("multiple default implementations for "
                         + e.getKey() + " (found " + defaults + ")");
             }
+            // R10（评审 2026-10-30）：isDefault() 与 metadata().defaultImpl() 声明同一事实，
+            // 此前双源无校验、两个 worker Provider 已实际漂移（duoPort 工厂缺省写 false 而
+            // isDefault()=true，只因主代码只读 isDefault() 而无功能后果）。交叉校验让漂移
+            // 在注册期显式失败——单一权威是 isDefault()，metadata 面必须与其一致。
+            for (ComponentProvider p : e.getValue()) {
+                if (p.metadata().defaultImpl() != p.isDefault()) {
+                    throw new RegistrationException("default implementation flag mismatch for "
+                            + e.getKey() + "/" + p.implName() + ": isDefault()=" + p.isDefault()
+                            + " but metadata.defaultImpl=" + p.metadata().defaultImpl()
+                            + " (isDefault() is authoritative; fix the metadata)");
+                }
+            }
         }
     }
 

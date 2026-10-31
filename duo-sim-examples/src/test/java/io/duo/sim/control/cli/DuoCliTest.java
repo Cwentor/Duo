@@ -3,6 +3,7 @@ package io.duo.sim.control.cli;
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.rest.RestControlServer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -218,10 +219,9 @@ class DuoCliTest {
 
     /** serve 的认证材料解析：没有令牌就必须拒绝启动（C-1 的根因是"默认可用"）。 */
     @Test
+    @DisabledIfEnvironmentVariable(named = "DUO_TOKEN", matches = ".+",
+            disabledReason = "宿主机已设 DUO_TOKEN 时本用例前提不成立（skip 必须可见，评审 2026-10-30 P3）")
     void serveRefusesToStartWithoutTokenWhenEnvAbsent() throws Exception {
-        if (System.getenv("DUO_TOKEN") != null) {
-            return; // 环境里已有令牌时不适用（避免测试依赖宿主机环境）
-        }
         Path f = Files.createTempFile("duo-cli-serve", ".yaml");
         Files.writeString(f, INJECT_AFTER, StandardCharsets.UTF_8);
         assertEquals(1, DuoCli.run("serve", f.toString(), "--port", "0"),
@@ -230,10 +230,9 @@ class DuoCliTest {
 
     /** M10 计划一 Task 9：无场景参数的 serve 同样必须显式提供认证材料（C-1 口径不因空载启动松动）。 */
     @Test
+    @DisabledIfEnvironmentVariable(named = "DUO_TOKEN", matches = ".+",
+            disabledReason = "宿主机已设 DUO_TOKEN 时本用例前提不成立（skip 必须可见）")
     void serveWithoutScenarioStillRequiresToken() throws Exception {
-        if (System.getenv("DUO_TOKEN") != null) {
-            return; // 环境里已有令牌时不适用（避免测试依赖宿主机环境）
-        }
         assertEquals(1, DuoCli.run("serve", "--port", "0"),
                 "serve without yaml still refuses to start without a token");
     }

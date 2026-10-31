@@ -21,4 +21,15 @@ public final class TaskBehaviors {
                 entry.exceptionType(), entry.logLines(),
                 entry.failAtPercent(), entry.neverReport(), entry.progressMode());
     }
+
+    /**
+     * 假日志占位符展开（评审 2026-10-30 R8）：{@code logLines} 的占位符语法是剧本契约，
+     * 此前 {@code {task}}/{@code {taskId}} 的内联 replace 在 VirtualWorker / VirtualEngine /
+     * DemoRealWorker / RealWorkerSut 四处逐一重复（R8 实证 ×4）——扩一个占位符只改这里。
+     * 落流事件名与载荷（sim.worker-log / sim.engine-task-log / sut.worker-log）是各调用方
+     * 的异构面，不在此收敛。
+     */
+    public static String expandLogLine(String line, String taskName, String taskId) {
+        return line.replace("{task}", taskName).replace("{taskId}", taskId);
+    }
 }

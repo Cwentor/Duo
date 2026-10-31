@@ -54,36 +54,53 @@ public final class FrameCodec {
     public record Frame(byte version, byte[] payload) {
     }
 
+    /** 帧头解析结果（版本字节 + 载荷长度）。 */
+    public record Header(byte version, int payloadLength) {
+    }
+
+    /**
+     * 只解析 {@link #HEADER_LENGTH} 字节帧头（流式读取用：{@code FrameConnection.readFrame}
+     * 先读头、再按载荷长度读体，无法直接走 {@link #decodeFrame}——此前把魔数/版本/长度
+     * 校验在两处各抄一份，帧不变式出现两个守门人（评审 R9，2026-10-30），自此单点）。
+     *
+     * @throws ProtocolViolationException 魔数/版本/长度非法
+     */
+    public static Header parseHeader(byte[] header) {
+        if (header == null || header.length < HEADER_LENGTH) {
+            throw new ProtocolViolationException("frame shorter than header: "
+                    + (header == null ? 0 : header.length));
+        }
+        int magic = ((header[0] & 0xFF) << 24) | ((header[1] & 0xFF) << 16)
+                | ((header[2] & 0xFF) << 8) | (header[3] & 0xFF);
+        if (magic != MAGIC) {
+            throw new ProtocolViolationException("bad magic: 0x" + Integer.toHexString(magic));
+        }
+        byte version = header[4];
+        if (version != VERSION) {
+            throw new ProtocolViolationException("unsupported version: " + version);
+        }
+        int len = ((header[5] & 0xFF) << 24) | ((header[6] & 0xFF) << 16)
+                | ((header[7] & 0xFF) << 8) | (header[8] & 0xFF);
+        if (len <= 0 || len > MAX_PAYLOAD_LENGTH) {
+            throw new ProtocolViolationException("bad payload length: " + len);
+        }
+        return new Header(version, len);
+    }
+
     /**
      * 解析一帧（调用方保证 {@code bytes} 恰好是一个完整帧）。
      *
      * @throws ProtocolViolationException 魔数/版本/长度非法
      */
     public static Frame decodeFrame(byte[] bytes) {
-        if (bytes == null || bytes.length < HEADER_LENGTH) {
-            throw new ProtocolViolationException("frame shorter than header: "
-                    + (bytes == null ? 0 : bytes.length));
-        }
-        int magic = ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16)
-                | ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
-        if (magic != MAGIC) {
-            throw new ProtocolViolationException("bad magic: 0x" + Integer.toHexString(magic));
-        }
-        byte version = bytes[4];
-        if (version != VERSION) {
-            throw new ProtocolViolationException("unsupported version: " + version);
-        }
-        int len = ((bytes[5] & 0xFF) << 24) | ((bytes[6] & 0xFF) << 16)
-                | ((bytes[7] & 0xFF) << 8) | (bytes[8] & 0xFF);
-        if (len <= 0 || len > MAX_PAYLOAD_LENGTH) {
-            throw new ProtocolViolationException("bad payload length: " + len);
-        }
+        Header h = parseHeader(bytes);
+        int len = h.payloadLength();
         if (bytes.length != HEADER_LENGTH + len) {
             throw new ProtocolViolationException("frame length mismatch: expected "
                     + (HEADER_LENGTH + len) + ", got " + bytes.length);
         }
         byte[] payload = new byte[len];
         System.arraycopy(bytes, HEADER_LENGTH, payload, 0, len);
-        return new Frame(version, payload);
+        return new Frame(h.version(), payload);
     }
 }

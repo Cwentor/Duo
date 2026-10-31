@@ -1,6 +1,14 @@
 import { reactive } from 'vue'
 import { api, EventsPage, ScenarioEvent, StatusInfo, TopologyNode } from '../api/client'
 
+/**
+ * 事件流内存封顶（评审 A3，2026-10-30）：服务端事件流有界（MAX_BUFFERED_EVENTS，
+ * 丢弃经 dropped 可见），前端 store 此前无界累积——长跑场景的高频事件让内存与
+ * deriveInstanceFaults 的全量扫描线性蠕升。截断数计入 truncatedLocal 并随 dropped
+ * 一并展示（§12：丢弃必须可见，本机截断也不例外）。
+ */
+export const MAX_BUFFERED_EVENTS = 5000
+
 /** 轮询退避：正常 1s，连续失败 1s→2s→5s 封顶（规格 §10）。 */
 export function backoffMs(failures: number): number {
   return failures <= 0 ? 1000 : failures === 1 ? 2000 : 5000
@@ -44,6 +52,8 @@ interface RuntimeStore {
   next: number
   /** 服务端累计丢弃数。 */
   dropped: number
+  /** 本机内存截断数（超过 MAX_BUFFERED_EVENTS 的事件条数；reset 归零）。 */
+  truncatedLocal: number
   /** serve 是否可达（三路全空才算断，见 tick）。 */
   connected: boolean
   /** POST /scenario 启动并立即开轮询。 */
@@ -69,6 +79,7 @@ export const runtime = reactive<RuntimeStore>({
   events: [],
   next: 0,
   dropped: 0,
+  truncatedLocal: 0,
   connected: false,
 
   async start(yamlText) {
@@ -105,6 +116,10 @@ export const runtime = reactive<RuntimeStore>({
         if (topology) this.nodes = topology.nodes
         if (page) {
           this.events.push(...page.events)
+          if (this.events.length > MAX_BUFFERED_EVENTS) {
+            this.truncatedLocal += this.events.length - MAX_BUFFERED_EVENTS
+            this.events.splice(0, this.events.length - MAX_BUFFERED_EVENTS)
+          }
           this.next = page.next
           this.dropped = page.dropped
         }
@@ -130,6 +145,7 @@ export const runtime = reactive<RuntimeStore>({
     this.events = []
     this.next = 0
     this.dropped = 0
+    this.truncatedLocal = 0
     this.connected = false
   },
 })

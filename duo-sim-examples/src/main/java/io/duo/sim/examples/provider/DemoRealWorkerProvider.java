@@ -34,7 +34,8 @@ public final class DemoRealWorkerProvider implements ComponentProvider {
 
     @Override
     public CapabilityMetadata metadata() {
-        return CapabilityMetadata.duoPort(true, Set.of());
+        // withDefault(true)：与 isDefault() 一致——注册期交叉校验（R10）会拒绝漂移
+        return CapabilityMetadata.duoPort(true, Set.of()).withDefault(true);
     }
 
     @Override

@@ -129,9 +129,10 @@ final class EventJournal {
                     + " events dropped (same limit as " + EventRecorder.MAX_BUFFERED_EVENTS
                     + "; /events and assertion review see a truncated stream)");
         }
-        // 录制的覆盖权限归"现任"引擎：过期引擎放弃写盘，避免抹掉新场景的录制（H-4 复核）
+        // 录制的覆盖权限归"现任"引擎：过期引擎放弃写盘，避免抹掉新场景的录制（H-4 复核；
+        // A7 起 flushIfCurrent 写后复核也可能返回 false——两种过期都走这条显式告警）
         if (!recorder.flushIfCurrent(epochGuard, epoch)) {
-            record(warnings, result, "event recording not written: this scenario was superseded by a "
+            record(warnings, result, "event recording abandoned: this scenario was superseded by a "
                     + "newer one running with the same name (build/scenarios/"
                     + scenarioName + "/events.jsonl belongs to the current run)");
         }

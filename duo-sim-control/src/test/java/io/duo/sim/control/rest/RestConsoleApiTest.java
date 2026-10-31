@@ -271,17 +271,32 @@ class RestConsoleApiTest {
         assertTrue(root.body().contains("Duo Console"));
     }
 
-    /** M10 计划一 Task 10：status 暴露 warnings（外部进程遗留等警告控制台可见）。 */
+    /** M10 计划一 Task 10：status 暴露 warnings——引擎结果告警（时间线 lifecycle 动作带 duration
+     *  被忽略）经 ScenarioHost.warnings() 浮出到控制台。评审 T1（2026-10-30）：原用例夹具 launch
+     *  指向 examples 类（本模块测试类路径上不存在，POST /scenario 必失败）且断言 containsKey
+     *  在 ScenarioHost.status() 无条件写入该键的前提下恒真——契约此前零钉住。 */
     @Test
     void statusExposesWarnings() throws Exception {
-        send("POST", "/scenario", VALID_YAML);
+        var resp = send("POST", "/scenario", WARNING_YAML);
+        assertEquals(200, resp.statusCode(), resp.body());
         long deadline = System.currentTimeMillis() + 10_000;
-        while (System.currentTimeMillis() < deadline
-                && send("GET", "/scenario/status", null).statusCode() != 200) {
+        Map<String, Object> body = json(send("GET", "/scenario/status", null));
+        while (System.currentTimeMillis() < deadline) {
+            body = json(send("GET", "/scenario/status", null));
+            if (warningsContain(body, "is lifecycle")) {
+                break;
+            }
             Thread.sleep(100);
         }
-        var body = json(send("GET", "/scenario/status", null));
-        assertTrue(body.containsKey("warnings"), "status must expose warnings for the console");
+        assertTrue(warningsContain(body, "is lifecycle") && warningsContain(body, "duration ignored"),
+                "timeline lifecycle-duration warning must surface in status: "
+                        + body.get("warnings"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean warningsContain(Map<String, Object> body, String fragment) {
+        var warnings = (List<String>) body.get("warnings");
+        return warnings != null && warnings.stream().anyMatch(w -> w.contains(fragment));
     }
 
     /** 终审 I-1：双重编码 id（%25 → %）在预检解码即抛 IAE——必须 400，不能硬关连接。 */
@@ -344,7 +359,7 @@ class RestConsoleApiTest {
                 contract: scheduler
                 tier: virtual
                 sut: true
-                launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+                launch: { mode: in-process, main: io.duo.sim.control.testfixture.ControlFixtureSut }
                 config: { dag.tasks: "a" }
                 exposes: [{ contract: scheduler, port: 0 }]
                 wiring:
@@ -363,6 +378,44 @@ class RestConsoleApiTest {
                 - node: workers
                   profile: default
             timeline: []
+            assertions:
+              - noTaskLost: { requireAllSuccess: true }
+            """;
+
+    /** 与 VALID_YAML 同拓扑，时间线给 lifecycle 动作带 duration——确定性产生一条引擎结果告警。 */
+    private static final String WARNING_YAML = """
+            name: api-warnings
+            topology:
+              - id: zk
+                contract: registry
+                tier: virtual
+              - id: master
+                contract: scheduler
+                tier: virtual
+                sut: true
+                launch: { mode: in-process, main: io.duo.sim.control.testfixture.ControlFixtureSut }
+                config: { dag.tasks: "a" }
+                exposes: [{ contract: scheduler, port: 0 }]
+                wiring:
+                  registry: { node: zk, contract: registry }
+              - id: workers
+                contract: worker
+                tier: virtual
+                count: 2
+                capacity: { slots: 1 }
+                wiring:
+                  registry: { node: zk, contract: registry }
+            behaviors:
+              profiles:
+                default: { duration: 3s, jitter: 0.0, successRate: 1.0 }
+              bindings:
+                - node: workers
+                  profile: default
+            timeline:
+              - at: 1s
+                action: crash
+                target: workers
+                duration: 5s
             assertions:
               - noTaskLost: { requireAllSuccess: true }
             """;

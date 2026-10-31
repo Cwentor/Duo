@@ -14,7 +14,10 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # 2026-10-31 审计 P2-1：原 [master, main] 使 dev/review 分支推送零 CI——
+    # 门禁退化成「squash 合入 master 后的事后验证」。补 dev/review/feat 三族；
+    # concurrency cancel-in-progress 已保证旧推送被新推送顶掉，不烧额度。
+    branches: [master, main, dev, 'review/**', 'feat/**']
   pull_request:
   workflow_dispatch:
   schedule:
@@ -32,6 +35,7 @@ jobs:
   regression:
     name: regression (no Docker)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45   # 缺省 360 分钟挂死面收口（审计 N4）
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -51,6 +55,10 @@ jobs:
         run: |
           npm ci
           npm test
+          # 类型门禁（评审 T2，2026-10-30）：vitest 走 esbuild 不做类型检查，首次接入即抓出
+          # 6 处真实类型错误（含一处功能性 bug：@click 直传处理器把 PointerEvent 当
+          # startScenario 的 replacing 实参，恒真使 409"确认替换"路径不可达）。
+          npm run typecheck
           npm run build
       # 无 Docker 档：显式关闭容器档（-Dduo.docker.enabled=false），保证「常规回归零 Docker 依赖」
       # 是**确定**的而不是「恰好这台机器没 Docker」
@@ -76,6 +84,7 @@ jobs:
   container:
     name: container tier (Docker)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45   # 缺省 360 分钟挂死面收口（审计 N4）
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -105,6 +114,7 @@ jobs:
     name: scale (nightly / manual)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 120   # 压测留余量（N4；regression/container 为 45）
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -127,4 +137,43 @@ jobs:
           name: scale-artifacts
           path: |
             duo-sim-examples/build/scale/*.json
+          if-no-files-found: error
+
+  supply-chain:
+    name: supply chain (nightly image scan)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45   # 缺省 360 分钟挂死面收口（审计 N4）
+    # 2026-10-31 审计 P2-2：依赖门禁（-Dquality）只查 unused/undeclared，不查 CVE。
+    # 与 image.yml 分工（赘余审查 R2）：nightly 镜像构建+扫描独家在本 job，无双构建。
+    # trivy **报告制**：exit-code 0 只出报告，先取 1–2 周基线，
+    # 再收严为 HIGH/CRITICAL fail + 忽略清单（收严另立任务，一次提交一件事）。
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build image
+        run: docker build -t duo-sim:nightly .
+      - name: trivy scan (HIGH/CRITICAL, report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0（2026-10-31 ls-remote 实取；tag 对象 a9c7b0f 解引用即本 SHA）
+        with:
+          scan-type: image
+          image-ref: duo-sim:nightly
+          format: json
+          output: trivy-report.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+      - name: summary (must be visible)
+        if: always()
+        run: |
+          if [ -f trivy-report.json ]; then
+            echo "HIGH/CRITICAL findings: $(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)"
+          else
+            echo "::error::trivy-report.json missing — scan did not run"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.json
           if-no-files-found: error

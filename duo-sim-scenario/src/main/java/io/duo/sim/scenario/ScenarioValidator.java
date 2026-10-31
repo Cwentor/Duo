@@ -269,15 +269,18 @@ public final class ScenarioValidator {
                 errors.add("timeline action '" + t.action() + "' has no target");
                 continue;
             }
-            int bracket = target.indexOf('[');
-            String componentId = bracket < 0 ? target : target.substring(0, bracket);
+            // 目标寻址解析单点（评审 R14）：此前这里手写 bracket/parseInt、宽容度与
+            // TimelineScheduler/CLI 各异（缺 ']' 静默当整组，运行期才失败）——现在非法
+            // 形态在校验期显式报错（§8 快速失败）。
             Integer index = null;
-            if (bracket >= 0 && target.endsWith("]")) {
-                try {
-                    index = Integer.parseInt(target.substring(bracket + 1, target.length() - 1));
-                } catch (NumberFormatException e) {
-                    errors.add("timeline target '" + target + "': bad instance index");
-                }
+            String componentId;
+            try {
+                var addr = io.duo.sim.kernel.api.FaultAction.ComponentAddress.parse(target);
+                componentId = addr.componentId().value();
+                index = addr.instanceIndex();
+            } catch (IllegalArgumentException e) {
+                errors.add("timeline target '" + target + "': " + e.getMessage());
+                continue;
             }
             var targetNode = byId.get(componentId);
             if (targetNode == null) {
@@ -299,7 +302,7 @@ public final class ScenarioValidator {
                         || (targetNode.count() != null && index > targetNode.count()))) {
                     errors.add("timeline target '" + target + "' index out of [1,count]");
                 }
-                boolean lifecycle = "crash".equals(t.action()) || "restart".equals(t.action());
+                boolean lifecycle = io.duo.sim.kernel.api.FaultAction.isLifecycle(t.action());
                 if (!lifecycle && !m.supportedFaults().contains(t.action())) {
                     errors.add("timeline action '" + t.action() + "' unsupported by '"
                             + componentId + "' (§7.2 无降级)");

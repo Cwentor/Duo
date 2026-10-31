@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.library.ScenarioLibrary;
+import io.duo.sim.kernel.core.ScenarioRuntime;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -38,7 +39,7 @@ import java.util.concurrent.Executors;
  *   <li>{@code POST /inject}——body 为 FaultAction JSON（未启动→409；target 不可解析→404）</li>
  *   <li>{@code GET /assertions} / {@code GET /topology}——断言明细 / 拓扑（事后审查可读）</li>
  *   <li>{@code GET /metrics}——Prometheus 文本格式指标（M8）</li>
- *   <li>{@code GET /health}——服务存活（唯一免认证端点，供探针）</li>
+ *   <li>{@code GET /health}——服务存活（免认证端点之一：/health 与 / 的 SPA 静态托管；供探针）</li>
  *   <li>{@code GET /diagnose}——诊断链一等端点（M10）</li>
  *   <li>{@code /api/scenarios} 族——控制台场景库（M10；503＝未配置库）</li>
  *   <li>{@code GET /api/capabilities} / {@code GET /api/meta}——能力元数据 / serve 自述（M10）</li>
@@ -120,17 +121,6 @@ public final class RestControlServer implements AutoCloseable {
     }
 
     /**
-     * 单请求处理时长上限（审计 M-4）。
-     *
-     * <p>注意：{@code com.sun.net.httpserver.HttpServer} **没有** {@code setMaxReqTime}
-     * （只有 jdk.httpserver 内部的 {@code ServerImpl} 有，不是公开 API；{@code sun.net.httpserver}
-     * 那套也没有可移植的公开入口）。所以这里不硬造一个"写了但不生效"的上限——那正是 §12
-     * 明确禁止的静默谎言。真正的时长约束由两件事保证：① {@code /scenario} 的启动路径本身是
-     * 有界的（ready 探针有超时、校验有上限）；② 请求体上限 1 MiB 让"慢速灌大包"占不住线程。
-     */
-    public static final Duration REQUEST_TIME_BUDGET = Duration.ofSeconds(60);
-
-    /**
      * 后台等待 SUT 退出的上限（每个已受理的场景一份）。远超正常场景的时长，只为让
      * "SUT 永不退出"这类病态场景不至于把等待线程永久挂住；到点未退出则状态保持 RUNNING，
      * 由调用方用 {@code DELETE /scenario} 显式停止——这是可见的，不是静默的。
@@ -138,19 +128,42 @@ public final class RestControlServer implements AutoCloseable {
     public static final Duration SCENARIO_FINISH_TIMEOUT = Duration.ofHours(1);
 
     /**
-     * 启动（port 0 = 自动分配）。返回实际端口。
+     * 启动（port 0 = 自动分配；绑定 {@code 127.0.0.1}——控制面缺省不对外网开放）。
+     * 返回实际端口。
      *
      * <p>注意这里**不**启动后台等待者：它的生命周期跟着"一次 start 请求"走，见
      * {@code /scenario} 的 POST 分支。放在服务启动时是错的——那时还没有任何场景。
      */
     public int start(int port) throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        return start(port, "127.0.0.1");
+    }
+
+    /**
+     * 启动并指定绑定地址（port 0 = 自动分配）。返回实际端口。
+     *
+     * <p>缺省 {@code 127.0.0.1} 保持"控制面不裸奔"的姿态（审计 C-1 同源）；容器部署需要
+     * 对外发布端口时显式传 {@code 0.0.0.0}——容器网络命名空间本身就是隔离边界，
+     * 真正的鉴权仍由 bearer token 承担。IPv6 字面量（如 {@code ::1}）同样接受。
+     *
+     * <p>绑定非回环地址时，{@link RestRoutes} 的 Host 回环守卫同步放开（否则远程访问在
+     * token 校验之前就被 403 挡死，绑定形同虚设——评审 2026-10-30 P1）；Origin 跨站
+     * 守卫与鉴权不受影响。
+     */
+    public int start(int port, String bindAddress) throws IOException {
+        server = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
         executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
-        routes = new RestRoutes(server, mapper, auth, token);
+        routes = new RestRoutes(server, mapper, auth, token, !isLoopbackBind(bindAddress));
         registerRoutes(routes);
         server.start();
         return server.getAddress().getPort();
+    }
+
+    /** 绑定地址是否回环（{@code localhost}/{@code 127.*}/{@code ::1}；{@code 0.0.0.0} 通配＝非回环）。 */
+    private static boolean isLoopbackBind(String bindAddress) {
+        String a = bindAddress == null ? "" : bindAddress.trim().toLowerCase();
+        return a.equals("localhost") || a.startsWith("127.")
+                || a.equals("::1") || a.equals("0:0:0:0:0:0:0:1");
     }
 
     /** 实际监听端口（未启动＝-1；start 传 port 0 时由此拿内核分配值）。 */
@@ -280,34 +293,46 @@ public final class RestControlServer implements AutoCloseable {
 
     private void inject(HttpCall call) throws Exception {
         call.require(host.isRunning(), 409, "scenario not running");
-        try {
-            var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
-            var result = host.inject(action);
-            if (!result.success() && result.reason() != null
-                    && result.reason().contains("unknown target")) {
-                call.error(404, result.reason());
-            } else {
-                call.ok(Map.of("success", result.success(),
-                        "reason", result.reason() == null ? "" : result.reason()));
-            }
-        } catch (NullPointerException e) {
-            // 结构上缺 target 的 FaultAction 能通过 JSON 绑定，却在**下游**抛 NPE
-            // （`FaultAction.target()` 为 null → 取 componentId()）。这仍然是"调用方输入
-            // 不合法"，不是我们的 bug：按审计口径必须是 400，而不是让它落进兜底 500。
-            call.error(400, "fault action is missing a required field: " + e.getMessage());
-        }
+        withFaultAction(call, host::inject);
     }
 
     private void clearInjection(HttpCall call) throws Exception {
         call.require(host.isRunning(), 409, "scenario not running");
-        try {
-            var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
-            var result = host.clear(action);
+        withFaultAction(call, host::clear);
+    }
+
+    /**
+     * inject 与 /api/inject/clear 的共享管道（评审 R16，2026-10-30）：JSON 绑定 → 显式判空 →
+     * 转发 → 统一结果/错误映射。此前复制已分叉——注册注释承诺"与 /inject 同构"，clear 却缺
+     * "unknown target → 404"映射（inject 有）。收敛后两端语义一致：
+     * ① unknown target → 404（可寻址资源不存在，两端口同判）；
+     * ② 其余 success:false → 200 + reason（如"无在途注入可清除"——clear 幂等口径不变）；
+     * ③ 结构缺字段（target/componentId 为 null）→ 400 **显式判空**优先于 NPE 捕获：
+     *    NPE 的 message 常为 null，且无法区分"输入缺字段"与"下游真 NPE"（后者该 500）。
+     */
+    private void withFaultAction(HttpCall call,
+                                 java.util.function.Function<io.duo.sim.kernel.api.FaultAction,
+                                         ScenarioRuntime.InjectionResult> forward) throws Exception {
+        var action = mapper.readValue(call.body(), io.duo.sim.kernel.api.FaultAction.class);
+        if (action == null || action.target() == null
+                || action.target().componentId() == null) {
+            call.error(400, "fault action is missing a required field: target.componentId");
+            return;
+        }
+        var result = forward.apply(action);
+        if (!result.success() && result.reason() != null
+                && result.reason().contains("unknown target")) {
+            call.error(404, result.reason());
+        } else {
             call.ok(Map.of("success", result.success(),
                     "reason", result.reason() == null ? "" : result.reason()));
-        } catch (NullPointerException e) {
-            call.error(400, "fault action is missing a required field: " + e.getMessage());
         }
+    }
+
+    /** 可读态守卫单点（P3 收敛）：RUNNING 或已固化结果（FINISHED/FAILED）皆可读——
+     *  事后审查是控制面核心用途（M3 验收 §1）。此前四处复制、一处参数序还写反。 */
+    private void requireScenarioReadable(HttpCall call) {
+        call.require(host.hasResult() || host.isRunning(), 409, "scenario not started");
     }
 
     /** {@code GET /diagnose}：四段诊断报告（注入 → 组件反应 → SUT 事实 → 断言）。 */

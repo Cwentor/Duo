@@ -39,9 +39,10 @@ public final class VirtualWorkerProvider implements ComponentProvider {
         // DUO_PORT + instanceControl=true（实现 InstanceControl）；
         // task-kill 为**实例级**（injectOnInstance），freeze/slow/resource-exhaust 为**组件级**
         // （inject）——M5-3 三动作落地后一并声明（§7.5：supportedFaults 非空必须实现 FaultInjectable）
+        // withDefault(true)：与 isDefault() 一致——注册期交叉校验（R10）会拒绝漂移
         return CapabilityMetadata.duoPort(true, Set.of(
                 FaultAction.TASK_KILL, FaultAction.FREEZE, FaultAction.SLOW,
-                FaultAction.RESOURCE_EXHAUST));
+                FaultAction.RESOURCE_EXHAUST)).withDefault(true);
     }
 
     @Override

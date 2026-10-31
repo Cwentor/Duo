@@ -33,6 +33,33 @@ describe('runtime store 逻辑', () => {
     expect(faults['workers'] ?? []).toEqual([])
   })
 
+  it('事件流内存封顶：超限截断计数可见（评审 A3，§12 丢弃必须可见）', async () => {
+    // 一页灌入 MAX+10 条：store 只保留最近 MAX 条，被截掉的条数进 truncatedLocal。
+    // 注意 store 是模块级单例——本用例结束必须 reset，防污染后续用例。
+    const max = 5000
+    const bigPage = { since: 0, next: max + 10, dropped: 0,
+      events: Array.from({ length: max + 10 }, (_, i) => ev(i + 1, 'e', 'x')) }
+    const emptyPage = { since: max + 10, next: max + 10, dropped: 0, events: [] }
+    let eventsCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: any) => {
+      const u = String(url)
+      if (u.includes('/events')) {
+        return new Response(JSON.stringify(eventsCalls++ === 0 ? bigPage : emptyPage), { status: 200 })
+      }
+      if (u.includes('/scenario/status')) {
+        return new Response(JSON.stringify({ state: 'RUNNING', scenario: 'x' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ nodes: [] }), { status: 200 })
+    }))
+    runtime.beginPolling()
+    await vi.advanceTimersByTimeAsync(1100)
+    runtime.endPolling()
+    expect(runtime.events.length).toBe(max)
+    expect(runtime.events[0].seq).toBe(11) // 最旧的 10 条被截掉
+    expect(runtime.truncatedLocal).toBe(10)
+    runtime.reset()
+  })
+
   it('轮询推进 next 且不重不漏（伪造两页事件）', async () => {
     const pages = [
       { since: 0, next: 2, dropped: 0, events: [
@@ -72,7 +99,7 @@ describe('runtime store 逻辑', () => {
     // 退避递增（按 /events 一路计数；每拍三路各一次 fetch）：首拍后 failures=1 → 下一拍 2s
     const afterFirst = eventCalls()
     await vi.advanceTimersByTimeAsync(1000)
-    expect(eventCalls()).toBe(afterFirst, '1s 处不得重试（应等 2s）')
+    expect(eventCalls()).toBe(afterFirst) // 1s 处不得重试（应等 2s）
     await vi.advanceTimersByTimeAsync(1200)
     expect(eventCalls()).toBe(afterFirst + 1)
     runtime.endPolling()
@@ -90,6 +117,6 @@ describe('runtime store 逻辑', () => {
       r(new Response('{"since":0,"next":0,"dropped":0,"events":[]}', { status: 200 }))
     }
     await vi.advanceTimersByTimeAsync(10000)
-    expect(resolvers.length).toBe(callsAtPending, '停止后不得再有新请求')
+    expect(resolvers.length).toBe(callsAtPending) // 停止后不得再有新请求
   })
 })

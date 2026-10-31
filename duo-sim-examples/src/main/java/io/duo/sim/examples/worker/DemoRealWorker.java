@@ -2,6 +2,7 @@ package io.duo.sim.examples.worker;
 
 import io.duo.sim.components.provider.BehaviorResolver;
 import io.duo.sim.components.taskstub.BehaviorProfile;
+import io.duo.sim.components.worker.WorkerProtocol;
 import io.duo.sim.kernel.api.ComponentContext;
 import io.duo.sim.kernel.api.ComponentException;
 import io.duo.sim.kernel.api.ComponentId;
@@ -13,7 +14,6 @@ import io.duo.sim.kernel.api.HealthReport;
 import io.duo.sim.kernel.api.InstanceControl;
 import io.duo.sim.kernel.api.StopMode;
 import io.duo.sim.kernel.api.VirtualComponent;
-import io.duo.sim.kernel.contract.RegistryContract;
 import io.duo.sim.kernel.contract.WorkerContract;
 import io.duo.sim.protocol.FrameConnection;
 import io.duo.sim.protocol.message.HeartbeatReport;
@@ -45,8 +45,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class DemoRealWorker implements VirtualComponent, WorkerContract, InstanceControl {
 
-    private static final long DISCOVER_INTERVAL_MS = 500;
-    private static final int DISCOVER_MAX_TRIES = 20;
     private static final long HEARTBEAT_INTERVAL_MS = 100;
 
     private volatile ComponentId id;
@@ -106,22 +104,9 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
     }
 
     private String discoverMaster() {
-        var registry = ctx.directRegistry()
-                .orElseThrow(() -> new ComponentException(
-                        "real worker requires direct registry: " + id));
-        for (int tries = 0; tries < DISCOVER_MAX_TRIES; tries++) {
-            List<String> addrs = registry.discoverEndpoints("scheduler");
-            if (!addrs.isEmpty()) {
-                return addrs.get(0);
-            }
-            try {
-                Thread.sleep(DISCOVER_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        throw new ComponentException("scheduler not discovered within retries: " + id);
+        return WorkerProtocol.discoverScheduler(ctx, id,
+                "real worker requires direct registry: ",
+                "scheduler not discovered within retries: ");
     }
 
     private void dialAndServe(Inst inst, String masterAddr) {
@@ -208,39 +193,27 @@ public final class DemoRealWorker implements VirtualComponent, WorkerContract, I
         });
     }
 
-    /** 假日志落流（G7）：与 {@code VirtualWorker} 同构，支持 {@code {task}}/{@code {taskId}} 占位符。 */
+    /** 假日志落流（G7）：走 {@link WorkerProtocol#emitLogs} 两档共享单点（与 virtual 档同事件同载荷）。 */
     private void emitLogs(Inst inst, TaskDispatch d, java.util.List<String> lines) {
-        for (String line : lines) {
-            ctx.eventBus().publish(Event.sim("sim.worker-log", id.instanceSourceId(inst.index),
-                    Map.of("taskId", d.taskId(),
-                            "line", line.replace("{task}", d.taskName())
-                                    .replace("{taskId}", d.taskId()))));
-        }
+        WorkerProtocol.emitLogs(e -> ctx.eventBus().publish(e),
+                id.instanceSourceId(inst.index), d, lines);
     }
 
     /**
      * 显式拒绝一次不可受理的派发（G9，与 {@code VirtualWorker} 同构）：回报
-     * {@link TaskStatus#REJECTED} + 发 {@code sim.worker-task-rejected} 事实 + 刷新槽位视图，
-     * **不占用槽位、不启动执行线程**。
+     * {@link TaskStatus#REJECTED}（线上字节走 {@code WorkerProtocol.writeRejected}）+
+     * 发 {@code sim.worker-task-rejected} 事实 + 刷新槽位视图，**不占用槽位、不启动执行线程**。
      */
     private void reject(Inst inst, TaskDispatch d, String reason) {
-        try {
-            inst.conn.write(new TaskStatus(d.taskId(), inst.name, TaskStatus.REJECTED, reason));
-        } catch (IOException ignored) {
-            // 连接已断：拒绝回报丢失，调度侧失联检测兜底
-        }
+        WorkerProtocol.writeRejected(inst.conn, inst.name, d, reason);
         reportSlots(inst);
         ctx.eventBus().publish(Event.sim("sim.worker-task-rejected",
                 id.instanceSourceId(inst.index), Map.of("taskId", d.taskId(), "reason", reason)));
     }
 
-    /** 立即上报当前槽位（G9）：槽位变化后不等心跳，缩小调度侧视图滞后窗口。 */
+    /** 立即上报当前槽位（G9）：槽位变化后不等心跳，线上字节走 {@code WorkerProtocol.reportSlots} 共享单点。 */
     private void reportSlots(Inst inst) {
-        try {
-            inst.conn.write(new SlotReport(inst.name, inst.freeSlots.get(), totalSlots));
-        } catch (IOException ignored) {
-            // 连接不可写：心跳周期上报兜底
-        }
+        WorkerProtocol.reportSlots(inst.conn, inst.name, inst.freeSlots.get(), totalSlots);
     }
 
     @Override

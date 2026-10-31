@@ -1,0 +1,29 @@
+# 供应链（2026-10-31 审计 P2-2/P3-2）：版本更新与 CVE 响应自动化。
+# github-actions 生态同时解决「pin-SHA 手工升级」——dependabot 会连 SHA 带注释一起 bump，
+# PR 走既有 pull_request CI（含 dispatch 纪律对应的验证环节），全绿才可合。
+# 注释里的人类可读版本号（如 # v7.0.1）随升级 PR 自动更新。
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /console-ui
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /architecture-ui
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # docker 生态（审计 N1）：Dockerfile 三个基础镜像均为浮动 tag（node:22-alpine /
+  # maven:3.9-eclipse-temurin-21 / eclipse-temurin:21-jre-jammy），patch 漂移无感知——
+  # 以升级 PR 补齐 L-6/A6 pin 纪律的覆盖面；digest 钉死更强但维护成本高，暂不采用。
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

@@ -118,13 +118,20 @@ DS 侧配置适配（均在包内配置文件，**无源码改动**）：
 > **`-pl <module>` 记得带 `-am`**：不带时该模块会解析 `~/.m2` 里**已安装的旧内核 jar**，
 > 改了内核源码却报「找不到符号」——这是本仓最容易踩的坑。
 
-### 2.0 CI（`.github/workflows/ci.yml`，M7）
+### 2.0 CI（`ci.yml` 三档 + `image.yml` 镜像门禁，M7 起）
 
 | job | 触发 | 内容 |
 | --- | --- | --- |
 | `regression` | push / PR | `./mvnw -B -Dduo.docker.enabled=false test`（确定性无 Docker 档）+ skip 汇总 |
 | `container` | push / PR | `-pl duo-sim-embedded -am test -Dtest='ZookeeperContainer*'`，并**断言 skip=0**（有 Docker 时不许静默跳过） |
 | `scale` | nightly / 手动 | `-Dduo.scale=true`，压测 JSON 落 `duo-sim-examples/build/scale/`（模块工作目录）并上传为 artifact，`if-no-files-found: error`（G8「规模数据可追溯」）；事件录制不归档（M-8，口径见 DECISIONS D14） |
+| `image`（独立 workflow `image.yml`） | push / PR | `docker build` + 起容器跑 `scripts/duo-smoke-docker.sh` 26 项 API 冒烟（G-W2 等价）——镜像可构建可运行进门禁；paths-ignore 短路 docs-only 提交（与 `.dockerignore` 排除面对账：docs/、`*.md`、architecture-ui、.github、LICENSE） |
+| `supply-chain` | nightly / 手动 | `docker build` + trivy 扫 HIGH/CRITICAL，**报告制**（`exit-code: 0`，artifact `trivy-report.json`）；2026-10-31 基线 27 条（集中 jackson 2.18.2），观察 1–2 周后另立任务收严为 fail 门禁 + 忽略清单 |
+
+触发面（push）：`[master, main, dev, 'review/**', 'feat/**']`（审计 P2-1——dev/review 分支推送即跑，
+门禁不再是 squash 合入后的事后验证）；全部 job 带 `timeout-minutes`（regression/container/
+image/supply-chain 45、scale 120，审计 N4）。dependabot 五生态周更（maven / console-ui /
+architecture-ui / github-actions / docker——基础镜像浮动 tag 的升级 PR 兜底，审计 N1）。
 
 skip 汇总由 `.github/scripts/skip-summary.sh` 输出（`--fail-on-skip` 用于容器档门禁）。
 
@@ -148,6 +155,35 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 
 ---
 
+### 2.2 容器化部署（`duo serve` 进容器，评审 2026-10-30）
+
+仓库根 `Dockerfile` 三段构建：`node:22-alpine` 出 console SPA → `eclipse-temurin:21-jdk`
+跑 reactor（`-DskipTests`，测试归 CI regression job）并把全部运行时 jar 收敛到 `libs/` →
+`eclipse-temurin:21-jre` 运行时。控制台 SPA 由 vite 直写 `duo-sim-control/target/classes/console`
+（§1.4 同序）后随 `package` 打进 control jar，镜像内**零源码、零构建链**。
+
+```bash
+docker build -t duo-sim .
+docker run -d --name duo -p 8080:8080 -e DUO_TOKEN=<T> duo-sim
+curl -s http://127.0.0.1:8080/health     # 免认证活性探针
+# 控制台：http://127.0.0.1:8080/（令牌页输入 DUO_TOKEN 值）
+```
+
+容器就绪后可跑 26 项检查的 API 冒烟（G-W2 等价序列）：
+`BASE=http://127.0.0.1:8080 DUO_TOKEN=<T> bash scripts/duo-smoke-docker.sh`
+
+- **监听面**：镜像 ENTRYPOINT 固化 `--bind 0.0.0.0`（容器内必须，否则端口映射不通）；
+  隔离边界是容器网络命名空间，鉴权仍由 bearer token 承担。宿主机直跑 `serve`
+  **缺省仍绑 127.0.0.1**，需要局域网访问时显式 `--bind <addr>`（DuoCli serve 新选项）。
+  Host 回环守卫随绑定面联动：绑定非回环地址时白名单同步放开（否则远程访问在 token 校验
+  之前就被 403 挡死，评审 2026-10-30 P1）；Origin 跨站守卫与鉴权不受影响。
+- **令牌必填**（审计 C-1 同源）：`DUO_TOKEN` 环境变量或追加参数 `--token <T>`；两者皆缺时
+  容器按 C-1 拒绝启动——镜像不提供免鉴权捷径。
+- **场景库持久化**：`--library-dir /data/library`（`VOLUME /data`，fork/保存的用户场景落卷）。
+- **非 root 运行**：镜像内建 `duo` 用户（uid 10001），/data 卷属主随镜像固定。
+
+---
+
 ## 3. 测试分层与门控
 
 ### 3.1 分层
@@ -162,19 +198,19 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 > 否则会形成 `junit ↔ examples` 循环依赖。`duo-sim-control` 第 14 轮起**自带契约测试**
 > （test 作用域依赖 `duo-sim-components`，依赖方向仍单向），不再受此约束。
 
-### 3.2 当前分布（2026-10-01 实测，M10 计划一 + 计划二后）
+### 3.2 当前分布（2026-10-31 实测，评审 2026-10-30 修复轮收口后）
 
 | 模块 | 测试数 | skip |
 | --- | --- | --- |
 | `duo-sim-protocol` | 12 | 0 |
-| `duo-sim-kernel` | 79 | 0 |
-| `duo-sim-scenario` | 55 | 0 |
-| `duo-sim-components` | 120 | 0 |
-| `duo-sim-embedded` | 57 | **10**（无 Docker：4 条 `ZookeeperContainer` + 6 条 `PostgresContainer`） |
+| `duo-sim-kernel` | 94 | 0 |
+| `duo-sim-scenario` | 63 | 0 |
+| `duo-sim-components` | 129 | 0 |
+| `duo-sim-embedded` | 57 | 0（本机 Docker 可用，PG 6 + ZK 4 实跑；无 Docker 环境 → 10 条容器档 skip：4 `ZookeeperContainer` + 6 `PostgresContainer`） |
 | `duo-sim-junit` | 0 | 0 |
-| `duo-sim-control` | 46 | 0（第 34 轮基线 22＝`ScenarioHostTest` 10 + `RestControlServerTest` 12；**M10 计划一 +24**：`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、`RestConsoleApiTest` 15、`RestControlServerTest` +2） |
+| `duo-sim-control` | 52 | 0（`ScenarioHostTest` 11、`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、`RestControlServerTest` 16、`RestConsoleApiTest` 15、`FaultDiagnosticsTest` 3——含 2026-10-30 评审轮：bind/远程 Host 守卫、warnings 契约、诊断链配对） |
 | `duo-sim-examples` | 54 | **2**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`——M9 真实 SUT 演练，环境见 §1.3。守卫 `DsFailoverDrillGuardTest` 无门控常驻。M10 计划一 +2：CLI serve 可选场景/help 文案） |
-| **合计（reactor 内 8 模块）** | **423** | **12** |
+| **合计（reactor 内 8 模块）** | **461** | **2**（均设计门控；无 Docker 环境合计 skip 12） |
 
 > **前端测试另计**：`console-ui` 的 Vitest **46 测 / 0 失败**（8 文件；不在上表——上表只统计 Maven reactor
 > 内的 8 个 Java 模块）。命令见 §1.4；CI `regression` job 在 `mvnw` 之前先跑 `npm ci && npm test && npm run build`。
@@ -193,7 +229,7 @@ CI-only 时序红前科（G9、413×2），换代必须走显式提交（先 dis
 > `@EnabledIfSystemProperty(duo.ds=true)` 门控（D-M9-4），缺省 skip 可见。
 
 ```bash
-.\mvnw.cmd -o -B test                          # 本机实测：423 测 / 0 失败 / 0 错误 / 12 skip（本机无 Docker）
+.\mvnw.cmd -o -B test                          # 本机实测：461 测 / 0 失败 / 0 错误 / 2 skip（2026-10-31，Docker 可用容器档实跑）
 ./mvnw -o -B test "-Dduo.docker.enabled=false" # CI regression job 同款：确定性关闭容器档（skip 口径同上）
 .\mvnw.cmd -o -B "-Dquality" "-DskipTests" verify  # 依赖门禁：8 个 jar 模块零未声明/零未使用（parent 为 pom packaging，按设计跳过；CI regression job 已接入）
 bash .github/scripts/skip-summary.sh           # skip 逐条可解释（--fail-on-skip 用于容器档门禁）

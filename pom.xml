@@ -159,6 +159,13 @@
                 <artifactId>duo-sim-control</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <!-- test-jar 是独立坐标（classifier=tests），必须单独管理，否则 examples 引用时要裸写版本 -->
+            <dependency>
+                <groupId>io.duo</groupId>
+                <artifactId>duo-sim-control</artifactId>
+                <version>${project.version}</version>
+                <type>test-jar</type>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

@@ -179,29 +179,7 @@ public final class WiringResolver {
         for (NodeView n : nodes) {
             deps.put(n.id(), n.wiring().values().stream().map(SlotView::targetNodeId).toList());
         }
-        List<String> result = new java.util.ArrayList<>();
-        java.util.Set<String> done = new java.util.LinkedHashSet<>();
-        java.util.Set<String> visiting = new java.util.LinkedHashSet<>();
-        for (NodeView n : nodes) {
-            visit(n.id(), deps, done, visiting, result);
-        }
-        return result;
-    }
-
-    private static void visit(String id, Map<String, List<String>> deps,
-                              java.util.Set<String> done, java.util.Set<String> visiting,
-                              List<String> result) {
-        if (done.contains(id)) {
-            return;
-        }
-        if (!visiting.add(id)) {
-            throw new WiringException("wiring cycle detected involving '" + id + "'");
-        }
-        for (String d : deps.getOrDefault(id, List.of())) {
-            visit(d, deps, done, visiting, result);
-        }
-        visiting.remove(id);
-        done.add(id);
-        result.add(id);
+        return Graphs.topoOrder(nodes.stream().map(NodeView::id).toList(), deps,
+                id -> new WiringException("wiring cycle detected involving '" + id + "'"));
     }
 }

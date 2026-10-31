@@ -68,9 +68,9 @@ final class RestRoutes {
         }
     }
 
-    /** 回环主机名白名单（Host 头校验；含 IPv6 字面量）。 */
-    private static final Set<String> LOOPBACK_HOSTS = Set.of(
-            "127.0.0.1", "localhost", "[::1]", "::1", "0:0:0:0:0:0:0:1");
+    /** 回环主机名白名单（Host 头校验；含 IPv6 字面量——isLoopbackHost 的括号分支按
+     *  {@code [::1]} 形态整串比对，故裸 IPv6 条目不可达，评审 P3 清理）。 */
+    private static final Set<String> LOOPBACK_HOSTS = Set.of("127.0.0.1", "localhost", "[::1]");
 
     /**
      * 413 排空上限：拒绝超限上传前先读并丢弃的字节预算。正常超限上传（≈1 MiB 量级，
@@ -83,12 +83,15 @@ final class RestRoutes {
     private final ObjectMapper mapper;
     private final RestControlServer.Auth auth;
     private final byte[] token;
+    private final boolean allowRemoteHosts;
 
-    RestRoutes(HttpServer server, ObjectMapper mapper, RestControlServer.Auth auth, byte[] token) {
+    RestRoutes(HttpServer server, ObjectMapper mapper, RestControlServer.Auth auth, byte[] token,
+               boolean allowRemoteHosts) {
         this.server = server;
         this.mapper = mapper;
         this.auth = auth;
         this.token = token;
+        this.allowRemoteHosts = allowRemoteHosts;
     }
 
     void get(String path, EndpointAction action) {
@@ -152,8 +155,11 @@ final class RestRoutes {
      * @param freeAuth 免令牌路由（{@code /health}、静态资源；仍做 Host/Origin 校验）
      */
     private boolean guard(HttpExchange ex, boolean freeAuth) {
-        // ① Host：必须是回环字面量。字段缺失（HTTP/1.0）也按无主机处理——浏览器必然带 Host。
-        if (!isLoopbackHost(ex.getRequestHeaders().getFirst("Host"))) {
+        // ① Host：缺省必须是回环字面量。字段缺失（HTTP/1.0）也按无主机处理——浏览器必然带 Host。
+        //    操作者显式绑定非回环地址时（--bind 0.0.0.0，容器/局域网部署）Host 守卫同步放开：
+        //    否则远程访问在 token 校验之前就被 403 挡死，--bind 成了空承诺（评审 2026-10-30 P1）。
+        //    放开的只是这层白名单；跨站防护（Origin ②）与鉴权（③）原样生效。
+        if (!allowRemoteHosts && !isLoopbackHost(ex.getRequestHeaders().getFirst("Host"))) {
             respond(ex, 403, Map.of("error", "forbidden: Host must be a loopback address"));
             return false;
         }

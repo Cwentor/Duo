@@ -1,15 +1,14 @@
 package io.duo.sim.examples.scheduler;
 
+import io.duo.sim.components.scheduler.DagTopology;
+import io.duo.sim.components.scheduler.DispatchPump;
+import io.duo.sim.components.scheduler.SchedulerFacts;
 import io.duo.sim.components.scheduler.SchedulerStateMachine;
 import io.duo.sim.components.server.WorkerFeedServer;
 import io.duo.sim.kernel.api.SutContext;
 import io.duo.sim.kernel.api.SutMain;
 import io.duo.sim.kernel.contract.RegistryContract;
-import io.duo.sim.protocol.FrameConnection;
-import io.duo.sim.protocol.message.TaskDispatch;
 
-import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +32,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class DemoScheduler implements SutMain {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** dag-terminal 单一发布守卫（F2，评审 2026-10-30）：状态机 onAllTerminal 回调与 run()
+     *  循环退出都会到达同一事实，CAS 保证基数恒为 1——与 VirtualScheduler.dagTerminalFired
+     *  同款（此前本类漏了同一守卫，容器实测两次运行各双发，tier parity 被破坏）。 */
+    private final AtomicBoolean dagTerminalFired = new AtomicBoolean(false);
     /** worker 连接面（协议机制 + 槽位记账含 G10 拒绝回滚——两档 scheduler 共用，卡 4）。 */
     private WorkerFeedServer feedServer;
     private SchedulerStateMachine stateMachine;
@@ -74,12 +77,13 @@ public final class DemoScheduler implements SutMain {
         registryAccess.register(duoPort);
         ctx.ready(); // 就绪：端点已可被发现
 
-        // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务）
-        Map<String, List<String>> dag = readDag(ctx.config());
+        // 2) DAG（config 可覆盖；M0 默认 5 任务演示拓扑，含不稳定任务；解析走 DagTopology 两档共享单点）
+        Map<String, List<String>> dag = DagTopology.parse(ctx.config());
         if (dag.isEmpty()) {
             throw new IllegalStateException("demo-scheduler: empty DAG (check dag.tasks)");
         }
-        stateMachine = new SchedulerStateMachine(dag, new StateListener());
+        stateMachine = new SchedulerStateMachine(dag,
+                new SchedulerFacts(ctx.events()::publish, this::publishDagTerminalOnce));
         heartbeatEventSampleRate = Integer.parseInt(ctx.config().getOrDefault(
                 "heartbeat.eventSampleRate", "1"));
         ctx.events().publish("sut.scheduler-started",
@@ -93,11 +97,18 @@ public final class DemoScheduler implements SutMain {
                 pumpDispatches();
                 Thread.sleep(50);
             }
-            ctx.events().publish("sut.dag-terminal", Map.of());
+            publishDagTerminalOnce();
         } finally {
             running.set(false);
             stopHeartbeatMeter();
             closeAll();
+        }
+    }
+
+    /** dag-terminal 单一发布点（两处到达：状态机回调 / run() 循环退出——见字段注释）。 */
+    private void publishDagTerminalOnce() {
+        if (dagTerminalFired.compareAndSet(false, true)) {
+            ctx.events().publish("sut.dag-terminal", Map.of());
         }
     }
 
@@ -192,25 +203,11 @@ public final class DemoScheduler implements SutMain {
      * （消除"永远落到迭代序第一个 feed"的旧缺陷）。无可用实例则跳过本轮。
      */
     private void pumpDispatches() {
-        for (String task : stateMachine.dispatchable()) {
-            String target = feedServer.selector().select();
-            if (target == null) {
-                return; // 本轮无可用 worker（slots 耗尽或未上报槽位）
-            }
-            FrameConnection conn = feedServer.feed(target);
-            if (conn == null) {
-                feedServer.selector().onRemoved(target);
-                continue;
-            }
-            try {
-                int attempt = stateMachine.dispatch(task, target);
-                feedServer.selector().onDispatched(target); // 本地递减；SlotReport 到达时权威刷新
-                conn.write(new TaskDispatch(task, task, attempt, 1, 1));
-                // 注意：sut.task-dispatched 由 StateListener.onDispatch 单一来源发布（T19(c) 去重）
-            } catch (IOException e) {
-                feedServer.drop(target);
-            }
+        SchedulerStateMachine sm = stateMachine;
+        if (sm == null) {
+            return;
         }
+        DispatchPump.dispatchRound(feedServer, sm); // 单轮派发下沉共享件（R3）
     }
 
     /**
@@ -378,71 +375,6 @@ public final class DemoScheduler implements SutMain {
             } catch (RuntimeException ignored) {
                 // 尽力而为
             }
-        }
-    }
-
-    private Map<String, List<String>> readDag(Map<String, String> config) {
-        String tasksCfg = config.getOrDefault("dag.tasks",
-                "load-orders,clean-orders,build-features,unstable-task,aggregate-report");
-        List<String> tasks = List.of(tasksCfg.split(","));
-        Map<String, List<String>> dag = new HashMap<>();
-        for (String t : tasks) {
-            String deps = config.get("dag.deps." + t.trim());
-            dag.put(t.trim(), deps == null || deps.isBlank() ? List.of()
-                    : List.of(deps.split(",")));
-        }
-        return dag;
-    }
-
-    /** 状态机事实 → sut.* 事件（§7.3；T19(c) 状态/终态事件带 instance 归属）。 */
-    private final class StateListener implements SchedulerStateMachine.Listener {
-
-        @Override
-        public void onDispatch(String taskId, String taskName, int attempt, String instance) {
-            ctx.events().publish("sut.task-dispatched",
-                    Map.of("taskId", taskId, "attempt", attempt, "instance", instance));
-        }
-
-        @Override
-        public void onStatus(String taskId, String state, String detail, int attempt,
-                             String instance) {
-            Map<String, Object> payload = new java.util.HashMap<>();
-            payload.put("taskId", taskId);
-            payload.put("state", state);
-            payload.put("attempt", attempt);
-            if (instance != null) {
-                payload.put("instance", instance); // T19(c)：断言归属核对的数据契约
-            }
-            ctx.events().publish("sut.task-status", Map.copyOf(payload));
-            if (!"RETRYING".equals(state)) {
-                ctx.events().publish("sut.task-terminal", Map.copyOf(payload));
-            }
-        }
-
-        @Override
-        public void onRetry(String taskId, int nextAttempt) {
-            ctx.events().publish("sut.task-retry",
-                    Map.of("taskId", taskId, "nextAttempt", nextAttempt));
-        }
-
-        @Override
-        public void onFailover(String taskId, String fromInstance) {
-            ctx.events().publish("sut.failover",
-                    Map.of("taskId", taskId, "from", fromInstance));
-        }
-
-        @Override
-        public void onRejected(String taskId, String instanceName, String reason, int rejections) {
-            // G9 事实：worker 未受理该派发（任务从未执行）→ 已回到待派发，等待重派。
-            // 与 sut.task-retry（执行失败后重试）区分：这是**准入失败**，不消耗重试额度。
-            ctx.events().publish("sut.task-rejected",
-                    Map.of("taskId", taskId, "instance", instanceName,
-                            "reason", reason, "rejections", rejections));
-        }
-
-        @Override
-        public void onAllTerminal() {
-            ctx.events().publish("sut.dag-terminal", Map.of());
         }
     }
 
