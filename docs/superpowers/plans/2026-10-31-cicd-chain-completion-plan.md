@@ -2,7 +2,7 @@
 
 > 本计划交 dev-executing-plans 逐任务执行；步骤用 `- [ ]` 勾选跟踪。本文件同时充当台账。
 
-**Goal:** 补全 CI/CD 链条断点——镜像「可构建可运行」进 CI 门禁（P1-1）；同步收口触发面盲区（P2-1）、供应链漏洞扫描（P2-2）、冒烟脚本游离（P2-3）。**P1-2（tag→ghcr→GitHub Release 发布链）经用户拍板暂缓**，设计保留见文末「暂缓项」。2026-10-31 二轮复审并入 N1/N4/N5（落在 Task 4/1/7）与设置面手动项（N2/N3）；N6–N10 记台账待议。
+**Goal:** 补全 CI/CD 链条断点——镜像「可构建可运行」进 CI 门禁（P1-1）；同步收口触发面盲区（P2-1）、供应链漏洞扫描（P2-2）、冒烟脚本游离（P2-3）。**P1-2（tag→ghcr→GitHub Release 发布链）经用户拍板暂缓**，设计保留见文末「暂缓项」。2026-10-31 二轮复审并入 N1/N4（落在 Task 4/1）与设置面手动项（N2/N3）；**N5 经 Task 7 Step 1 实测撤案**（`release.skipAttachments` 默认 true，见该节撤案记录）；N6–N10 记台账待议。
 
 **Architecture:** `ci.yml` 新增并行 `image` job（docker build + 冒烟脚本 26 步 API 往返）与 nightly `supply-chain` job（trivy 报告制）；新增 `.github/dependabot.yml` 四生态。不引入任何发布类 workflow。
 
@@ -26,8 +26,8 @@
 3. 冒烟 `FORK_ID` 固定 `smoke-api-review` → 容器每次全新启动、/data 匿名卷即弃，fork 必成功；重跑前 `docker rm -f duo || true` 幂等清理（Task 3 Step 2/3）。
 4. dependabot 版本 PR → 必须经既有 `pull_request` 触发的 CI 全绿才可合；github-actions 生态应自动改 pin-SHA＋注释（首次 PR 实测确认，Task 4 Step 3）。
 5. runner 上 `python` 命令缺失 → 冒烟脚本取 YAML 有 sed fallback 内置（`python -c ... || sed ...`），CI 实跑一次确认降级路径不炸（Task 3 Step 3）。
-6. `image.yml` 自身在自身 paths-ignore 内 → 改 workflow 逻辑不自触发，必须手动 `workflow_dispatch` 验证后再提交（Task 3 Step 3 附注，G9 纪律）。
-7. 跳过 javadoc 后「注释可编译」失去 CI 兼任门禁 → Task 7 Step 1 先取健康基线（2026-10-27 全仓注释补齐后全仓通过）；防回归依赖本地 package 习惯，如实声明、不装假门禁。
+6. 仅改 `image.yml` 的提交对 paths 过滤的行为未单独实测（新增场景实证仍触发，run 41202412401）→ 无论自触发与否，改本文件一律按 G9 手动 `workflow_dispatch` 验证后再提交。
+7. 【随 N5 撤案移除】原「跳过 javadoc 失去 CI 兼任门禁」不成立——缺省本就不产 javadoc（`release.skipAttachments=true`，pom.xml:45），文档质量由评审守（pom 注释原文立场），从未有过构建期门禁。
 
 ---
 
@@ -224,7 +224,7 @@ jobs:
 
 - [ ] **Step 3: 推送并验证 run**
 
-Run: `git push`（本提交含 image.yml，不受 paths-ignore 影响，必触发），Actions 页确认 `image / build & smoke` 全绿、smoke 步骤日志逐条 PASS；随后 `cat .dockerignore` 与 paths-ignore 清单逐行对账一遍。
+Run: `git push`——**实证：仅含 image.yml 自身新增的 push 仍会触发**（run 41202412401，GitHub 对 workflow 文件自身的变更豁免 paths 过滤；后续仅改本文件的提交按 G9 一律手动 `gh workflow run image.yml` 验证，编辑场景未单独实测、dispatch 是兜底通道）。Actions 页确认 `image / build & smoke` 全绿、smoke 步骤日志逐条 PASS；随后 `cat .dockerignore` 与 paths-ignore 清单逐行对账一遍。
 Expected: job 绿；ignore 清单与 .dockerignore 排除面一致（多排=漏门禁、少排=空转）；若 smoke 某步红，按日志修（红＝门禁生效，正是本 job 的价值）。
 附注（Review Focus #6）：此后任何对 image.yml 自身的修改不自触发——按 G9 手动 `workflow_dispatch` 验证后再提交。
 
@@ -408,7 +408,71 @@ git commit -m "docs(develop): CI/CD 章节收口——image/supply-chain/dependa
 
 ---
 
-### Task 7: 构建瘦身——CI 门禁与镜像构建跳过 sources/javadoc（审计 N5）
+### Task 7: 【撤案】构建瘦身（审计 N5）——实测前提不成立
+
+**撤案记录（2026-10-31 执行时）**：Step 1 本地基线 `./mvnw -o -B -DskipTests package` 实测输出
+`Skipping source per configuration` / `Skipping javadoc generation`——pom.xml:45
+`<release.skipAttachments>true</release.skipAttachments>` **缺省即跳过**，sources/javadoc
+附件 jar 只在 release 档产出。N5 的「每轮 package 白产 sources/javadoc」前提错误：插件绑定
+存在但默认短路（「同形不等于同实」的又一实例）。CI 门禁与 Docker 构建本就不付这笔钱，
+镜像 `cp duo-sim-*.jar` 也无 `-sources/-javadoc` 可吸——**不加任何 skip 参数（勿动已验证
+绿的构建面），CHANGELOG 无条目**。原任务五步作废，留档如下备查。
+
+<details><summary>原任务正文（作废留档）</summary>
+
+**Files:**
+- Modify: `.github/workflows/ci.yml`（regression job 的 dependency gate 步）
+- Modify: `Dockerfile`（stage ② 的 `mvn package` 行，约 58 行）
+- Modify: `CHANGELOG.md`（`[未发布]` 补一行）
+
+**Interfaces:**
+- Consumes: 无（纯命令行参数，零 pom 改动）。
+- Produces: 门禁步与镜像构建不再产出 sources/javadoc jar；镜像 `cp duo-sim-*.jar` 通配不再吸入 `-sources/-javadoc` jar，体积同步减负。验证依赖 Task 1（触发面）+ Task 3（image.yml 门禁拦 Dockerfile 回归）。
+
+- [ ] **Step 1: 取 javadoc 健康基线（跳过前确认无 doclint 地雷）**
+
+Run: `./mvnw -B -DskipTests package`（本地 Git Bash，`JAVA_HOME` 指向 JDK 21）
+Expected: `BUILD SUCCESS`——2026-10-27「全仓注释补齐」里程碑后 attach-javadocs 全仓通过，基线成立；若失败先修注释再回本任务。
+
+- [ ] **Step 2: ci.yml 门禁步加 skip 参数**
+
+```yaml
+      - name: dependency gate (no unused/undeclared deps)
+        # N5：sources/javadoc jar 无人消费（IDE attach 由本地构建承担）——门禁只到
+        # verify 取 analyze-only，跳过纯打包工时。javadoc 兼任的「注释可编译」门禁
+        # 以 Step 1 基线让位，防回归靠本地 package 习惯（如实声明）。
+        run: ./mvnw -B -Dduo.docker.enabled=false -Dquality -DskipTests -Dmaven.source.skip=true -Dmaven.javadoc.skip=true verify
+```
+
+- [ ] **Step 3: Dockerfile stage ② 同款**
+
+```dockerfile
+RUN mvn -B -DskipTests -Dmaven.source.skip=true -Dmaven.javadoc.skip=true package dependency:copy-dependencies -DoutputDirectory=/repo/libs \
+    && cp duo-sim-*/target/duo-sim-*.jar /repo/libs/
+```
+
+（顺带收益：`cp duo-sim-*.jar` 通配此前会把 8 模块的 `-sources/-javadoc` jar 一并吸进镜像 `libs/`，跳过后自然消失。）
+
+- [ ] **Step 4: CHANGELOG 补行 + Commit**
+
+`[未发布]` 下补：
+
+```markdown
+- **构建瘦身（2026-10-31）**：CI 门禁与镜像构建跳过 sources/javadoc jar——
+  门禁工时与镜像 `libs/` 同步减负（审计 N5）。
+```
+
+```bash
+git add .github/workflows/ci.yml Dockerfile CHANGELOG.md
+git commit -m "build: CI 门禁与镜像构建跳过 sources/javadoc——工时与镜像体积双收（N5）"
+```
+
+- [ ] **Step 5: 推送验证**
+
+Run: `git push` → regression job 绿（gate 步时长可见缩短）+ image.yml 绿（镜像构建通过、冒烟 26/26）。
+Expected: 双绿；image.yml 红则按日志修（门禁生效即价值）。
+
+</details>
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`（regression job 的 dependency gate 步）
@@ -467,14 +531,26 @@ Expected: 双绿；image.yml 红则按日志修（门禁生效即价值）。
 ## 红线自查记录
 
 - **占位符扫描**：`<Step 1 实取 SHA>` 为执行时现场取值的显式指令（附取值命令），非 TBD；其余 action SHA 全部照抄 ci.yml 已 pin 值，无臆造。✓
-- **接口一致性**：workflow 名 `image` 在 Task 3→6、job 名 `supply-chain` 在 Task 5→6、`scripts/duo-smoke-docker.sh` 在 Task 2→3/6 拼写一致；image.yml 与 ci.yml 触发面列表同族；`-Dmaven.source.skip=true -Dmaven.javadoc.skip=true` 在 Task 7 两处拼写一致。✓
+- **接口一致性**：workflow 名 `image` 在 Task 3→6、job 名 `supply-chain` 在 Task 5→6、`scripts/duo-smoke-docker.sh` 在 Task 2→3/6 拼写一致；image.yml 与 ci.yml 触发面列表同族。✓（Task 7 撤案，skip 参数项移除）
 - **paths-ignore 对账**：与 .dockerignore 排除面一致（docs/、*.md、architecture-ui、.github、LICENSE）；`scripts/` **不在** ignore 内——冒烟脚本变更必须重跑门禁。✓
-- **Review Focus 落实**：#2/#3/#5 由 Task 3 步骤直接踩到；#1 为既有 Dockerfile 行为（失败路径由 `mvn package` 退出码保证）；#4 由 Task 4 Step 3 踩到；#6 由 Task 3 Step 3 附注踩到；#7 由 Task 7 Step 1 踩到。✓
-- **依赖顺序**：Task 1 →（推送触发能力）→ Task 3/5 的 CI 验证；Task 2 → Task 3 的脚本路径；Task 4 合 master 后 Step 3 收尾；Task 7 的验证依赖 Task 1（触发面）+ Task 3（image.yml 拦 Dockerfile 回归）。执行按序号进行。✓
+- **Review Focus 落实**：#2/#3/#5 由 Task 3 步骤直接踩到；#1 为既有 Dockerfile 行为（失败路径由 `mvn package` 退出码保证）；#4 由 Task 4 Step 3 踩到；#6 由 Task 3 Step 3 附注踩到；#7 随 N5 撤案移除。✓
+- **依赖顺序**：Task 1 →（推送触发能力）→ Task 3/5 的 CI 验证；Task 2 → Task 3 的脚本路径；Task 4 合 master 后 Step 3 收尾。执行按序号进行。✓
 
 ## 执行方式
 
 任务间接口依赖少、全为配置与文档、每任务验证成本低——推荐**本会话逐任务**执行（自己按序跑完，最后整分支评审一次）。收尾两件均在合入 master 后：Task 4 Step 3（dependabot 首轮 PR 实测）与「设置面手动项」两开关。
+
+### 执行记录（2026-10-31 本会话实跑）
+
+| 任务 | 提交 | 验证 |
+| --- | --- | --- |
+| Task 1 | `797bcf2`（触发面）+ `07e2a1e`（timeout） | run 41202412349 三 job 绿（scale skip 符合设计；初跑 41202138477 被同分支新推送顶替，concurrency 设计行为） |
+| Task 2 | `ac541a5` | `bash -n` 过 + DEVELOPMENT:166 命中 + 旧路径零残留 |
+| Task 3 | `aabbc66` | 本地预演 26/26（SMOKE_EXIT=0）+ dispatch run 41202437068 绿；实证「仅含 image.yml 自身新增的 push 仍触发」（run 41202412401，被 dispatch 顶掉属并发设计） |
+| Task 4 | `86ff97d`（五生态） | 首轮 PR 实测留待合 master（Step 3） |
+| Task 5 | `623a28f` | dispatch run 41202898858 四 job 全绿；trivy 基线 **27 条 HIGH/CRITICAL**（jackson-core/databind 2.18.2），artifact 校验合法 JSON |
+| Task 6 | `e982653` | docs-only push **无 image run**——paths-ignore 短路实证成立（R2 前提） |
+| Task 7 | — | **撤案**（`release.skipAttachments` 默认 true，前提不成立，见该节） |
 
 ---
 
