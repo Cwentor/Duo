@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.duo.sim.control.ScenarioHost;
 import io.duo.sim.control.rest.RestControlServer;
-import io.duo.sim.kernel.api.ComponentId;
 import io.duo.sim.kernel.api.FaultAction;
 import io.duo.sim.kernel.util.Durations;
 
@@ -21,7 +20,7 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * CLI 主类（M3 T34）：子命令
- * {@code run / serve / stop / inject / status / events / assert / topology / metrics / help}。
+ * {@code run / serve / stop / inject / status / events / assert / topology / metrics / diagnose / help}。
  *
  * <p>两种模式（计划 D2）：
  * <ul>
@@ -144,7 +143,7 @@ public final class DuoCli {
         });
     }
 
-    // ---- serve [yaml] [--port N] [--token T | --token-file F | --insecure-no-auth] [--library-dir D] ----
+    // ---- serve [yaml] [--port N] [--bind A] [--token T | --token-file F | --insecure-no-auth] [--library-dir D] ----
 
     private static int cmdServe(List<String> args) throws Exception {
         String yamlPath = arg(args, 0); // M10：可选——缺省 IDLE 态启动，控制台为主要入口
@@ -154,6 +153,8 @@ public final class DuoCli {
         }
         String portArg = opt(args, "--port");
         int port = portArg == null ? 7788 : Integer.parseInt(portArg);
+        // 绑定地址（缺省回环——控制面不裸奔；容器部署显式 --bind 0.0.0.0，隔离边界交给网络命名空间）
+        String bind = opt(args, "--bind");
         // M10：控制台场景库目录（缺省 ./duo-console-library，启动时创建）
         String libraryDir = opt(args, "--library-dir");
         Path libraryPath = Path.of(libraryDir == null ? "./duo-console-library" : libraryDir);
@@ -190,12 +191,14 @@ public final class DuoCli {
         if (yamlPath != null) {
             host.start(Path.of(yamlPath));
             // SUT 自行退出时自动固化结果（客户端只需轮询 status，无需触发停止）
-            host.awaitFinishInBackground(30 * 60_000L);
+            // 预算与 REST 启动路径同源（评审 P3：此前 serve 30min / REST 1h 两套硬编码）
+            host.awaitFinishInBackground(
+                    io.duo.sim.control.rest.RestControlServer.SCENARIO_FINISH_TIMEOUT.toMillis());
         }
-        int actual = server.start(port);
+        int actual = server.start(port, bind == null ? "127.0.0.1" : bind);
         // 脚本据此发现端口（--port 0 时为实际分配值）；令牌**不**回显（它已经在客户端手里，
         // 回显只会把它写进日志与终端历史——审计 M-8 的口径泄露同源问题）。
-        System.out.println("listening on http://127.0.0.1:" + actual
+        System.out.println("listening on http://" + (bind == null ? "127.0.0.1" : bind) + ":" + actual
                 + (insecure ? " (auth: none)" : " (auth: bearer token)")
                 + " (library: " + libraryPath.toAbsolutePath() + ")"
                 + (yamlPath == null
@@ -513,15 +516,11 @@ public final class DuoCli {
 
     // ---- 解析辅助 ----
 
-    /** {@code workers[2]} → 实例级地址；{@code workers} → 整组。 */
+    /** {@code workers[2]} → 实例级地址；{@code workers} → 整组（解析/校验单点见
+     *  FaultAction.ComponentAddress.parse——评审 R14：此前 CLI 版不查下标合法性，
+     *  {@code workers[2x]} 以裸 NumberFormatException 冒出，现归入统一错误消息）。 */
     private static FaultAction.ComponentAddress parseTarget(String target) {
-        int bracket = target.indexOf('[');
-        if (bracket < 0) {
-            return FaultAction.ComponentAddress.of(new ComponentId(target.trim()));
-        }
-        int idx = Integer.parseInt(target.substring(bracket + 1, target.length() - 1));
-        return FaultAction.ComponentAddress.ofInstance(
-                new ComponentId(target.substring(0, bracket)), idx);
+        return FaultAction.ComponentAddress.parse(target);
     }
 
     /** 解析 {@code "crash workers[2]"} / {@code "registry-flap zk 5s"} 形式的动作规格。 */
@@ -562,11 +561,12 @@ public final class DuoCli {
                   run <scenario.yaml> [--keep] [--name N] [--wait]
                         [--inject-after <dur> "<action> <target>"]
                                                     启动场景；--inject-after 到点自动注入并等待结果
-                  serve [scenario.yaml] [--port N] [--token T | --token-file F | --insecure-no-auth]
+                  serve [scenario.yaml] [--port N] [--bind A] [--token T | --token-file F | --insecure-no-auth]
                                                      [--library-dir D]
                                                      独立进程承载场景 + REST 服务（跨进程模式服务端）；
                                                      场景参数可选（M10：缺省 IDLE 态启动，控制台为主要入口）；
                                                      --library-dir 场景库目录（缺省 ./duo-console-library）；
+                                                     --bind 监听地址（缺省 127.0.0.1；容器部署传 0.0.0.0）；
                                                      令牌必填（缺省读环境变量 DUO_TOKEN），
                                                      --insecure-no-auth 显式关闭认证（仅本机临时用）
                   stop [--url X] [--token T]        停止场景

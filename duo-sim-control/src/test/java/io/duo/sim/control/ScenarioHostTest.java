@@ -146,7 +146,7 @@ class ScenarioHostTest {
         Path f = writeScenario(tmp, longScenario);
         try (var host = new ScenarioHost()) {
             host.start(f);
-            Thread.sleep(500); // 让派发发生
+            awaitDispatchedFact(host, 30_000); // 断言式注入点（原 sleep(500) 盲等，评审 2026-10-30 P3）
             var action = new FaultAction(FaultAction.CRASH,
                     FaultAction.ComponentAddress.ofInstance(new ComponentId("workers"), 1),
                     Map.of(), null);
@@ -158,6 +158,26 @@ class ScenarioHostTest {
                             .anyMatch(e -> e.get("type").equals("sim.fault-injected")),
                     "injection must appear in the event stream");
         }
+    }
+
+    /**
+     * 断言式等待（照 examples 侧 {@code awaitInFlightTaskOnWorkers2} 先例）：夹具 SUT 的
+     * {@code sut.task-dispatched} 事实出现在事件流才返回——把「注入点＝派发已发生」从
+     * sleep 假设变成断言，超时报前提失败而非静默放过。
+     */
+    private static void awaitDispatchedFact(ScenarioHost host, long timeoutMs)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        while (System.nanoTime() < deadline) {
+            for (Map<String, Object> e : host.eventsSince(0)) {
+                if ("sut.task-dispatched".equals(e.get("type"))) {
+                    return;
+                }
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("no sut.task-dispatched fact within " + timeoutMs
+                + "ms — fixture SUT never reached its dispatch phase (inject precondition)");
     }
 
     @Test
@@ -259,6 +279,45 @@ class ScenarioHostTest {
         try (var host = new ScenarioHost()) {
             host.start(f);
             assertThrows(IllegalStateException.class, () -> host.start(f));
+        }
+    }
+
+    /**
+     * SUT 启动失败回滚（评审 A1，2026-10-30）：{@code startDirectDependencies} 已把依赖
+     * start+adopt，此前 SUT 本体启动失败时 {@code ScenarioEngine.stop()} 因
+     * {@code started=false} 短路，依赖组件永不收摊——长驻 serve 进程里每次失败都泄漏
+     * 端口/连接且重试不可回收。回滚后事件流必须出现依赖的停止事实与一级回滚事件。
+     */
+    @Test
+    void failedSutLaunchRollsBackStartedDependencies(@TempDir Path tmp) throws Exception {
+        String yaml = """
+                name: sut-rollback
+                topology:
+                  - id: zk
+                    contract: registry
+                    tier: virtual
+                  - id: master
+                    contract: scheduler
+                    tier: virtual
+                    sut: true
+                    launch: { mode: in-process, main: io.duo.sim.control.testfixture.NoSuchSutMain }
+                    config: { dag.tasks: "a" }
+                    exposes: [{ contract: scheduler, port: 0 }]
+                    wiring:
+                      registry: { node: zk, contract: registry }
+                """;
+        Path f = writeScenario(tmp, yaml);
+        try (var host = new ScenarioHost()) {
+            var e = assertThrows(IllegalStateException.class, () -> host.start(f));
+            assertTrue(String.valueOf(e).contains("cannot launch SUT main"), String.valueOf(e));
+            var types = host.eventsSince(0).stream()
+                    .map(ev -> String.valueOf(ev.get("type"))).toList();
+            assertTrue(types.contains("sim.registry-stopped"),
+                    "started dependency must be rolled back (stopped), events=" + types);
+            assertTrue(types.contains("sim.sut-start-rollback"),
+                    "rollback must be a first-class event, events=" + types);
+            assertEquals(1, types.stream().filter("sim.registry-stopped"::equals).count(),
+                    "dependency must be removed from the teardown sequence (no double stop)");
         }
     }
 }

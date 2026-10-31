@@ -80,6 +80,10 @@ class FailoverAcceptanceTest {
                     () -> "no workers-3 restart: " + types);
             assertTrue(events.stream().anyMatch(e -> e.type().equals("sut.dag-terminal")),
                     () -> "no dag-terminal: " + types);
+            // F2（评审 2026-10-30）：dag-terminal 基数恒 1——此前 DemoScheduler 在状态机回调与
+            // run() 循环退出各发一条（容器实测双发），tier parity 被破坏；CAS 收敛后钉死
+            assertEquals(1, events.stream().filter(e -> e.type().equals("sut.dag-terminal")).count(),
+                    "dag-terminal must fire exactly once");
 
             // ---- 录制落盘（T21）----
             // 录制是审查材料（§11：真实时钟不承诺逐字节重放），故断言"关键事实可回读"

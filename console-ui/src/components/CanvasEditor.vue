@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { VueFlow, type Connection, type Edge, type EdgeMouseEvent, type Node } from '@vue-flow/core'
+import { computed, ref, shallowRef, watch } from 'vue'
+import { VueFlow, type Connection, type Edge, type EdgeMouseEvent, type Node, type NodeDragEvent } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import type { ScenarioView } from '../model/scenario'
@@ -17,11 +17,13 @@ const emit = defineEmits<{
 // 布局坐标只存 localStorage（规格 §5.6）：改位置不触发 YAML 变更
 const layout: Record<string, NodePos> = loadLayout(props.scenarioId)
 
-const nodes = ref<Node[]>([])
+// shallowRef：vue-flow 的 Node 泛型很深，ref 的 UnwrapRef 递归实例化会 TS2589 爆栈；
+// 画布节点本来就是整体重建（rebuildNodes 换数组引用），不需要深层响应式
+const nodes = shallowRef<Node[]>([])
 
-function rebuildNodes() {
+function rebuildNodes(): void {
   const ids = new Set(props.view.nodes.map((n) => n.id))
-  nodes.value = props.view.nodes.map((n, i) => {
+  nodes.value = props.view.nodes.map((n, i): Node => {
     // 运行态状态灯：实例故障数来自事件推导（终审 I-4——规格 §4「N/M 实例故障」）
     const faultCount = props.faults?.[n.id]?.length ?? 0
     const faultLine = faultCount > 0 ? `\n⚠ ${faultCount}/${n.count ?? 1} 实例故障` : ''
@@ -61,8 +63,8 @@ function onEdgeDoubleClick(e: EdgeMouseEvent) {
   if (parts.length === 3) emit('disconnect', parts[0], parts[1])
 }
 
-function onNodeDragStop(_e: unknown, node: Node) {
-  layout[node.id] = { ...node.position }
+function onNodeDragStop(e: NodeDragEvent) {
+  layout[e.node.id] = { ...e.node.position }
   saveLayout(props.scenarioId, layout)
 }
 </script>

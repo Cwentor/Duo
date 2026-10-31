@@ -143,11 +143,25 @@ class RestControlServerTest {
 
         // DELETE 停止 → 200（异步收尾：立刻回状态，不阻塞在收尾上）
         assertEquals(200, request("DELETE", "/scenario", null).statusCode());
-        var stopped = request("GET", "/scenario/status", null);
-        assertEquals(200, stopped.statusCode());
-        assertTrue(stopped.body().contains("FINISHED") || stopped.body().contains("FAILED")
-                        || stopped.body().contains("RUNNING"),
-                () -> "after stop: " + stopped.body());
+        // 终态断言式等待（评审 2026-10-30 P3）：停止异步，刚 DELETE 短暂 RUNNING 属正常；
+        // 等 status 收敛到终态（FINISHED|FAILED）再断言——超时即失败，不接受 RUNNING 过关
+        String stopped = awaitTerminalState(10_000);
+        assertTrue(stopped.contains("FINISHED") || stopped.contains("FAILED"),
+                () -> "after stop (terminal wait): " + stopped);
+    }
+
+    /** 轮询 /scenario/status 直至终态（FINISHED/FAILED）；超时返回最后快照供断言报错。 */
+    private String awaitTerminalState(long timeoutMs) throws Exception {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        String last = "";
+        while (System.nanoTime() < deadline) {
+            last = request("GET", "/scenario/status", null).body();
+            if (last.contains("\"state\":\"FINISHED\"") || last.contains("\"state\":\"FAILED\"")) {
+                return last;
+            }
+            Thread.sleep(50);
+        }
+        return last;
     }
 
     @Test
@@ -415,6 +429,53 @@ class RestControlServerTest {
                     .readValue(resp2.body(), java.util.Map.class);
             assertEquals(0, ((java.util.List<?>) body2.get("events")).size(),
                     "since=next must yield no repeated events");
+        } finally {
+            server.close();
+            host.close();
+        }
+    }
+
+    /** 容器部署前提（评审 2026-10-30）：绑定地址可配置——显式 0.0.0.0 后回环仍可达；缺省重载不变。 */
+    @Test
+    void bindAddressIsConfigurableAndLoopbackStaysReachable() throws Exception {
+        ScenarioHost host = new ScenarioHost();
+        RestControlServer server = new RestControlServer(host, RestControlServer.Auth.INSECURE, null);
+        try {
+            int port = server.start(0, "0.0.0.0");
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            var resp = client.send(HttpRequest.newBuilder(URI.create(
+                            "http://127.0.0.1:" + port + "/health")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, resp.statusCode(), resp.body());
+        } finally {
+            server.close();
+            host.close();
+        }
+    }
+
+    /**
+     * Host 守卫随绑定面联动（评审 2026-10-30 P1）：绑定 0.0.0.0 时非回环 Host 放行
+     * （否则容器/局域网部署在 token 校验之前就被 403 挡死）；缺省回环绑定时照旧 403。
+     */
+    @Test
+    void remoteHostAllowedOnlyWhenBoundNonLoopback() throws Exception {
+        ScenarioHost host = new ScenarioHost();
+        RestControlServer server = new RestControlServer(host, RestControlServer.Auth.TOKEN,
+                TestTokens.TOKEN);
+        try {
+            int loopbackPort = server.start(0);
+            assertEquals(403, rawRequest(loopbackPort, "GET /health HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + loopbackPort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "default loopback bind must keep rejecting foreign Host");
+            server.close();
+
+            int remotePort = server.start(0, "0.0.0.0");
+            assertEquals(200, rawRequest(remotePort, "GET /health HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + remotePort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "non-loopback bind opens the Host guard for remote clients");
+            assertEquals(401, rawRequest(remotePort, "GET /scenario/status HTTP/1.1\r\n"
+                            + "Host: 10.0.0.9:" + remotePort + "\r\nConnection: close\r\n\r\n")
+                    .statusCode(), "guard relaxation must not waive authentication");
         } finally {
             server.close();
             host.close();

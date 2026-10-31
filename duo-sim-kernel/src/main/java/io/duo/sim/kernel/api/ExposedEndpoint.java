@@ -17,6 +17,9 @@ public record ExposedEndpoint(Contract contract, String kind, String address) {
     /** 文件系统路径端点（address＝路径；filestore 契约的 FS_PATH 形态）。 */
     public static final String KIND_FS = "fs";
 
+    /** 端点告知行的固定前缀（§7.3 行/键格式 {@code duo.endpoint.<contract>=<endpoint>}；全仓唯一拼写点）。 */
+    public static final String LINE_PREFIX = "duo.endpoint.";
+
     /** 构造 TCP 端点（address＝host:port）。 */
     public static ExposedEndpoint tcp(Contract contract, String host, int port) {
         return new ExposedEndpoint(contract, KIND_TCP, host + ":" + port);
@@ -29,11 +32,11 @@ public record ExposedEndpoint(Contract contract, String kind, String address) {
 
     /** 行格式端点串（供 stdout 兜底/配置文件，§7.3）。 */
     public String asLine() {
-        return "duo.endpoint." + contract.name().toLowerCase() + "=" + address;
+        return LINE_PREFIX + contract.name().toLowerCase() + "=" + address;
     }
 
     /** 供端点清单/配置文件的键值对。 */
     public Map<String, String> asConfigEntry() {
-        return Map.of("duo.endpoint." + contract.name().toLowerCase(), address);
+        return Map.of(LINE_PREFIX + contract.name().toLowerCase(), address);
     }
 }

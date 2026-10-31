@@ -1,0 +1,64 @@
+# 镜像门禁（2026-10-31 审计 P1-1 + 赘余审查 R2）：独立 workflow 而非 ci.yml 内 job——
+# .dockerignore 已把 docs/、*.md、architecture-ui/、.github/ 排除在构建上下文外，
+# docs-only 提交产出的镜像与上一次逐字节相同，paths-ignore 短路这类空转
+# （本仓 docs 类提交占比高，非理论问题）。
+# 注意：本文件自身在 paths-ignore 内——改本文件不自触发，按 G9 纪律手动 dispatch 验证。
+# nightly 的镜像构建+trivy 扫描归 ci.yml 的 supply-chain job（无双构建，R2 分工）。
+name: image
+
+on:
+  push:
+    # 触发面与 ci.yml 同族——两处列表须同步改
+    branches: [master, main, dev, 'review/**', 'feat/**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'architecture-ui/**'   # 不进构建上下文（.dockerignore 对账）
+      - '.github/**'
+      - 'LICENSE'
+  pull_request:
+    # GitHub Actions 不支持 YAML 锚点，paths-ignore 两处显式重复
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'architecture-ui/**'
+      - '.github/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: build & smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45   # 缺省 360 分钟挂死面收口（审计 N4）
+    # P1-1：Dockerfile 本体此前从未被 CI 构建——SPA 产物路径 / 模块 jar 拷贝 /
+    # libs 收敛任何一处被日常改动破坏，CI 全绿但镜像已坏。
+    # 构建 + 26 项 API 冒烟（G-W2 等价）；令牌为一次性临时值（C-1 姿态不变）。
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build image
+        run: docker build -t duo-sim:ci .
+      - name: run container
+        run: |
+          docker rm -f duo || true
+          docker run -d --name duo -p 8080:8080 -e DUO_TOKEN=ci-smoke-token duo-sim:ci
+      - name: wait for /health (JVM 就绪，60s 上限)
+        run: |
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health | grep -q '"ok":true'; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then docker logs duo; exit 1; fi
+      - name: smoke (26-check API round-trip)
+        run: BASE=http://127.0.0.1:8080 DUO_TOKEN=ci-smoke-token bash scripts/duo-smoke-docker.sh
+      - name: cleanup
+        if: always()
+        run: docker rm -f duo || true

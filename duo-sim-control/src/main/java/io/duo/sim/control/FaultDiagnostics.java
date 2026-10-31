@@ -162,6 +162,22 @@ public final class FaultDiagnostics {
         List<Chain> chains = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
 
+        // F1（评审 2026-10-30）：dispatch 失败的注入会背靠背发布 fault-injected + 
+        // fault-inject-failed（ScenarioRuntime.inject 的因果顺序——"因"必须先落流）。
+        // 两者是**同一次注入尝试**的两半，此前被分析成"已下达无反应"+"被拒绝"两条链、
+        // 两个 gap（幽灵链）。配对规则＝failed 事件**紧随** injected 且 action 载荷一致
+        // （同一 inject() 调用内 dispatch 同步抛出，中间不可能插入第三条事件）。
+        var pairedFailures = new java.util.HashSet<Integer>();
+        for (int i = 1; i < events.size(); i++) {
+            Event prev = events.get(i - 1);
+            Event cur = events.get(i);
+            if (isInjectFailed(cur) && isInjected(prev)
+                    && String.valueOf(payload(cur).getOrDefault("action", "?"))
+                            .equals(String.valueOf(payload(prev).getOrDefault("action", "?")))) {
+                pairedFailures.add(i);
+            }
+        }
+
         for (int i = 0; i < events.size(); i++) {
             Event e = events.get(i);
             String type = e.type() == null ? "" : e.type();
@@ -173,12 +189,17 @@ public final class FaultDiagnostics {
                 Map<String, String[]> times = new LinkedHashMap<>();
                 boolean cleared = false;
                 boolean finished = false;
+                String dispatchFailure = null;
                 int end = events.size();
                 for (int j = i + 1; j < events.size(); j++) {
                     Event f = events.get(j);
                     String ft = f.type() == null ? "" : f.type();
                     if (ft.equals("sim.fault-injected") || ft.equals("sim.fault-inject-failed")) {
                         end = j; // 下一次注入：本次窗口结束
+                        if (ft.equals("sim.fault-inject-failed") && pairedFailures.contains(j)) {
+                            dispatchFailure = String.valueOf(payload(f)
+                                    .getOrDefault("reason", "<none>"));
+                        }
                         break;
                     }
                     if (ft.equals("sim.scenario-finished") || ft.equals("sim.sut-exited")
@@ -213,13 +234,18 @@ public final class FaultDiagnostics {
                     total += en.getValue()[0];
                 }
                 kinds.sort((a, b) -> Integer.compare(b.count(), a.count()));
-                Chain c = new Chain(i, target, action, null, cleared, reactions, kinds, total, end);
+                Chain c = new Chain(i, target, action, dispatchFailure, cleared, reactions,
+                        kinds, total, end);
                 chains.add(c);
-                if (total == 0) {
+                if (dispatchFailure != null) {
+                    gaps.add("注入 #" + i + "(" + action + " → " + target
+                            + ") 被拒绝：" + dispatchFailure);
+                } else if (total == 0) {
                     gaps.add("注入 #" + i + "(" + action + " → " + target
                             + ") 之后没有任何 sut.* 事实：注入已下达但被测对象无反应");
                 }
-            } else if (type.equals("sim.fault-inject-failed")) {
+            } else if (type.equals("sim.fault-inject-failed") && !pairedFailures.contains(i)) {
+                // 配对成功的 failed 已折进上一条链（单一 REJECTED 链 + 单一 gap），不再单列
                 String target = e.sourceId();
                 String action = String.valueOf(payload(e).getOrDefault("action", "?"));
                 String reason = String.valueOf(payload(e).getOrDefault("reason", "<none>"));
@@ -229,6 +255,14 @@ public final class FaultDiagnostics {
         }
         return new Report(chains, assertionDetails == null ? List.of() : assertionDetails,
                 events.size(), gaps);
+    }
+
+    private static boolean isInjected(Event e) {
+        return e.type() != null && e.type().equals("sim.fault-injected");
+    }
+
+    private static boolean isInjectFailed(Event e) {
+        return e.type() != null && e.type().equals("sim.fault-inject-failed");
     }
 
     @SuppressWarnings("unchecked")

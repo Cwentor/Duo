@@ -12,7 +12,7 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
-[快速开始](#5-快速开始) · [场景 DSL](docs/SCENARIO-DSL.md) · [架构详解](docs/ARCHITECTURE.md) · [路线图](docs/ROADMAP.md) · [文档索引](#9-文档索引)
+[快速开始](#5-快速开始) · [场景 DSL](docs/SCENARIO-DSL.md) · [架构详解](docs/ARCHITECTURE.md) · [路线图](docs/ROADMAP.md) · [文档索引](#8-文档索引)
 
 </div>
 
@@ -26,7 +26,7 @@
 | 版本 | `0.1.0-SNAPSHOT`（`io.duo:duo-sim-parent`） |
 | 技术栈 | Java 21（LTS）· Maven 多模块 · SnakeYAML · Jackson · Curator/H2/Fabric8/Testcontainers |
 | 阶段状态 | **M0–M8 均已实施完成并验收；差距清单 G1–G11 全部闭合**（唯一保留项：M8 交付物 4「加速时钟评估」等触发条件）；**M9 Phase A 完成（2026-09-25）：首个真实第三方系统 DolphinScheduler 3.4.3 registry-flap 演练全绿**；M9 Phase B（DS「会话可存活」故障面）未启动，属后续轮次；**M10 完成（2026-10-01）：Web 控制台（Java 控制面 `/api/**` + `console-ui` Vue3 SPA，`duo serve` 同源托管）** |
-| 最近全量回归 | 2026-10-01 · `.\mvnw.cmd -o -B test "-Dduo.docker.enabled=false"` → **423 测 / 0 失败 / 0 错误 / 12 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：容器档 10 + 压测 1 + M9 真实 SUT 演练门控 1）；前端 `console-ui` Vitest **46 测 / 0 失败**（另计，不在 Maven reactor 内） |
+| 最近全量回归 | 2026-10-31（分支 `review/code-structure-audit`，评审 2026-10-30 修复轮收口，报告见 [docs/code-review-2026-10-30.md](docs/code-review-2026-10-30.md)）· `./mvnw -o -B test` → **461 测 / 0 失败 / 0 错误 / 2 skip**（逐模块分布见 [开发指南 §3.2](docs/DEVELOPMENT.md)；skip 逐条可解释：压测 1 + M9 真实 SUT 演练门控 1；容器档 10 条在本机 Docker 可用时**实跑**——PG 6 + ZK 4）；前端 `console-ui` Vitest **46 测 / 0 失败** + `vue-tsc` 类型门禁零错误（另计，不在 Maven reactor 内） |
 | 质量门禁 | `.\mvnw.cmd -o -B "-Dquality" -DskipTests verify` → 依赖"零未声明/零未使用"（已进 CI） |
 | 设计依据 | [设计文档 v1.0（冻结）](docs/superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md) |
 
@@ -43,9 +43,9 @@
 - [4. 模块地图](#4-模块地图)
 - [5. 快速开始](#5-快速开始) — [5.1 环境](#51-环境) · [5.2 构建与测试](#52-构建与测试) · [5.3 跑一个场景（CLI 控制面）](#53-跑一个场景cli-控制面) · [5.4 观测面](#54-观测面三条通道怎么用m8) · [5.5 场景测试（JUnit5）](#55-写一个场景测试junit5)
 - [6. 契约 × 档位](#6-契约--档位当前已实现的实现清单)
-- [7. 一个最小场景](#7-一个最小场景)
-- [8. 现状与差距](#8-现状与差距一页速览)
-- [9. 文档索引](#9-文档索引)
+- [7. 现状与差距](#7-现状与差距一页速览)
+- [8. 文档索引](#8-文档索引)
+- [9. 致谢](#9-致谢)
 - [10. 许可](#10-许可)
 
 ---
@@ -59,22 +59,12 @@
 大项目分别验证的路线——「用替身/假节点欺骗真实系统」（KWOK 路线）与「在 JVM 内/容器内跑
 真实协议的内存化替身」（Curator / Fabric8 / H2 / Testcontainers 路线）。Duo 的贡献是把它们
 **合成一个统一框架**，并补上四个缺口：可组合、可注入故障、可换档、秒级反馈回路。
-
-| 参考项目 | 一句话 | Duo 借鉴了哪一点 | 落地位置 |
-| --- | --- | --- | --- |
-| [KWOK](https://github.com/kubernetes-sigs/kwok)（Kubernetes Without Kubelet） | 无 kubelet 的 K8s 模拟集群 | 「替身骗真系统」：被测系统之外全换轻量伪造件，只留真 SUT | `virtual` 档（`VirtualWorker`/`VirtualScheduler` 等） |
-| [Apache Curator](https://github.com/apache/curator) | ZooKeeper 客户端与测试设施 | 「真协议、轻量内存化」：同进程给 SUT 暴露真实 ZK 端口 | `duo-sim-embedded` 的 `CuratorRegistry` |
-| [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client) | K8s Java 客户端 + Mock Server | 中间件「内存替身化」且保留真实 K8s REST 协议 | `duo-sim-embedded` 的 `Fabric8K8sMock` |
-| [H2 Database](https://github.com/h2database/h2database) | 内嵌/内存 SQL 数据库 | 存储契约的内存档替身（真 JDBC URL） | `duo-sim-embedded` 的 `H2Store` |
-| [Testcontainers](https://github.com/testcontainers/testcontainers-java) | 按需拉起真容器 | 「假的不够时按需上真的」：container 档真 ZooKeeper / 真 PostgreSQL | `ZookeeperContainerRegistry` / `PostgresContainerStore` |
-| [Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) | 真实分布式调度系统 | **首个真实第三方 SUT**（M9 Phase A：3.4.3 registry-flap 演练全绿） | `duo-sim-examples` 的 `DsFailoverAcceptanceTest` |
+逐项致谢见 **[§9 致谢](#9-致谢)**。
 
 Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可组装成任意链路拓扑的统一仿真框架**——
-内核只认识「契约」，不认识任何具体产品。
-
-> **关于「背书」的如实说明**：上面是 **「借鉴与依赖」**，不是这些项目对 Duo 的 **「官方背书」**——
-> 没有任何项目为本仓库站台或代言。Duo 的可信度来自「复用它们已被广泛验证的思路与成熟实现，
-> 并把缺口（可组合、可注入故障、可换档、秒级回路）补上」。
+内核只认识「契约」，不认识任何具体产品。首个真实第三方 SUT 为
+[Apache DolphinScheduler](https://github.com/apache/dolphinscheduler)（M9 Phase A：3.4.3
+registry-flap 演练全绿，见 [`duo-sim-examples/README.md`](duo-sim-examples/README.md)）。
 
 ## 2. 四个核心概念
 
@@ -115,6 +105,13 @@ Duo 补齐的是缺失的那一层：**行为可配置、故障可注入、可�
                     ▼
         观测面：事件流（唯一事实来源）· 日志（因果链）· 指标（/metrics）· 断言
 ```
+
+### 3.1 交互式架构图（ReactFlow）
+
+> GitHub 的 README 不执行脚本，交互画布部署在 GitHub Pages（`architecture-ui` 由 CI 自动构建部署）：
+> **[打开交互式架构图](https://cwentor.github.io/Duo/)**
+
+[![Duo 架构图（静态快照，点击跳转交互版）](docs/assets/architecture-preview.png)](https://cwentor.github.io/Duo/)
 
 ## 4. 模块地图
 
@@ -170,7 +167,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-21'   # 仅需 JAVA_HOME；Maven 3.9.11 由 wra
 ### 5.2 构建与测试
 
 ```bash
-./mvnw -o -B test "-Dduo.docker.enabled=false"       # 423 测（12 条设计门控 skip：容器档 10 + 压测 1 + M9 真实 SUT 演练 1）
+./mvnw -o -B test "-Dduo.docker.enabled=false"       # 461 测（2 条设计门控 skip：压测 1 + M9 真实 SUT 演练 1；容器档 10 条在有 Docker 的机器上实跑）
 ./mvnw -o -pl duo-sim-examples -am test -Dtest=ScaleAcceptanceTest "-Dduo.scale=true"
                                                      # 千/万 Worker 心跳压测（≥5 分钟，>1GB 堆）
 ./mvnw -o install -DskipTests                        # 安装到本地仓库（跑 CLI 演练前需要）
@@ -271,7 +268,7 @@ duo diagnose --url http://127.0.0.1:<port>
 
 **断链会被显式报出**：注入之后没有任何 `sut.*` 事实 ⇒ 报告打 `MISSING` 并列出原因、
 退出码非 0（"注入下达了但被测对象没反应"是最需要被看见的情形）。
-指标口径（19 个指标族逐个口径 + 已知边界）见 [`docs/METRICS.md`](docs/METRICS.md)。
+指标口径（18 个指标族逐个口径 + 已知边界）见 [`docs/METRICS.md`](docs/METRICS.md)。
 
 ### 5.5 写一个场景测试（JUnit5）
 
@@ -322,58 +319,7 @@ class MyScenarioTest {
 
 档位缺口与补全计划见 [路线图 M5](docs/ROADMAP.md#m5--契约与档位补全广度)。
 
-## 7. 一个最小场景
-
-```yaml
-name: worker-crash-failover
-topology:
-  - id: zk
-    contract: registry
-    tier: virtual                    # 进程内状态机（无端点）→ wiring 缺省推断 direct
-  - id: master
-    contract: scheduler
-    tier: real
-    sut: true                        # 全场景恰好一个
-    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
-    config: { dag.tasks: "job-a,job-b,job-c,job-d" }
-    exposes: [{ contract: scheduler, port: 0 }]      # port 0 = 内核分配
-    wiring:
-      registry: { node: zk, contract: registry }
-  - id: workers
-    contract: worker
-    tier: virtual
-    count: 4
-    capacity: { slots: 1 }
-    wiring:
-      registry: { node: zk, contract: registry }
-behaviors:
-  profiles:
-    default: { duration: 15s, jitter: 0.1, successRate: 1.0 }
-  bindings:
-    - node: workers
-      profile: default
-timeline:
-  - at: 10s
-    action: crash
-    target: workers[3]               # 实例下标从 1 开始
-  - at: 27s
-    action: restart
-    target: workers[3]
-assertions:
-  - affectedTasksAtLeast: { min: 1 } # 防空真守护
-  - failoverWithin: { seconds: 30 }
-  - noTaskLost: { requireAllSuccess: true }
-  - eventSequence: [sim.fault-injected, sut.task-retry]
-```
-
-字段全集、校验规则与断言语义：[`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md)。
-
-> **换到 worker 侧**：把 `sut: true` 从 `master` 移到 `workers` 节点（`tier: real`、
-> `launch.main: io.duo.sim.examples.worker.RealWorkerSut`），master 改回 `tier: virtual` 即可——
-> SUT 变成被调度方，其余 YAML 结构不变。完整例子见
-> [`m0-acceptance-real-worker-sut.yaml`](duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml)。
-
-## 8. 现状与差距（一页速览）
+## 7. 现状与差距（一页速览）
 
 | 原始目标（设计 §2） | 现状 | 证据 / 缺口 |
 | --- | --- | --- |
@@ -385,7 +331,7 @@ assertions:
 | 6 真实反馈（真协议端口） | ✅ 已达成 | embedded 档暴露真实 ZK/JDBC/K8s 端口；交互型走 Duo 线协议（**worker 侧也是真协议**：`RealWorkerSut` 经 `FrameConnection` 注册/心跳/领取/回报）；container 档另有真 PostgreSQL + 真 ZK，**已在 CI `container` job 五次取证为绿**（最近一次 run `36115793273` 三作业全绿；本机无 Docker 时 10 条容器用例按设计 skip） |
 | 7 秒级反馈回路（单 JVM 零 Docker） | ✅ 已达成 | 全量回归 **423 测 / 0 失败 / 0 错误 / 12 skip**（10 条容器档因本机无 Docker、1 条未开压测开关、1 条未开 `-Dduo.ds=true` 真实 SUT 演练门控——其常驻守卫 `DsFailoverDrillGuardTest` 无门控进常规回归；`-Dduo.docker.enabled=false` 让「无 Docker」成为确定事实） |
 | 8 CI 友好（JUnit5 + 断言 + 场景入版本库） | ✅ 已达成 | 扩展/断言库 + 标准 Wrapper + CI 三 job（M7；远端连续全绿）+ 发布产物（source/javadoc + CHANGELOG）+ **依赖门禁（`-Dquality`，第 11 轮，已进 CI）** |
-| — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（19 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
+| — 观测面（设计 §11，M8） | ✅ 已达成 | 三条通道全落地：事件流录制（既有）+ 日志（`logback.xml`/`logback-test.xml`，`io.duo.sim.fault` 因果链）+ 指标（18 个指标族的 `/metrics`）；单命令因果链导出 `duo diagnose` |
 | — Web 控制台（M10，D16 推翻「精美 Web 控制台」非目标） | ✅ 已达成 | Java 控制面 `/api/scenarios`（场景库 CRUD/fork/校验）、`/api/capabilities`、`/api/meta`、`/api/inject/clear`、`GET /diagnose`、`/events` 游标 `next`/`dropped`、SPA 静态托管（`/console/**`，CSP `default-src 'self'`）；`console-ui`（Vue3+TS+Vite，构建期 Node）三页＝令牌页/场景库/工作区（画布+属性面板+YAML 抽屉，编辑⇄运行双模式、注入面板、观测三 tab）；产物内嵌 `duo-sim-control` classpath，`duo serve` 同源托管。**内核/场景模块零改动**；Java 423 测 + 前端 Vitest 46 测全绿 |
 
 **一句话总结**：1/4/5/6/7/8 与观测面已达成；2/3 剩的是**广度**而非能力——
@@ -394,14 +340,15 @@ assertions:
 
 完整差距分析与阶段计划见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
-## 9. 文档索引
+## 8. 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | 全仓文档索引与阅读路径 |
+| [交互式架构图](https://cwentor.github.io/Duo/) | ReactFlow 交互画布（源码 [`architecture-ui/`](architecture-ui/README.md)）：点击节点聚焦（放大 + 语义护照 + 上下游高亮）、带箭头的三类连线语义；静态快照见 §3.1 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构详解：模块、SPI、契约与档位、接线规则、事件总线、SUT 适配面、控制面、线协议 |
-| [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
-| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（19 个指标族的语义、刷新时机与已知边界） |
+| [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | 场景 DSL 参考手册（最小场景走读 / 字段全集 / 校验规则 1–8 / 断言语义 / 内置组件 config 键） |
+| [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` 指标口径（18 个指标族的语义、刷新时机与已知边界） |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 开发指南：环境、构建、测试分层、扩展点、约定、已知工程债 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 发展规划：目标达成度盘点、差距清单 G1–G11、阶段计划与验收口径 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策台账：拍板记录（决定/理由/触发条件/落点）与修订记录 |
@@ -411,14 +358,14 @@ assertions:
 | [`README.en.md`](README.en.md) | 统一英文文档（与中文 README 同口径同步维护） |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本策略与未发布/已发布变更 |
 
+## 9. 致谢
+
+- [KWOK](https://github.com/kubernetes-sigs/kwok)：「替身骗真系统」——被测系统之外全换轻量伪造件，只留真 SUT
+- [Apache Curator](https://github.com/apache/curator)：「真协议、轻量内存化」——同进程给 SUT 暴露真实 ZK 端口
+- [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client)：中间件「内存替身化」且保留真实 K8s REST 协议
+- [H2 Database](https://github.com/h2database/h2database)：存储契约的内存档替身（真 JDBC URL）
+- [Testcontainers](https://github.com/testcontainers/testcontainers-java)：「假的不够时按需上真的」——container 档真 ZooKeeper / 真 PostgreSQL
+
 ## 10. 许可
 
-**Apache-2.0**（设计文档 §15 选定，大数据生态惯例）——完整许可文本见仓库根目录 [`LICENSE`](LICENSE)。
-
----
-
-<div align="center">
-
-**Duo** · 用一份 YAML，把大数据链路的故障演练压进秒级反馈回路
-
-</div>
+**Apache-2.0**

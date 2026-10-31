@@ -3,9 +3,9 @@
 **控制面**：REST + CLI 热注入（M3）＋ Web 控制台后端 `/api/**` 与 SPA 托管（M10）。
 
 - 依赖：`duo-sim-kernel`、`duo-sim-scenario`、`jackson-databind`、`slf4j-api`
-- 测试：**46 条，本模块 `src/test` 内执行**（`./mvnw -o -pl duo-sim-control -am test`；2026-10-25 实测）——
-  `ScenarioHostTest` 10、`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、
-  `RestControlServerTest` 14、`RestConsoleApiTest` 15。
+- 测试：**52 条，本模块 `src/test` 内执行**（`./mvnw -o -pl duo-sim-control -am test`；2026-10-31 实测）——
+  `ScenarioHostTest` 11、`ScenarioHostFaultControlTest` 2、`ScenarioLibraryTest` 5、
+  `RestControlServerTest` 16、`RestConsoleApiTest` 15、`FaultDiagnosticsTest` 3（2026-10-30 评审轮：bind/远程 Host 守卫、warnings 契约、诊断链配对）。
   与示例强耦合的编排用例（`DuoCliTest` 15 条、`ControlPlaneAcceptanceTest`）**留在 `duo-sim-examples`**，
   避免 `control ↔ examples` 循环依赖（本模块以 `test` 作用域依赖 `components`，依赖方向仍单向）
 

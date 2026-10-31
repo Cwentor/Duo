@@ -20,11 +20,6 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 /**
  * store 契约的 container 档实现（M5）：本地 Docker 按需拉起**真 PostgreSQL 容器**
@@ -48,6 +43,8 @@ import java.util.function.Consumer;
  *       {@code LogMessageWaitStrategy} + 本类启动期的 JDBC 探活）；</li>
  *   <li>重启语义：H2 可 stop→start（同 URL），container 档**不可**（见下）。</li>
  * </ul>
+ * 连接/事务/计量层与 embedded 档共享同一骨架（{@link JdbcStoreSupport}，评审 R1）；
+ * 本类只保留 container 特有面：容器生命周期、URL 拒配与凭据拼装、restart 守卫、health。
  *
  * <p><b>可观测（§5）</b>：{@code sim.store-started}（载荷带 {@code kind=container}，
  * 与 {@code ZookeeperContainerRegistry} 的诊断口径一致）、{@code sim.store-stopped} /
@@ -88,7 +85,7 @@ import java.util.function.Consumer;
  * {@code jdbc:tc:} 容器驱动（{@code ContainerDatabaseDriver} 同因）、R2DBC 变体
  * （2.0.5 无 {@code org.testcontainers.r2dbc.*}）——三者均不在本类路径上。
  */
-public final class PostgresContainerStore implements VirtualComponent, StoreContract {
+public final class PostgresContainerStore extends JdbcStoreSupport implements VirtualComponent {
 
     /** 缺省镜像（固定 tag：不用 latest，保证可复现；alpine 体积小、启动快）。 */
     public static final String DEFAULT_IMAGE = "postgres:16-alpine";
@@ -105,18 +102,11 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
-    private volatile boolean running;
     private volatile String jdbcUrl;
     private volatile long slowQueryMillis = 1000;
     /** 容器句柄（start 建立，stop 释放）。 */
     private volatile PostgreSQLContainer container;
     private final String image;
-
-    private final AtomicLong executedStatements = new AtomicLong();
-    private final AtomicInteger activeConnections = new AtomicInteger();
-    /** 经 {@link #openConnection()} 交给 SUT/测试、由本组件在 stop 时兜底关闭的连接。 */
-    private final List<Connection> connections = new CopyOnWriteArrayList<>();
-    private final Map<String, Long> slowQueries = new ConcurrentHashMap<>();
 
     /** 缺省镜像构造（{@link #DEFAULT_IMAGE}，固定 tag——版本漂移即破坏「真 PostgreSQL 语义」的可比性）。 */
     public PostgresContainerStore() {
@@ -173,7 +163,7 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
                     throw new SQLException("JDBC probe reported an invalid connection");
                 }
             }
-            running = true;
+            markRunning(true);
             // 安全审计 2026-09-20 复核 M-5：事件流是跨模块公开面（→ JSONL → CI artifact），
             // 完整连接串（含 user/password）不得进事件载荷。结构保留、凭据值掩码。
             fire(Event.sim("sim.store-started", id.value(),
@@ -189,16 +179,8 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
 
     @Override
     public void stop(StopMode mode) {
-        running = false;
-        for (Connection c : connections) {
-            try {
-                c.close();
-            } catch (SQLException ignored) {
-                // 尽力而为
-            }
-        }
-        connections.clear();
-        activeConnections.set(0);
+        markRunning(false);
+        closeTrackedConnections();
         stopContainerQuietly();
         fire(Event.sim(mode == StopMode.CRASH ? "sim.store-crashed" : "sim.store-stopped",
                 id.value(), Map.of("kind", KIND_CONTAINER)));
@@ -219,7 +201,7 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
 
     @Override
     public HealthReport health() {
-        if (!running) {
+        if (!isRunning()) {
             return HealthReport.down("PostgreSQL container store not running");
         }
         PostgreSQLContainer c = container;
@@ -245,7 +227,7 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
 
     @Override
     public List<ExposedEndpoint> endpoints() {
-        return running
+        return isRunning()
                 ? List.of(new ExposedEndpoint(Contract.STORE, "jdbc", jdbcUrl))
                 : List.of();
     }
@@ -255,78 +237,43 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
         return EndpointShape.THIRD_PARTY;
     }
 
+    // ---- JdbcStoreSupport 钩子（差异点如实声明）----
+
+    @Override
+    protected String meteringLabel() {
+        return "PostgreSQL";
+    }
+
+    @Override
+    protected String notRunningPrefix() {
+        return "PostgreSQL container store is not running";
+    }
+
+    @Override
+    protected Map<String, Object> meteringEventExtras() {
+        return Map.of("kind", KIND_CONTAINER);
+    }
+
+    @Override
+    protected ComponentId meteringId() {
+        return id;
+    }
+
+    @Override
+    protected long slowQueryMillis() {
+        return slowQueryMillis;
+    }
+
+    @Override
+    protected void fireMeteringEvent(Event e) {
+        fire(e);
+    }
+
     // ---- StoreContract ----
 
     @Override
     public String jdbcUrl() {
         return jdbcUrl;
-    }
-
-    @Override
-    public Connection openConnection() {
-        requireRunning();
-        try {
-            Connection c = DriverManager.getConnection(jdbcUrl);
-            connections.add(c);
-            activeConnections.incrementAndGet();
-            fire(Event.sim("sim.store-connection-opened", id.value(),
-                    Map.of("active", activeConnections.get(), "kind", KIND_CONTAINER)));
-            return c;
-        } catch (SQLException e) {
-            throw new ComponentException("PostgreSQL connection failed: " + e.getMessage(), e);
-        }
-    }
-
-    @Override
-    public void inTransaction(Consumer<Connection> work) {
-        requireRunning();
-        try (Connection c = DriverManager.getConnection(jdbcUrl)) {
-            activeConnections.incrementAndGet();
-            boolean autoCommit = c.getAutoCommit();
-            c.setAutoCommit(false);
-            try {
-                work.accept(c);
-                c.commit();
-            } catch (RuntimeException e) {
-                try {
-                    c.rollback();
-                } catch (SQLException ignored) {
-                    // 回滚失败已由原始异常主导
-                }
-                throw e;
-            } finally {
-                c.setAutoCommit(autoCommit);
-            }
-        } catch (SQLException e) {
-            throw new ComponentException("PostgreSQL transaction failed: " + e.getMessage(), e);
-        } finally {
-            activeConnections.decrementAndGet();
-        }
-    }
-
-    @Override
-    public long executedStatements() {
-        return executedStatements.get();
-    }
-
-    @Override
-    public int activeConnections() {
-        return activeConnections.get();
-    }
-
-    /** 语句计数入口（SQL 执行处调用；SUT/测试可自行报告）。 */
-    public void recordStatement(String sql, long millis) {
-        executedStatements.incrementAndGet();
-        if (millis >= slowQueryMillis) {
-            slowQueries.merge(sql, millis, Math::max);
-            fire(Event.sim("sim.store-slow-query", id.value(),
-                    Map.of("sql", sql, "millis", millis, "kind", KIND_CONTAINER)));
-        }
-    }
-
-    /** 慢查询记录（诊断/测试用）。 */
-    public Map<String, Long> slowQueries() {
-        return Map.copyOf(slowQueries);
     }
 
     /** 容器内 PostgreSQL 镜像（诊断/测试用）。 */
@@ -366,12 +313,6 @@ public final class PostgresContainerStore implements VirtualComponent, StoreCont
                 // 尽力而为
             }
             container = null;
-        }
-    }
-
-    private void requireRunning() {
-        if (!running) {
-            throw new ComponentException("PostgreSQL container store is not running: " + id);
         }
     }
 

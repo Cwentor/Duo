@@ -24,6 +24,11 @@
 
 ### 新增
 
+- **CI/CD 链条补全（2026-10-31）**：`image` 独立 workflow（镜像构建 + 26 项 API 冒烟进门禁，
+  paths-ignore 短路 docs-only 提交）、nightly `supply-chain` job（trivy 扫 HIGH/CRITICAL，
+  报告制取基线）、dependabot 五生态（maven / 双 npm / github-actions / docker）、
+  触发面补 dev/review/feat、全部 job 加 `timeout-minutes`。
+
 - **M10 计划二：console-ui 前端（D16，2026-10-01）**：`console-ui/`（Vue3+TS+Vite，Node 仅构建期）。
   三页：令牌页（sessionStorage 会话，401 自动回登录且草稿不丢）、场景库（模板/用户库、fork、删除）、
   工作区（拓扑画布 @vue-flow + 属性面板 + YAML 抽屉双向同步——YAML 唯一事实来源、未动子树注释保留、
@@ -124,9 +129,34 @@
   「只验某契约、不让 worker 把 DAG 一起跑完」的拓扑裁剪；缺省 `true`＝声明即启动。
   未知节点键改为**显式报错**（此前静默忽略）；SUT/external 节点上的 `autoStart: false`
   由校验器拒绝（那两类节点由 `startSut()` 启动，写在这里无意义）。
+- **交互式架构图（2026-10-27）**：新增 `architecture-ui/`（Vite + React + TS + `@xyflow/react`，
+  构建期独立于 Maven reactor，与 `console-ui` 同纪律）：34 节点覆盖场景引擎 / 仿真内核 / 契约四档 /
+  控制面 / 观测面，38 条边按语义分型——依赖装配（灰）、事件流（青虚线动画）、SUT 生命周期（金）；
+  图数据事实来源为各包 `package-info.java` 与 `docs/ARCHITECTURE.md`，非手绘。交互：平移/缩放、
+  点击节点看职责与关键类（带文档跳转）、按模块着色 MiniMap、图例、SUT 节点金框高亮。
+  部署：`architecture-pages.yml` 在 push `master` 时 `npm ci` → `vite build --base=/Duo/` →
+  `deploy-pages`（action SHA pin 对齐仓库惯例），站点 <https://cwentor.github.io/Duo/>，
+  Pages 侧已设 `build_type=workflow`。README 因 GitHub 渲染不执行脚本，故 `README.md` /
+  `README.en.md` §3.1 放静态快照（`docs/assets/architecture-preview.png`，1920×1080）并给出
+  交互版链接，`docs/README.md` 文档索引同步登记。踩坑：React 18 StrictMode 双挂载与 xyflow
+  节点测量时序叠加，会卡在「画布已渲染但节点 `visibility:hidden`、点击不选中」的中间态，
+  图查看器已移除 StrictMode 并在 `main.tsx` 注明原因。
 
 ### 修复
 
+- **架构图交互补强（2026-10-27）**：`architecture-ui` 三处硬伤——①**箭头形同不存在**：边
+  `strokeWidth` 1.5→2/2.4，`markerEnd` 显式给 `width/height` 20（默认约 12px，整图缩放下看不见），
+  且原实现只有灰（依赖）与青（事件流）两色，**头部文案承诺的「金线＝SUT 生命周期」在代码里根本
+  没有**——现补齐第三种语义，SUT 启动与「就绪/退出回执」双向金线；②**点击无聚焦**：原实现只弹
+  右侧固定面板，节点本身零变化；现改为 `setCenter` 到该节点并 zoom 1.15、节点放大加环、无关节点
+  淡到 0.16、边只留上下游、`NodeToolbar` 浮出语义护照（职责 / incoming / outgoing / 关键类 /
+  文档），`Esc` 或点空白退出，护照内 Copy link 生成 `#节点id` 深链；③**整图噪声**：40 条边标签在
+  fit-view（zoom<0.75）下只有 6px 高，改为按缩放级别隐藏、放大后才显示。
+  **同时修掉 3 条悬空边**：`e2/e3/e9` 指向的 `validator` / `inputtrust` 节点从来不存在（二者只是
+  loader 卡片里的类名），这三条边一直在静默丢弃；`library` / `assertions` 两个孤立节点补上连线。
+  验证：`tsc -b` + `vite build` 通过；CDP 驱动真实鼠标事件实测——passport 出现、viewport
+  `scale(1.15)`、26 个节点淡出、Esc 清除，全部 PASS；README 快照按新版重拍（1920×1080，
+  506 KB→278 KB）。
 - **CI 供应链升级（2026-09-26）**：三个 action 升到 **Node 24 原生版本**并重钉 commit SHA——
   `actions/checkout` v4.2.2→**v7.0.1**、`actions/setup-java` v4.7.1→**v6.0.1**、
   `actions/upload-artifact` v4.6.2→**v7.0.1**；runner 由 `ubuntu-latest` pin 为 **`ubuntu-24.04`**——

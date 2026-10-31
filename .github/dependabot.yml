@@ -1,0 +1,50 @@
+# 供应链（2026-10-31 审计 P2-2/P3-2）：版本更新与 CVE 响应自动化。
+# github-actions 生态同时解决「pin-SHA 手工升级」——dependabot 会连 SHA 带注释一起 bump，
+# PR 走既有 pull_request CI（含 dispatch 纪律对应的验证环节），全绿才可合。
+# 注释里的人类可读版本号（如 # v7.0.1）随升级 PR 自动更新。
+#
+# major 策略（2026-10-31 首轮 21 条 PR 实测后拍板）：npm 与 docker 两生态 ignore
+# semver-major，自动流只留 minor/patch——前端工具链 major 跳版（vite 8 × plugin-vue@5
+# peer 冲突致 npm ci ERESOLVE、TS 7 = Go 原生重写）与 JDK/Node 基线变更（temurin
+# 21→22、node 22→25 非 LTS）必须整链人工评估；maven / github-actions 不设 ignore，
+# major 仍以 PR 形式出现、由 PR 上的 CI 把关。基础镜像新鲜度由 nightly trivy（CVE）
+# 与人工排期兜底。
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /console-ui
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+  - package-ecosystem: npm
+    directory: /architecture-ui
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # docker 生态（审计 N1）：Dockerfile 三个基础镜像均为浮动 tag（node:22-alpine /
+  # maven:3.9-eclipse-temurin-21 / eclipse-temurin:21-jre-jammy），patch 漂移无感知——
+  # 以升级 PR 补齐 L-6/A6 pin 纪律的覆盖面；digest 钉死更强但维护成本高，暂不采用。
+  # 浮动 tag 下 docker 的可升级差异几乎全是 major（node 22→25 / temurin 21→22 /
+  # 构建段 21→26）——全部转人工（Java 21-LTS 基线不动），本生态自动流静默属预期。
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"

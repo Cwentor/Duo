@@ -83,33 +83,42 @@ final class ComponentBootstrapper {
         var spec = scenario.nodes().stream().filter(Scenario.NodeSpec::sut)
                 .findFirst().orElseThrow(() -> new IllegalStateException("no SUT node"));
         Map<String, Scenario.NodeSpec> specById = indexSpecs();
-        startDirectDependencies(spec, specById);
-        Map<String, String> sutEndpoints = sutEndpoints(spec, specById);
-
-        if (NodeSpecs.isExternal(spec)) {
-            return startExternalSut(spec, sutEndpoints, inputTrust);
-        }
-        if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
-            throw new IllegalStateException("SUT launch.mode must be in-process (with main) "
-                    + "or external (with configOut): " + spec.id());
-        }
-        assertMainAllowed(spec.launch().main(), inputTrust);
+        // A1（评审 2026-10-30）：依赖先起并 adopt，此后任一步失败都必须回滚——
+        // 否则 engine.started 恒为 false 令 stop() 短路，这些组件在长驻 serve 进程里
+        // 永不收摊（泄漏端口/连接，重试亦不可回收）。
+        List<String> startedDeps = new ArrayList<>();
         try {
-            var cls = Class.forName(spec.launch().main());
-            var main = (io.duo.sim.kernel.api.SutMain)
-                    cls.getDeclaredConstructor().newInstance();
-            var launcher = new io.duo.sim.kernel.sut.SutLauncher(
-                    spec.id(), main, Map.copyOf(byId), spec.config(), sutEndpoints,
-                    this::relaySutEvent,
-                    java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"),
-                    readyTimeoutMs(spec.config()));
-            launcher.start();
-            warnIfSutMissedEndpoints(spec, sutEndpoints); // ready 已确认：SUT 看到的就是这张表
-            stopperSink.accept(launcher::stop);
-            return new ScenarioEngine.SutLauncherHandle(spec, launcher);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("cannot launch SUT main: "
-                    + spec.launch().main(), e);
+            startDirectDependencies(spec, specById, startedDeps);
+            Map<String, String> sutEndpoints = sutEndpoints(spec, specById);
+
+            if (NodeSpecs.isExternal(spec)) {
+                return startExternalSut(spec, sutEndpoints, inputTrust);
+            }
+            if (spec.launch() == null || !"in-process".equals(spec.launch().mode())) {
+                throw new IllegalStateException("SUT launch.mode must be in-process (with main) "
+                        + "or external (with configOut): " + spec.id());
+            }
+            assertMainAllowed(spec.launch().main(), inputTrust);
+            try {
+                var cls = Class.forName(spec.launch().main());
+                var main = (io.duo.sim.kernel.api.SutMain)
+                        cls.getDeclaredConstructor().newInstance();
+                var launcher = new io.duo.sim.kernel.sut.SutLauncher(
+                        spec.id(), main, Map.copyOf(byId), spec.config(), sutEndpoints,
+                        this::relaySutEvent,
+                        java.nio.file.Path.of("build", "duo-sut-" + spec.id() + ".properties"),
+                        readyTimeoutMs(spec.config()));
+                launcher.start();
+                warnIfSutMissedEndpoints(spec, sutEndpoints); // ready 已确认：SUT 看到的就是这张表
+                stopperSink.accept(launcher::stop);
+                return new ScenarioEngine.SutLauncherHandle(spec, launcher);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("cannot launch SUT main: "
+                        + spec.launch().main(), e);
+            }
+        } catch (RuntimeException e) {
+            rollbackDirectDependencies(spec, startedDeps);
+            throw e;
         }
     }
 
@@ -118,9 +127,11 @@ final class ComponentBootstrapper {
         sutEvents.accept(e);
     }
 
-    /** SUT 的依赖先起：实例化 + start + adopt（纳入统一拆除序列），供两形态共用。 */
+    /** SUT 的依赖先起：实例化 + start + adopt（纳入统一拆除序列），供两形态共用。
+     *  本次调用实际启动的 id 追加进 {@code startedDeps}（失败回滚的消费方，A1）。 */
     private void startDirectDependencies(Scenario.NodeSpec spec,
-                                         Map<String, Scenario.NodeSpec> specById) {
+                                         Map<String, Scenario.NodeSpec> specById,
+                                         List<String> startedDeps) {
         for (var slot : spec.wiring().values()) {
             String targetId = slot.node();
             if (byId.containsKey(targetId)) {
@@ -132,10 +143,35 @@ final class ComponentBootstrapper {
             dep.start();
             byId.put(targetId, dep);
             manager.adopt(targetId, dep);
+            startedDeps.add(targetId);
             runtime.registerTarget(targetId, new ScenarioRuntime.Target(
                     dep, targetId, depSpec.count() == null ? 1 : depSpec.count(),
                     metaOf(depSpec).supportedFaults()));
         }
+    }
+
+    /**
+     * SUT 启动失败的回滚（评审 A1，2026-10-30）：与 {@link ComponentManager#startAll}
+     * 的"失败逆序拆除"同语义——逆序停止本次启动的依赖、摘出统一拆除序列，并发一级事件。
+     * 个别组件停止失败不吞（记 warnings）；{@code runtime} 里已登记的 Target 不摘除：
+     * 注入三查要求 RUNNING 态，失败场景不可达，随旧引擎一并废弃。
+     */
+    private void rollbackDirectDependencies(Scenario.NodeSpec spec, List<String> startedIds) {
+        if (startedIds.isEmpty()) {
+            return;
+        }
+        for (int i = startedIds.size() - 1; i >= 0; i--) {
+            String id = startedIds.get(i);
+            byId.remove(id);
+            try {
+                manager.abandon(id);
+            } catch (RuntimeException stopFailure) {
+                warnings.add("SUT start rollback: component '" + id + "' stop failed: "
+                        + stopFailure.getMessage());
+            }
+        }
+        bus.publish(Event.sim("sim.sut-start-rollback", spec.id(),
+                Map.of("rolledBack", String.join(",", startedIds))));
     }
 
     /** 节点的能力元数据（registry 查表；注册 Target 供运行期三查第②查消费）。 */

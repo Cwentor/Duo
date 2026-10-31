@@ -39,6 +39,13 @@
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-control</artifactId>
         </dependency>
+        <!-- TestTokens 夹具复用 control 的 test-jar（评审 2026-10-30 P3：去逐字节复制） -->
+        <dependency>
+            <groupId>io.duo</groupId>
+            <artifactId>duo-sim-control</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.duo</groupId>
             <artifactId>duo-sim-junit</artifactId>

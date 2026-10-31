@@ -297,7 +297,9 @@ public final class ScenarioEngine implements AutoCloseable {
         if (sutStopper != null) {
             manager.registerExtraStop("sut", sutStopper::stopSut);
         }
-        manager.stopAll();
+        // A4（评审 2026-10-30）：组件停止失败不再被吞——warn 双写 warnings 与 result，
+        // 经 /scenario/status 的 warnings 浮出到控制台（§12 跳过必须可见）
+        manager.stopAll().forEach(this::warn);
         // external SUT 生命周期归用户（§7.3）：只拆接线，**不杀**进程——终态发事件 + 警告提示
         if (externalSut != null && externalSut.leftRunning()) {
             Long pid = externalSut.pid();

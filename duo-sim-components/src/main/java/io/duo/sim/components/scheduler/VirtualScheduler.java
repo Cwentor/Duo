@@ -14,8 +14,6 @@ import io.duo.sim.kernel.api.HealthReport;
 import io.duo.sim.kernel.api.StopMode;
 import io.duo.sim.kernel.api.VirtualComponent;
 import io.duo.sim.kernel.contract.SchedulerContract;
-import io.duo.sim.protocol.FrameConnection;
-import io.duo.sim.protocol.message.TaskDispatch;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -61,9 +59,6 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
 
     /** 派发轮询间隔：与 real 档一致（50ms 级），保证档位互换后的时序量级相同。 */
     private static final long PUMP_INTERVAL_MS = 20;
-    /** 缺省 DAG：与 real 档 {@code DemoScheduler} 同一套演示拓扑（档位互换时配置零改动）。 */
-    private static final String DEFAULT_DAG =
-            "load-orders,clean-orders,build-features,unstable-task,aggregate-report";
 
     private volatile ComponentId id;
     private volatile ComponentContext ctx;
@@ -111,7 +106,8 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
         this.feedServer = fs;
         registry.registerEndpoint("scheduler", "127.0.0.1:" + port);
 
-        stateMachine = new SchedulerStateMachine(readDag(ctx.config()), new StateListener());
+        stateMachine = new SchedulerStateMachine(readDag(ctx.config()),
+                new SchedulerFacts(this::publishFact, this::maybeFireDagTerminal));
         dagTerminalFired.set(false);
         pump = Thread.ofVirtual().name(id.value() + "-pump").start(this::pumpLoop);
         fire(Event.sut("sut.scheduler-started", id.value(),
@@ -261,27 +257,14 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
             if (sm == null) {
                 continue;
             }
-            for (String task : sm.dispatchable()) {
-                String target = feedServer.selector().select();
-                if (target == null) {
-                    break; // 本轮无可用 worker（槽位耗尽或未上报槽位）
-                }
-                FrameConnection conn = feedServer.feed(target);
-                if (conn == null) {
-                    feedServer.selector().onRemoved(target);
-                    continue;
-                }
-                try {
-                    int attempt = sm.dispatch(task, target);
-                    feedServer.selector().onDispatched(target); // 本地递减；SlotReport 到达时权威刷新
-                    conn.write(new TaskDispatch(task, task, attempt, 1, 1));
-                    // sut.task-dispatched 由 StateListener.onDispatch 单一来源发布（去重）
-                } catch (IOException e) {
-                    feedServer.drop(target);
-                }
-            }
+            DispatchPump.dispatchRound(feedServer, sm); // 单轮派发下沉共享件（R3）
             maybeFireDagTerminal();
         }
+    }
+
+    /** SchedulerFacts 通道桥：事实类型/载荷由共享件拼定，这里只决定落点（组件事件总线）。 */
+    private void publishFact(String type, Map<String, Object> payload) {
+        fire(Event.sut(type, id.value(), payload));
     }
 
     private void maybeFireDagTerminal() {
@@ -292,17 +275,7 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     }
 
     private static Map<String, List<String>> readDag(Map<String, String> config) {
-        String tasksCfg = config.getOrDefault("dag.tasks", DEFAULT_DAG);
-        Map<String, List<String>> dag = new HashMap<>();
-        for (String t : tasksCfg.split(",")) {
-            String name = t.trim();
-            if (name.isEmpty()) {
-                continue;
-            }
-            String deps = config.get("dag.deps." + name);
-            dag.put(name, deps == null || deps.isBlank()
-                    ? List.of() : List.of(deps.split(",")));
-        }
+        Map<String, List<String>> dag = DagTopology.parse(config);
         if (dag.isEmpty()) {
             throw new IllegalArgumentException("empty DAG (check dag.tasks)");
         }
@@ -381,54 +354,6 @@ public final class VirtualScheduler implements VirtualComponent, SchedulerContra
     }
 
     /** 状态机事实 → sut.* 事件（与 real 档同一口径；档位互换时断言不变）。 */
-    private final class StateListener implements SchedulerStateMachine.Listener {
-
-        @Override
-        public void onDispatch(String taskId, String taskName, int attempt, String instance) {
-            fire(Event.sut("sut.task-dispatched", id.value(),
-                    Map.of("taskId", taskId, "attempt", attempt, "instance", instance)));
-        }
-
-        @Override
-        public void onStatus(String taskId, String state, String detail, int attempt,
-                             String instance) {
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("taskId", taskId);
-            payload.put("state", state);
-            payload.put("attempt", attempt);
-            if (instance != null) {
-                payload.put("instance", instance);
-            }
-            fire(Event.sut("sut.task-status", id.value(), Map.copyOf(payload)));
-            if (!"RETRYING".equals(state)) {
-                fire(Event.sut("sut.task-terminal", id.value(), Map.copyOf(payload)));
-            }
-        }
-
-        @Override
-        public void onRetry(String taskId, int nextAttempt) {
-            fire(Event.sut("sut.task-retry", id.value(),
-                    Map.of("taskId", taskId, "nextAttempt", nextAttempt)));
-        }
-
-        @Override
-        public void onFailover(String taskId, String fromInstance) {
-            fire(Event.sut("sut.failover", id.value(),
-                    Map.of("taskId", taskId, "from", fromInstance)));
-        }
-
-        @Override
-        public void onRejected(String taskId, String instanceName, String reason, int rejections) {
-            fire(Event.sut("sut.task-rejected", id.value(),
-                    Map.of("taskId", taskId, "instance", instanceName,
-                            "reason", reason, "rejections", rejections)));
-        }
-
-        @Override
-        public void onAllTerminal() {
-            maybeFireDagTerminal();
-        }
-    }
 
     /** 当前已注册实例名（诊断/测试用）。 */
     public List<String> registeredInstances() {

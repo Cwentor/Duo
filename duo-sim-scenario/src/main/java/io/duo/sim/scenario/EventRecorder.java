@@ -24,8 +24,12 @@ import java.util.Map;
  * 期间缓冲只增不减；一个刷日志的 SUT 或自定义 hook 就能把控制面堆到 OOM。故设上限
  * {@link #MAX_BUFFERED_EVENTS}，超出后停止累积并计入 {@link #droppedEvents()}——
  * 用"显式丢了多少"替代"静默吃掉内存"（§12：跳过必须可见）。
+ *
+ * <p><b>不设 {@code close()}</b>（评审 2026-10-30 A7）：落盘唯一合法出口是
+ * {@link #flushIfCurrent}——不带世代判定的 {@code close()} 会绕过 H-4 世代闸门，
+ * 让被顶替的旧引擎整份覆盖现任录制（危险死代码，曾有测试钉住该路径，随本修删除）。
  */
-public final class EventRecorder implements AutoCloseable {
+public final class EventRecorder {
 
     /**
      * 内存缓冲上限。取值依据：既有最大验收场景（万级任务）事件量在 10^4 量级，
@@ -43,7 +47,6 @@ public final class EventRecorder implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicLong dropped =
             new java.util.concurrent.atomic.AtomicLong();
     private final com.fasterxml.jackson.databind.ObjectMapper mapper = MAPPER;
-    private volatile boolean closed;
 
     private EventRecorder(Path outputFile) {
         this.outputFile = outputFile;
@@ -61,9 +64,6 @@ public final class EventRecorder implements AutoCloseable {
 
     /** 事件总线订阅入口。 */
     public void onEvent(Event event) {
-        if (closed) {
-            return;
-        }
         synchronized (buffered) {
             if (buffered.size() >= MAX_BUFFERED_EVENTS) {
                 dropped.incrementAndGet();
@@ -90,19 +90,26 @@ public final class EventRecorder implements AutoCloseable {
      * 新的晚，就会把新场景的录制**整份覆盖**成旧事件——静默的数据损坏，比丢事件更糟。
      * 故交付方必须携带启动时的世代号：世代不再是最新就放弃写盘，并把丢弃显式说出来。
      *
+     * <p><b>先比后写窗口的收敛</b>（评审 2026-10-30 A7）：世代判定与落盘之间存在窗口——
+     * 顶替方可能在检查之后、落盘完成之前接任。本实现**落盘后再复核一次**：已过期则如实返回
+     * false（调用方须告警），把"静默写坏现任录制"变成"显式告警"；现任引擎收尾时会整份重写
+     * 恢复正确内容。残余窗口（复核后到 move 生效间的极窄间隙）彻底闭合需宿主侧同步收摊，
+     * 与 H-4 的异步收摊设计冲突，不在本层做（如实声明）。
+     *
      * @param epoch 启动本引擎时的世代号（见 {@code ScenarioHost} 的活动世代）
-     * @return true ＝ 已落盘；false ＝ 已过期，写盘被放弃（调用方须告警）
+     * @return true ＝ 落盘且当时仍是现任；false ＝ 已过期（落盘前被顶替则未写盘；
+     *         落盘后被顶替则已写但内容不可信），调用方须告警
      */
     public boolean flushIfCurrent(java.util.function.LongSupplier currentEpoch, long epoch) {
+        if (currentEpoch.getAsLong() != epoch) {
+            return false; // 已被更新的场景顶替：这份录制是历史，不能覆盖现任
+        }
         List<Event> snapshot;
         synchronized (buffered) {
             snapshot = List.copyOf(buffered);
         }
-        if (currentEpoch.getAsLong() != epoch) {
-            return false; // 已被更新的场景顶替：这份录制是历史，不能覆盖现任
-        }
         writeSnapshot(snapshot);
-        return true;
+        return currentEpoch.getAsLong() == epoch; // A7：写后复核，过期即显式失败
     }
 
     private void writeSnapshot(List<Event> snapshot) {
@@ -177,13 +184,5 @@ public final class EventRecorder implements AutoCloseable {
     /** 录制目标文件路径（{@code events.jsonl}）。 */
     public Path outputFile() {
         return outputFile;
-    }
-
-    @Override
-    public void close() {
-        if (!closed) {
-            flush();
-            closed = true;
-        }
     }
 }

@@ -250,7 +250,14 @@ public final class ScenarioHost implements AutoCloseable {
 
     /** 本层累积的告警（如录制缓冲溢出、临时文件清理失败）；只读快照。 */
     public synchronized List<String> warnings() {
-        return List.copyOf(warnings);
+        // M10 Task 10 契约的实际承载（评审 T1，2026-10-30）：除宿主级告警（外部进程遗留等）外，
+        // 引擎结果告警（校验期 + 收摊期 + 时间线，如 lifecycle 动作 duration 被忽略）同样对控制台可见——
+        // 此前只回宿主列表，结果告警没有任何出口，"warnings 可见"仅靠 containsKey 恒真维持假绿。
+        var merged = new ArrayList<>(warnings);
+        if (engine != null) {
+            merged.addAll(engine.result().snapshot().warnings());
+        }
+        return List.copyOf(merged);
     }
 
     /**
@@ -435,12 +442,20 @@ public final class ScenarioHost implements AutoCloseable {
 
     /** 注入转发（§10：纯外层包装，语义完全由内核决定）。 */
     public ScenarioRuntime.InjectionResult inject(FaultAction action) {
-        if (engine == null || state != State.RUNNING) {
+        // A2（评审 2026-10-30）：engine/state 双读收敛为锁内快照——与 eventsSince/
+        // droppedEvents 的既有模式一致。无同步的两次读在与 DELETE /scenario、后台
+        // finalizeRun 竞态时可能把注入派进正在拆除的引擎（restart 的 live.get 与
+        // stopAll 的迭代构成对非线程安全容器的并发访问）。
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = state == State.RUNNING ? engine : null;
+        }
+        if (eng == null) {
             FaultLog.failed(action.target().componentId().value(), action.type(),
                     "scenario not running");
             return new ScenarioRuntime.InjectionResult(false, "scenario not running");
         }
-        ScenarioRuntime.InjectionResult r = engine.inject(action);
+        ScenarioRuntime.InjectionResult r = eng.inject(action);
         // M8：日志与事件流同源同序（内核判定之后），失败必记录（§12 不静默）
         if (r.success()) {
             FaultLog.injected(action.target().componentId().value(),
@@ -460,10 +475,15 @@ public final class ScenarioHost implements AutoCloseable {
      * 因果链由事件流承载（§12）；「场景未运行」由返回值显式携带，不静默。
      */
     public ScenarioRuntime.InjectionResult clear(FaultAction action) {
-        if (engine == null || state != State.RUNNING) {
+        // A2：与 inject 同款锁内快照（review 2026-10-30）
+        ScenarioEngine eng;
+        synchronized (this) {
+            eng = state == State.RUNNING ? engine : null;
+        }
+        if (eng == null) {
             return new ScenarioRuntime.InjectionResult(false, "scenario not running");
         }
-        return engine.runtime().clear(action);
+        return eng.runtime().clear(action);
     }
 
     /** 事件缓冲丢弃计数（透传 {@code ScenarioEngine.droppedEvents()}，供 /events 暴露给控制台）。 */

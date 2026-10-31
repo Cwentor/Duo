@@ -3,7 +3,7 @@
 **参考实现 + 场景 + 跨模块验收测试**——既是示例，也是本项目的验收载体（`duo-sim-control` 第 14 轮起自带契约测试，见其 README）。
 
 - 依赖：`kernel`、`protocol`、`components`、`scenario`、`embedded`、`control`、`junit`、`curator-framework`
-- 测试：54 条，其中 **2 条按设计 skip**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`，M9 真实 SUT 演练）；2026-10-01 实测。
+- 测试：54 条，其中 **2 条按设计 skip**（未开压测开关：`ScaleAcceptanceTest`；未开 `-Dduo.ds=true`：`DsFailoverAcceptanceTest`，M9 真实 SUT 演练）；2026-10-31 实测。
   （57 → 41 → 54：`SchedulerStateMachine`/`DispatchSelector` 及其 18 条测试已迁入 `duo-sim-components`，两档 scheduler 同源；其后 M6/M8/M9 又各补入验收用例）
 
 ## 参考实现

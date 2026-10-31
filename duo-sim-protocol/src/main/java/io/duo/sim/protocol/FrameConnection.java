@@ -32,20 +32,9 @@ public final class FrameConnection implements Closeable {
 
     /** 阻塞读取一个完整帧（含 header）；流结束抛 {@link EOFException}。 */
     public byte[] readFrame() throws IOException {
+        // 帧头校验单点在 FrameCodec.parseHeader（评审 R9：此前两处各抄一份）
         byte[] header = readFully(FrameCodec.HEADER_LENGTH);
-        int magic = ((header[0] & 0xFF) << 24) | ((header[1] & 0xFF) << 16)
-                | ((header[2] & 0xFF) << 8) | (header[3] & 0xFF);
-        if (magic != FrameCodec.MAGIC) {
-            throw new ProtocolViolationException("bad magic: 0x" + Integer.toHexString(magic));
-        }
-        if (header[4] != FrameCodec.VERSION) {
-            throw new ProtocolViolationException("unsupported version: " + header[4]);
-        }
-        int len = ((header[5] & 0xFF) << 24) | ((header[6] & 0xFF) << 16)
-                | ((header[7] & 0xFF) << 8) | (header[8] & 0xFF);
-        if (len <= 0 || len > FrameCodec.MAX_PAYLOAD_LENGTH) {
-            throw new ProtocolViolationException("bad payload length: " + len);
-        }
+        int len = FrameCodec.parseHeader(header).payloadLength();
         byte[] headerAndPayload = new byte[FrameCodec.HEADER_LENGTH + len];
         System.arraycopy(header, 0, headerAndPayload, 0, FrameCodec.HEADER_LENGTH);
         byte[] payload = readFully(len);

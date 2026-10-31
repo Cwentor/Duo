@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { ScenarioDoc, ScenarioView } from '../model/scenario'
@@ -15,7 +15,9 @@ import { draftKey } from '../components/workspace-logic'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id))
-const doc = ref<ScenarioDoc | null>(null)
+// shallowRef：ScenarioDoc 带 private 字段，ref 的 UnwrapRef 映射类型会剥掉私有品牌
+// （vue-tsc 报"missing doc/nodePath"）；文档本就整体替换、手动重投影，无需深层响应式
+const doc = shallowRef<ScenarioDoc | null>(null)
 const view = ref<ScenarioView | null>(null)
 const selectedId = ref<string | null>(null)
 const yamlText = ref('')
@@ -157,17 +159,21 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
       <template v-if="mode === 'edit'">
         <button @click="save">保存</button>
         <button @click="validate">校验</button>
-        <button class="primary" @click="startScenario">▶ 启动场景</button>
+        <button class="primary" @click="startScenario()">▶ 启动场景</button>
       </template>
       <template v-else>
         <span class="state">{{ runtime.state }}</span>
         <button @click="stopScenario">■ 停止</button>
         <button @click="mode = 'edit'">编辑（停止以编辑）</button>
       </template>
-      <span :class="runtime.connected ? 'ok' : 'down'">
-        {{ runtime.connected ? '● 已连接' : '● 连接断开' }}
+      <!-- IDLE 措辞修正（评审 P3，2026-10-30）：编辑态本就没开轮询，显示"连接断开"
+           误导（服务明明可达）——区分"编辑态 / 已连接 / 连接断开"三态 -->
+      <span :class="mode === 'edit' ? 'idle' : (runtime.connected ? 'ok' : 'down')">
+        {{ mode === 'edit' ? '● 编辑态' : (runtime.connected ? '● 已连接' : '● 连接断开') }}
       </span>
-      <span v-if="runtime.dropped > 0" class="warn">已丢弃 {{ runtime.dropped }} 条事件</span>
+      <span v-if="runtime.dropped + runtime.truncatedLocal > 0" class="warn">
+        已丢弃 {{ runtime.dropped }} 条事件<template v-if="runtime.truncatedLocal > 0">（本机截断 {{ runtime.truncatedLocal }}）</template>
+      </span>
       <input v-model="newNode.id" placeholder="新节点 id" class="new-id" />
       <select v-model="newNode.contract">
         <option v-for="c in CONTRACTS" :key="c" :value="c">{{ c }}</option>
@@ -227,6 +233,7 @@ onMounted(() => window.addEventListener('beforeunload', warnUnsaved))
 .error { color: #c0392b; font-size: 12px; }
 .state { color: #2e8b57; font-weight: bold; }
 .ok { color: #2e8b57; font-size: 12px; }
+.idle { color: #888; font-size: 12px; }
 .down { color: #c0392b; font-size: 12px; }
 .warn { color: #d9a44a; font-size: 12px; }
 .primary { font-weight: bold; }
