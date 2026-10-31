@@ -306,6 +306,57 @@ try (var engine = ScenarioEngine.validated(scenario, registry).withHooks(hooks))
 
 ## 5. 完整示例
 
+### 5.1 最小场景走读：worker-crash-failover
+
+```yaml
+name: worker-crash-failover
+topology:
+  - id: zk
+    contract: registry
+    tier: virtual                    # 进程内状态机（无端点）→ wiring 缺省推断 direct
+  - id: master
+    contract: scheduler
+    tier: real
+    sut: true                        # 全场景恰好一个
+    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
+    config: { dag.tasks: "job-a,job-b,job-c,job-d" }
+    exposes: [{ contract: scheduler, port: 0 }]      # port 0 = 内核分配
+    wiring:
+      registry: { node: zk, contract: registry }
+  - id: workers
+    contract: worker
+    tier: virtual
+    count: 4
+    capacity: { slots: 1 }
+    wiring:
+      registry: { node: zk, contract: registry }
+behaviors:
+  profiles:
+    default: { duration: 15s, jitter: 0.1, successRate: 1.0 }
+  bindings:
+    - node: workers
+      profile: default
+timeline:
+  - at: 10s
+    action: crash
+    target: workers[3]               # 实例下标从 1 开始
+  - at: 27s
+    action: restart
+    target: workers[3]
+assertions:
+  - affectedTasksAtLeast: { min: 1 } # 防空真守护
+  - failoverWithin: { seconds: 30 }
+  - noTaskLost: { requireAllSuccess: true }
+  - eventSequence: [sim.fault-injected, sut.task-retry]
+```
+
+> **换到 worker 侧**：把 `sut: true` 从 `master` 移到 `workers` 节点（`tier: real`、
+> `launch.main: io.duo.sim.examples.worker.RealWorkerSut`），master 改回 `tier: virtual` 即可——
+> SUT 变成被调度方，其余 YAML 结构不变。完整例子见
+> [`../duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml`](../duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml)。
+
+### 5.2 示例文件清单
+
 见 `duo-sim-examples`：
 
 | 场景 | 演示要点 |

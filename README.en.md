@@ -12,7 +12,7 @@
 
 [English](README.en.md) · [简体中文](README.md)
 
-[Quick Start](#5-quick-start) · [Scenario DSL](docs/SCENARIO-DSL.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Docs](#9-documentation-index)
+[Quick Start](#5-quick-start) · [Scenario DSL](docs/SCENARIO-DSL.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) · [Docs](#8-documentation-index)
 
 </div>
 
@@ -46,9 +46,9 @@ middleware ✅ · `M3` control plane ✅ · `M4` scale & bridging ✅ · `M5` co
 - [4. Module Map](#4-module-map)
 - [5. Quick Start](#5-quick-start) — [5.1 Environment](#51-environment) · [5.2 Build & Test](#52-build--test) · [5.3 Run a Scenario (CLI)](#53-run-a-scenario-cli-control-plane) · [5.4 Observability](#54-observability-using-the-three-channels-m8) · [5.5 Write a Scenario Test](#55-write-a-scenario-test-junit-5)
 - [6. Contract × Tier](#6-contract--tier-currently-implemented-implementations)
-- [7. A Minimal Scenario](#7-a-minimal-scenario)
-- [8. Status & Gaps](#8-status--gaps-one-page-overview)
-- [9. Documentation Index](#9-documentation-index)
+- [7. Status & Gaps](#7-status--gaps-one-page-overview)
+- [8. Documentation Index](#8-documentation-index)
+- [9. Acknowledgements](#9-acknowledgements)
 - [10. License](#10-license)
 
 ---
@@ -66,25 +66,13 @@ slate**: its core idea combines two approaches already validated by these major 
 lightweight in-memory double, inside the JVM or a container" (the Curator / Fabric8 / H2 /
 Testcontainers route). Duo's contribution is to **fuse them into one unified framework** and close
 four gaps: composability, fault injection, tier swapping, and a second-scale feedback loop.
-
-| Reference project | One-liner | What Duo borrowed | Where it lands |
-| --- | --- | --- | --- |
-| [KWOK](https://github.com/kubernetes-sigs/kwok) (Kubernetes Without Kubelet) | A kubelet-less simulated K8s cluster | "Double fools the real system": everything but the SUT becomes a lightweight fake | `virtual` tier (`VirtualWorker` / `VirtualScheduler`, etc.) |
-| [Apache Curator](https://github.com/apache/curator) | ZooKeeper client and test facilities | "Real protocol, lightweight in-memory": expose a real ZK port to the SUT in-process | `CuratorRegistry` in `duo-sim-embedded` |
-| [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client) | K8s Java client + Mock Server | "In-memory double" for middleware while keeping the real K8s REST protocol | `Fabric8K8sMock` in `duo-sim-embedded` |
-| [H2 Database](https://github.com/h2database/h2database) | Embedded / in-memory SQL database | An in-memory double for the store contract (real JDBC URL) | `H2Store` in `duo-sim-embedded` |
-| [Testcontainers](https://github.com/testcontainers/testcontainers-java) | Spin up real containers on demand | "When fakes are not enough, go real on demand": container tier with real ZooKeeper / PostgreSQL | `ZookeeperContainerRegistry` / `PostgresContainerStore` |
-| [Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) | A real distributed scheduler | **First real third-party SUT** (M9 Phase A: the 3.4.3 registry-flap drill went all green) | `DsFailoverAcceptanceTest` in `duo-sim-examples` |
+See **[§9 Acknowledgements](#9-acknowledgements)** for the itemized credits.
 
 Duo supplies the missing layer: **a unified simulation framework with configurable behavior,
 injectable faults, and assembly into arbitrary pipeline topologies** — the kernel understands only
-"contracts"; it knows nothing about any concrete product.
-
-> **An honest note on "endorsement"**: the above is **"inspiration & dependency"**, not **"official
-> endorsement"** by those projects — none of them stands behind or sponsors this repository. Duo's
-> credibility comes from reusing their widely-proven ideas and mature implementations and then
-> closing the gaps (composability, fault injection, tier swapping, second-scale feedback) —
-> not from any endorsement or sponsorship.
+"contracts"; it knows nothing about any concrete product. The first real third-party SUT is
+[Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) (M9 Phase A: the 3.4.3
+registry-flap drill went all green; see [`duo-sim-examples/README.md`](duo-sim-examples/README.md)).
 
 ## 2. Four Core Concepts
 
@@ -131,14 +119,9 @@ injectable faults, and assembly into arbitrary pipeline topologies** — the ker
 ### 3.1 Interactive Architecture Diagram (ReactFlow)
 
 > GitHub READMEs don't run scripts, so the interactive canvas is deployed to GitHub Pages
-> (`architecture-ui`, built and deployed by CI): **[open the interactive diagram](https://cwentor.github.io/Duo/)** —
-> **click a node to focus it** (the viewport zooms to it and a semantic passport floats up with the
-> node's responsibility, incoming/outgoing edges, key classes and doc links; unrelated nodes fade out,
-> `Esc` exits). Edges are arrowed and colour-coded by meaning (grey = dependency/wiring, cyan dashed =
-> event stream, gold = SUT lifecycle). Pan/zoom and a module-colored MiniMap are also available.
-> The image below is a static snapshot.
+> (`architecture-ui`, built and deployed by CI): **[open the interactive diagram](https://cwentor.github.io/Duo/)**
 
-![Duo architecture diagram (static snapshot; interactive version at the link above)](docs/assets/architecture-preview.png)
+[![Duo architecture diagram (static snapshot, click to open the interactive version)](docs/assets/architecture-preview.png)](https://cwentor.github.io/Duo/)
 
 ## 4. Module Map
 
@@ -364,60 +347,7 @@ class MyScenarioTest {
 
 Tier gaps and the plan to close them: [Roadmap M5](docs/ROADMAP.md#m5--契约与档位补全广度).
 
-## 7. A Minimal Scenario
-
-```yaml
-name: worker-crash-failover
-topology:
-  - id: zk
-    contract: registry
-    tier: virtual                    # in-process state machine (no endpoint) → wiring defaults to direct
-  - id: master
-    contract: scheduler
-    tier: real
-    sut: true                        # exactly one per scenario
-    launch: { mode: in-process, main: io.duo.sim.examples.scheduler.DemoScheduler }
-    config: { dag.tasks: "job-a,job-b,job-c,job-d" }
-    exposes: [{ contract: scheduler, port: 0 }]      # port 0 = kernel-assigned
-    wiring:
-      registry: { node: zk, contract: registry }
-  - id: workers
-    contract: worker
-    tier: virtual
-    count: 4
-    capacity: { slots: 1 }
-    wiring:
-      registry: { node: zk, contract: registry }
-behaviors:
-  profiles:
-    default: { duration: 15s, jitter: 0.1, successRate: 1.0 }
-  bindings:
-    - node: workers
-      profile: default
-timeline:
-  - at: 10s
-    action: crash
-    target: workers[3]               # instance index starts at 1
-  - at: 27s
-    action: restart
-    target: workers[3]
-assertions:
-  - affectedTasksAtLeast: { min: 1 } # empty-truth guard
-  - failoverWithin: { seconds: 30 }
-  - noTaskLost: { requireAllSuccess: true }
-  - eventSequence: [sim.fault-injected, sut.task-retry]
-```
-
-Field reference, validation rules and assertion semantics:
-[`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md).
-
-> **Switching to the worker side**: move `sut: true` from `master` to the `workers` node
-> (`tier: real`, `launch.main: io.duo.sim.examples.worker.RealWorkerSut`) and set master back to
-> `tier: virtual` — the SUT becomes the scheduled party while the rest of the YAML stays unchanged.
-> Full example:
-> [`m0-acceptance-real-worker-sut.yaml`](duo-sim-examples/src/main/resources/scenarios/m0-acceptance-real-worker-sut.yaml).
-
-## 8. Status & Gaps (One-Page Overview)
+## 7. Status & Gaps (One-Page Overview)
 
 | Original goal (design §2) | Status | Evidence / gap |
 | --- | --- | --- |
@@ -440,7 +370,7 @@ rework cost).
 
 Full gap analysis and stage plans: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
-## 9. Documentation Index
+## 8. Documentation Index
 
 > The deep-dive docs under `docs/` and the per-module READMEs are currently maintained in Chinese;
 > this file is the unified English entry point.
@@ -449,7 +379,7 @@ Full gap analysis and stage plans: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 | --- | --- |
 | [`docs/README.md`](docs/README.md) | Repo-wide doc index and reading paths |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Architecture deep-dive: modules, SPI, contracts & tiers, wiring rules, event bus, SUT adapter surface, control plane, wire protocol |
-| [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | Scenario DSL reference (full field set / validation rules 1–8 / assertion semantics / built-in component config keys) |
+| [`docs/SCENARIO-DSL.md`](docs/SCENARIO-DSL.md) | Scenario DSL reference (minimal-scenario walkthrough / full field set / validation rules 1–8 / assertion semantics / built-in component config keys) |
 | [`docs/METRICS.md`](docs/METRICS.md) | `/metrics` metric semantics (all 19 metric families: meaning, refresh timing, known boundaries) |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Development guide: environment, build, test layering, extension points, conventions, known engineering debt |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Roadmap: goal-achievement inventory, gap list G1–G11, stage plans and acceptance criteria |
@@ -459,15 +389,14 @@ Full gap analysis and stage plans: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 | [`docs/superpowers/acceptance/`](docs/superpowers/acceptance) | Acceptance records, ten-thousand-scale stress reports, independent re-verification records |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version policy and unreleased/released changes |
 
+## 9. Acknowledgements
+
+- [KWOK](https://github.com/kubernetes-sigs/kwok): "double fools the real system" — everything but the SUT becomes a lightweight fake
+- [Apache Curator](https://github.com/apache/curator): "real protocol, lightweight in-memory" — expose a real ZK port to the SUT in-process
+- [Fabric8 Kubernetes Client](https://github.com/fabric8io/kubernetes-client): "in-memory double" for middleware while keeping the real K8s REST protocol
+- [H2 Database](https://github.com/h2database/h2database): an in-memory double for the store contract (real JDBC URL)
+- [Testcontainers](https://github.com/testcontainers/testcontainers-java): "when fakes are not enough, go real on demand" — container tier with real ZooKeeper / PostgreSQL
+
 ## 10. License
 
-**Apache-2.0** (chosen in design doc §15, following big-data ecosystem convention) — full license
-text at the repo root: [`LICENSE`](LICENSE).
-
----
-
-<div align="center">
-
-**Duo** · One YAML file squeezes big-data pipeline fault drills into a second-level feedback loop
-
-</div>
+**Apache-2.0**

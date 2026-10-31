@@ -15,8 +15,8 @@
 
 | 你是 | 建议顺序 |
 | --- | --- |
-| **第一次接触项目** | [`../README.md`](../README.md) → [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§3 → [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §7 示例 |
-| **想写一个场景** | [`SCENARIO-DSL.md`](SCENARIO-DSL.md)（字段全集 + 校验规则）→ [`../README.md`](../README.md) §7 最小示例 |
+| **第一次接触项目** | [`../README.md`](../README.md) → [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§3 → [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §5.1 最小场景走读 |
+| **想写一个场景** | [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §5.1 最小场景走读 →（字段全集 + 校验规则） |
 | **想接一个自己的 SUT** | [`ARCHITECTURE.md`](ARCHITECTURE.md) §10（SUT 适配面：in-process 与 external）→ [`SCENARIO-DSL.md`](SCENARIO-DSL.md) §1.3–§1.5（`launch.command` / 端点告知 / 生命周期） |
 | **想加一个契约/档位实现** | [`DEVELOPMENT.md`](DEVELOPMENT.md) §5（扩展点）→ [`ARCHITECTURE.md`](ARCHITECTURE.md) §4（注册表与能力元数据） |
 | **想评审设计一致性** | [`superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md`](superpowers/specs/2026-09-13-duo-virtual-bigdata-sim-design.md)（冻结稿）→ [`ROADMAP.md`](ROADMAP.md) §2 目标达成度对照 |
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | [交互式架构图](https://cwentor.github.io/Duo/)（源码 [`architecture-ui/`](../architecture-ui/README.md)） | ReactFlow 交互画布：模块分组、契约四档、控制面/观测面数据流；点击节点看职责与关键类。静态快照内嵌两份 README（`docs/assets/architecture-preview.png`） | 架构结构变化（新模块/新契约/新档位）后同步图数据——节点描述的事实来源是各包 `package-info.java` |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块依赖、内核 SPI、契约与档位、能力元数据与注册期校验、wiring 连接路径规则、启动/停止时序、事件总线与命名空间、SUT 适配面、断言与录制、控制面（含 M10 `/api/**` 控制台端点族与 SPA 托管）、Duo 线协议 | 改动内核 SPI、新增契约/档位、改变接线或生命周期语义 |
-| [`SCENARIO-DSL.md`](SCENARIO-DSL.md) | 场景 YAML 字段全集、校验规则 1–8、行为剧本字段、时间线动作、断言清单与语义、内置组件 config 键、完整示例、常见报错 | 新增/修改 DSL 字段、校验规则、断言或内置组件配置键 |
+| [`SCENARIO-DSL.md`](SCENARIO-DSL.md) | 场景 YAML 字段全集、校验规则 1–8、行为剧本字段、时间线动作、断言清单与语义、内置组件 config 键、最小场景走读与完整示例、常见报错 | 新增/修改 DSL 字段、校验规则、断言或内置组件配置键 |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | 环境与工具链、构建/测试命令、测试分层与门控、扩展点操作步骤、模块依赖纪律、编码与提交约定、已知工程债 | 构建方式、测试门控、开发流程变化 |
 | [ROADMAP.md](ROADMAP.md) | 原始目标达成度盘点（T1–T8 判据与取证）、差距清单（G1–G11）、M5–M8 阶段计划与验收口径、优先级与决策点、进展记录 | 阶段立项/关闭、差距状态变化 |
 | [METRICS.md](METRICS.md) | `/metrics` 指标口径：19 个指标族的语义与刷新时机、三条观测通道的分工、已知边界与后续可扩充项 | 新增/修改指标、调整口径或分桶 |
