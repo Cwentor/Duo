@@ -309,7 +309,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.2</version>
+                    <version>3.6.1</version>
                     <configuration>
                         <!-- Windows 多盘符（D: 项目 + C: .m2）下 surefire 的
                              Manifest-JAR 类路径检查会拒绝发现测试；按官方提示禁用 -->
