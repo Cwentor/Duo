@@ -288,7 +288,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
-                    <version>3.11.2</version>
+                    <version>3.12.0</version>
                     <configuration>
                         <!-- 中文注释 + 严格 doclint 在 JDK 21 上会因缺 @param/@return 直接失败；
                              发布产物不因此卡住（文档质量由评审守，不由构建守）。 -->
