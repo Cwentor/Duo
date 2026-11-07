@@ -39,7 +39,7 @@
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>kubernetes-server-mock</artifactId>
-            <version>6.13.4</version>
+            <version>8.0.0</version>
             <exclusions>
                 <!-- 避免与项目 JUnit 版本冲突（T24 同类问题） -->
                 <exclusion>
